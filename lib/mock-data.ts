@@ -497,3 +497,309 @@ export const reportInsights = [
     tendencia: "up",
   },
 ];
+
+// ---------- ATENCIÓN HOY (Dashboard) ----------
+export type Priority = "alta" | "media" | "baja";
+export const attentionItems: {
+  id: string;
+  priority: Priority;
+  title: string;
+  detail: string;
+  cta: string;
+  href: string;
+  tag: string;
+}[] = [
+  {
+    id: "att1",
+    priority: "alta",
+    title: "Margen bajo en Bacon Lover",
+    detail: "Pasó de 52% a 48,8% por aumento del bacon y la carne. Recomendamos subir $600 o revisar receta.",
+    cta: "Ver impacto",
+    href: "/productos",
+    tag: "Producto",
+  },
+  {
+    id: "att2",
+    priority: "alta",
+    title: "Don José aumentó 14% la carne",
+    detail: "Frigorífico Sur cotiza $9.450/kg (vs $10.260). Ahorro estimado: $16.200 por compra de 20kg.",
+    cta: "Comparar proveedores",
+    href: "/compras",
+    tag: "Compras",
+  },
+  {
+    id: "att3",
+    priority: "media",
+    title: "Martes con baja venta y alto costo laboral",
+    detail: "Promedio últimos 4 martes: venta $478k, costo laboral 39%. Sugerimos reducir un turno o lanzar combo del martes.",
+    cta: "Ver planificación",
+    href: "/empleados",
+    tag: "Operación",
+  },
+  {
+    id: "att4",
+    priority: "media",
+    title: "3 movimientos pendientes de aprobar",
+    detail: "Compras y un cierre de ventas esperando tu OK desde WhatsApp.",
+    cta: "Abrir Inbox",
+    href: "/inbox",
+    tag: "Inbox IA",
+  },
+];
+
+// ---------- SPARKLINES KPIs Dashboard ----------
+export const kpiSparklines = {
+  ventasHoy: [4, 3, 5, 6, 4, 7, 8, 6, 9, 7, 11, 10],
+  ventasMes: [8, 9, 7, 10, 12, 11, 13, 12, 14, 13, 15, 14],
+  margen: [33, 33, 32, 32, 31, 31, 32, 31, 31, 30, 31, 31],
+  costos: [9, 10, 11, 10, 11, 12, 12, 13, 12, 13, 12, 13],
+};
+
+// ---------- INBOX — conversación bidireccional ----------
+export type ChatTurn = {
+  from: "user" | "ai";
+  text: string;
+  time: string;
+};
+
+export const conversations: Record<string, ChatTurn[]> = {
+  m1: [
+    { from: "user", time: "14:02", text: "Compramos 20kg de carne a Don José por 180mil. Pagamos por transferencia." },
+    { from: "ai", time: "14:02", text: "Perfecto Mateo. Detecté una compra de insumo. ¿Querés asociarla a stock de cocina o stock general?" },
+    { from: "user", time: "14:03", text: "Stock cocina." },
+    { from: "ai", time: "14:03", text: "Listo. Lo dejo pendiente de aprobación en el Inbox. Sumé el costo al margen de los productos que usan carne." },
+  ],
+  m2: [
+    { from: "user", time: "23:45", text: "Hoy vendimos $850.000: local $500.000, delivery $250.000 y WhatsApp $100.000" },
+    { from: "ai", time: "23:45", text: "Anotado. ¿Sumo también las propinas o las separamos?" },
+    { from: "user", time: "23:46", text: "Separadas, fueron $42.000." },
+    { from: "ai", time: "23:46", text: "Perfecto, registro el cierre de ventas y dejo las propinas como movimiento aparte." },
+  ],
+  m3: [
+    { from: "user", time: "11:32", text: "A Juan le dimos un adelanto de $30.000" },
+    { from: "ai", time: "11:32", text: "Confirmo: adelanto a Juan Pérez por $30.000. ¿Lo descuento del próximo sueldo o lo dejo como anticipo?" },
+    { from: "user", time: "11:33", text: "Descuento del próximo sueldo." },
+    { from: "ai", time: "11:33", text: "Hecho. Lo agrego al recibo de junio." },
+  ],
+  m4: [
+    { from: "user", time: "09:18", text: "[Foto del ticket de panadería La Espiga]" },
+    { from: "ai", time: "09:18", text: "Leí el ticket: 120 unidades de pan brioche, total $62.400. ¿Cómo lo pagaste? Necesito ese dato para registrar." },
+  ],
+  m5: [
+    { from: "user", time: "08:10", text: "El alquiler de mayo fue $450.000" },
+    { from: "ai", time: "08:10", text: "Registrado como gasto fijo de alquiler. ¿Confirmo que fue por transferencia a Roberto?" },
+    { from: "user", time: "08:11", text: "Sí." },
+    { from: "ai", time: "08:11", text: "Listo, lo marqué como pagado." },
+  ],
+  m6: [
+    { from: "user", time: "20:55", text: "Quedan 8kg de cheddar" },
+    { from: "ai", time: "20:55", text: "Stock actualizado. A este ritmo te cubre 2 días. ¿Te armo el pedido a La Serenísima?" },
+    { from: "user", time: "20:56", text: "Dale, 10kg." },
+    { from: "ai", time: "20:56", text: "Pedido borrador listo, lo dejo para aprobar en compras." },
+  ],
+  m7: [
+    { from: "user", time: "10:04", text: "El proveedor de pan aumentó 12%" },
+    { from: "ai", time: "10:04", text: "Tomado. Recalculo el margen de los productos que usan pan brioche y actualizo la lista de precios sugeridos." },
+  ],
+};
+
+// ---------- PRODUCTOS — recetas detalladas ----------
+export type Ingrediente = {
+  nombre: string;
+  cantidad: string;
+  costoUnit: number;
+  share: number;
+};
+
+export const recipes: Record<string, Ingrediente[]> = {
+  "Clásica La Birra": [
+    { nombre: "Medallón 180g", cantidad: "180 g", costoUnit: 1_848, share: 53.6 },
+    { nombre: "Pan brioche", cantidad: "1 u", costoUnit: 520, share: 15.1 },
+    { nombre: "Cheddar", cantidad: "30 g", costoUnit: 252, share: 7.3 },
+    { nombre: "Lechuga + tomate", cantidad: "20 g", costoUnit: 140, share: 4.1 },
+    { nombre: "Salsa de la casa", cantidad: "15 g", costoUnit: 90, share: 2.6 },
+    { nombre: "Packaging + descartables", cantidad: "—", costoUnit: 600, share: 17.4 },
+  ],
+  "Doble Cheddar": [
+    { nombre: "2x Medallón 180g", cantidad: "360 g", costoUnit: 3_696, share: 72.2 },
+    { nombre: "Pan brioche", cantidad: "1 u", costoUnit: 520, share: 10.2 },
+    { nombre: "Doble cheddar", cantidad: "60 g", costoUnit: 504, share: 9.8 },
+    { nombre: "Cebolla caramelizada", cantidad: "25 g", costoUnit: 110, share: 2.1 },
+    { nombre: "Packaging + descartables", cantidad: "—", costoUnit: 290, share: 5.7 },
+  ],
+  "Bacon Lover": [
+    { nombre: "Medallón 180g", cantidad: "180 g", costoUnit: 1_848, share: 29.1 },
+    { nombre: "Bacon ahumado", cantidad: "50 g", costoUnit: 2_100, share: 33.1 },
+    { nombre: "Pan brioche", cantidad: "1 u", costoUnit: 520, share: 8.2 },
+    { nombre: "Cheddar", cantidad: "30 g", costoUnit: 252, share: 4.0 },
+    { nombre: "Salsa BBQ", cantidad: "20 g", costoUnit: 180, share: 2.8 },
+    { nombre: "Packaging + descartables", cantidad: "—", costoUnit: 1_450, share: 22.8 },
+  ],
+  "Veggie": [
+    { nombre: "Medallón vegetal", cantidad: "150 g", costoUnit: 1_650, share: 53.2 },
+    { nombre: "Pan integral", cantidad: "1 u", costoUnit: 480, share: 15.5 },
+    { nombre: "Provolone", cantidad: "30 g", costoUnit: 320, share: 10.3 },
+    { nombre: "Rúcula + tomate", cantidad: "25 g", costoUnit: 180, share: 5.8 },
+    { nombre: "Packaging + descartables", cantidad: "—", costoUnit: 470, share: 15.2 },
+  ],
+  "Papas rústicas": [
+    { nombre: "Papa 4ta gama", cantidad: "250 g", costoUnit: 720, share: 64.3 },
+    { nombre: "Aceite girasol", cantidad: "40 ml", costoUnit: 110, share: 9.8 },
+    { nombre: "Sal ahumada + romero", cantidad: "—", costoUnit: 50, share: 4.5 },
+    { nombre: "Packaging", cantidad: "—", costoUnit: 240, share: 21.4 },
+  ],
+  "Combo Clásico": [
+    { nombre: "Clásica La Birra", cantidad: "1 u", costoUnit: 3_450, share: 56.6 },
+    { nombre: "Papas rústicas", cantidad: "1 u", costoUnit: 1_120, share: 18.4 },
+    { nombre: "Bebida 500ml", cantidad: "1 u", costoUnit: 900, share: 14.7 },
+    { nombre: "Packaging combo", cantidad: "—", costoUnit: 630, share: 10.3 },
+  ],
+  "Coca 500ml": [
+    { nombre: "Coca-Cola 500ml", cantidad: "1 u", costoUnit: 720, share: 80.0 },
+    { nombre: "Vaso + sorbete", cantidad: "—", costoUnit: 180, share: 20.0 },
+  ],
+  "IPA Artesanal": [
+    { nombre: "Cerveza IPA 473ml", cantidad: "1 u", costoUnit: 1_650, share: 86.8 },
+    { nombre: "Posavasos + descartable", cantidad: "—", costoUnit: 250, share: 13.2 },
+  ],
+};
+
+export const productRecommendations: Record<
+  string,
+  { action: string; detail: string; impact: string; tone: "warn" | "info" | "success" | "danger" }[]
+> = {
+  "Bacon Lover": [
+    { action: "Subir precio $600", detail: "De $12.400 a $13.000 mantiene margen sobre 52%.", impact: "+$84k/mes", tone: "warn" },
+    { action: "Cotizar bacon alternativo", detail: "Frigorífico Sur lo cotiza 9% más barato.", impact: "+1,8 pts margen", tone: "info" },
+    { action: "Reducir porción de bacon a 40g", detail: "Bajaría 18% el costo del topping sin afectar percepción.", impact: "+2,4 pts margen", tone: "success" },
+  ],
+  "IPA Artesanal": [
+    { action: "Promocionar 2x1 los martes", detail: "Producto premium con baja rotación entre semana.", impact: "+12% volumen", tone: "info" },
+    { action: "Cambiar a IPA local", detail: "Tres cervecerías cotizan 20% menos.", impact: "+4 pts margen", tone: "success" },
+  ],
+  "Clásica La Birra": [
+    { action: "Mantener precio", detail: "Producto estrella, alta elasticidad. No tocar este trimestre.", impact: "—", tone: "success" },
+  ],
+};
+
+// ---------- EMPLEADOS — turnos semanales ----------
+export type Shift = { dia: string; from: string; to: string; horas: number };
+export const weeklyShifts: Record<string, Shift[]> = {
+  "Juan Pérez": [
+    { dia: "Mar", from: "18:00", to: "00:00", horas: 6 },
+    { dia: "Mié", from: "18:00", to: "00:00", horas: 6 },
+    { dia: "Jue", from: "18:00", to: "00:00", horas: 6 },
+    { dia: "Vie", from: "18:00", to: "01:00", horas: 7 },
+    { dia: "Sáb", from: "18:00", to: "01:00", horas: 7 },
+  ],
+  "Mariana López": [
+    { dia: "Mar", from: "12:00", to: "16:00", horas: 4 },
+    { dia: "Mié", from: "12:00", to: "16:00", horas: 4 },
+    { dia: "Jue", from: "12:00", to: "16:00", horas: 4 },
+    { dia: "Vie", from: "12:00", to: "16:00", horas: 4 },
+    { dia: "Sáb", from: "12:00", to: "16:00", horas: 4 },
+    { dia: "Dom", from: "12:00", to: "16:00", horas: 4 },
+  ],
+  "Lucía Romero": [
+    { dia: "Mar", from: "12:00", to: "00:00", horas: 8 },
+    { dia: "Mié", from: "12:00", to: "00:00", horas: 8 },
+    { dia: "Jue", from: "12:00", to: "00:00", horas: 8 },
+    { dia: "Vie", from: "12:00", to: "01:00", horas: 9 },
+    { dia: "Sáb", from: "12:00", to: "01:00", horas: 9 },
+    { dia: "Dom", from: "12:00", to: "23:00", horas: 7 },
+  ],
+  "Diego Sosa": [
+    { dia: "Jue", from: "19:00", to: "01:00", horas: 6 },
+    { dia: "Vie", from: "19:00", to: "02:00", horas: 7 },
+    { dia: "Sáb", from: "19:00", to: "02:00", horas: 7 },
+    { dia: "Dom", from: "19:00", to: "00:00", horas: 5 },
+  ],
+  "Florencia Gil": [
+    { dia: "Mié", from: "17:00", to: "23:00", horas: 6 },
+    { dia: "Jue", from: "17:00", to: "23:00", horas: 6 },
+    { dia: "Vie", from: "17:00", to: "00:00", horas: 7 },
+    { dia: "Sáb", from: "17:00", to: "00:00", horas: 7 },
+  ],
+  "Bruno Méndez": [
+    { dia: "Jue", from: "20:00", to: "00:00", horas: 4 },
+    { dia: "Vie", from: "20:00", to: "01:00", horas: 5 },
+    { dia: "Sáb", from: "20:00", to: "01:00", horas: 5 },
+  ],
+};
+
+export const employeeAlerts: { empleado: string; tipo: string; tone: "warn" | "danger" | "info" }[] = [
+  { empleado: "Bruno Méndez", tipo: "4 llegadas tarde este mes", tone: "danger" },
+  { empleado: "Juan Pérez", tipo: "2 adelantos pendientes ($30k)", tone: "warn" },
+  { empleado: "Diego Sosa", tipo: "Adelanto pendiente $50k", tone: "warn" },
+  { empleado: "Mariana López", tipo: "1 falta justificada", tone: "info" },
+];
+
+export const laborByDay = [
+  { dia: "Lun", ventas: 590_000, laboral: 96_000 },
+  { dia: "Mar", ventas: 460_000, laboral: 180_000 },
+  { dia: "Mié", ventas: 712_000, laboral: 168_000 },
+  { dia: "Jue", ventas: 820_000, laboral: 196_000 },
+  { dia: "Vie", ventas: 1_140_000, laboral: 248_000 },
+  { dia: "Sáb", ventas: 1_320_000, laboral: 268_000 },
+  { dia: "Dom", ventas: 980_000, laboral: 184_000 },
+];
+
+// ---------- REPORTES IA — decisiones recomendadas ----------
+export type Decision = {
+  id: string;
+  prioridad: Priority;
+  titulo: string;
+  motivo: string;
+  impacto: string;
+  confianza: number;
+  area: string;
+};
+
+export const weeklyDecisions: Decision[] = [
+  {
+    id: "d1",
+    prioridad: "alta",
+    titulo: "Cambiar proveedor de carne a Frigorífico Sur",
+    motivo: "Don José aumentó 14% y dejó la carne 8% por encima del promedio del mercado.",
+    impacto: "+$162.000 / mes",
+    confianza: 0.93,
+    area: "Compras",
+  },
+  {
+    id: "d2",
+    prioridad: "alta",
+    titulo: "Subir 4% el precio de Doble Cheddar y Bacon Lover",
+    motivo: "Productos premium con margen erosionado y demanda inelástica.",
+    impacto: "+$210.000 / mes",
+    confianza: 0.88,
+    area: "Productos",
+  },
+  {
+    id: "d3",
+    prioridad: "media",
+    titulo: "Lanzar combo del martes por WhatsApp",
+    motivo: "Día con menor venta y mayor costo laboral relativo. WhatsApp tiene mejor ticket.",
+    impacto: "+$120.000 / semana",
+    confianza: 0.76,
+    area: "Marketing",
+  },
+  {
+    id: "d4",
+    prioridad: "baja",
+    titulo: "Reducir un cocinero el martes 19-23",
+    motivo: "Costo laboral del martes a la noche es 2x el promedio sobre ventas.",
+    impacto: "+$48.000 / mes",
+    confianza: 0.69,
+    area: "Equipo",
+  },
+];
+
+// ---------- DASHBOARD — métricas Hoy ----------
+export const todaySnapshot = {
+  ventasHoy: 742_500,
+  tickets: 58,
+  ticketProm: 12_800,
+  movimientosPendientes: 3,
+  margenHoy: 33.4,
+  costoHoyPct: 66.6,
+};

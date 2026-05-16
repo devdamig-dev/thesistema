@@ -58,9 +58,10 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
 
   return (
-    <aside className="flex h-full w-full flex-col border-r border-line bg-bg-subtle/60 backdrop-blur-xl">
+    <aside className="relative flex h-full w-full flex-col border-r border-line bg-bg-subtle/70 backdrop-blur-xl">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-line-strong to-transparent" />
       <Brand />
-      <nav className="flex-1 overflow-y-auto px-3 py-2 scrollbar-thin">
+      <nav className="flex-1 overflow-y-auto px-3 py-3 scrollbar-thin">
         {NAV.map((group) => (
           <div key={group.label} className="mb-4">
             <div className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-ink-subtle">
@@ -149,6 +150,22 @@ function Brand() {
 function Footer() {
   return (
     <div className="space-y-3 border-t border-line px-3 py-3">
+      <Link
+        href="#"
+        className="group block rounded-xl border border-ai-400/25 bg-gradient-to-br from-ai-500/[0.08] via-bg-elevated/40 to-bg-elevated/40 p-3 transition-colors hover:border-ai-400/50"
+      >
+        <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-ai-400">
+          <span className="h-1.5 w-1.5 animate-pulseDot rounded-full bg-ai-400" />
+          Plan {businessInfo.plan}
+        </div>
+        <p className="text-xs leading-relaxed text-ink">
+          Estás usando 64% de los créditos IA del mes.
+        </p>
+        <div className="mt-2 h-1 overflow-hidden rounded-full bg-bg-subtle">
+          <div className="h-full w-[64%] rounded-full bg-gradient-to-r from-ai-400 to-ai-600" />
+        </div>
+      </Link>
+
       <div className="flex items-center justify-between px-2">
         <Link
           href="#"
@@ -175,7 +192,7 @@ function Footer() {
         <div className="min-w-0 flex-1 leading-tight">
           <div className="truncate text-xs font-medium text-ink">{businessInfo.owner}</div>
           <div className="truncate text-[10px] text-ink-subtle">
-            Plan {businessInfo.plan} · {businessInfo.location}
+            {businessInfo.location}
           </div>
         </div>
       </Link>
