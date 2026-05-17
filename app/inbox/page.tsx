@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleHelp,
+  Edit3,
   Filter,
   Image as ImageIcon,
   Inbox,
@@ -13,15 +14,23 @@ import {
   Mic,
   Phone,
   Search,
+  Send,
   Sparkles,
   XCircle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { SectionHeader } from "@/components/ui/section-header";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { InboxItem, InboxStatus, inboxItems } from "@/lib/mock-data";
+import { SegmentedTabs } from "@/components/ui/tabs";
+import { ConversationThread } from "@/components/common/conversation-thread";
+import {
+  InboxItem,
+  InboxStatus,
+  conversations,
+  inboxItems,
+} from "@/lib/mock-data";
 import { formatARS, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -31,15 +40,10 @@ const CHANNEL_ICON = {
   foto: ImageIcon,
 } as const;
 
-const FILTERS: { key: "todos" | InboxStatus; label: string }[] = [
-  { key: "todos", label: "Todos" },
-  { key: "pendiente", label: "Pendientes" },
-  { key: "revision", label: "Revisión" },
-  { key: "aprobado", label: "Aprobados" },
-];
+type Filter = "todos" | InboxStatus;
 
 export default function InboxPage() {
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("todos");
+  const [filter, setFilter] = useState<Filter>("todos");
   const [selectedId, setSelectedId] = useState<string>(inboxItems[0].id);
   const [statusOverrides, setStatusOverrides] = useState<Record<string, InboxStatus>>({});
 
@@ -58,6 +62,7 @@ export default function InboxPage() {
   );
 
   const selected = items.find((m) => m.id === selectedId) ?? items[0];
+  const turns = conversations[selected.id] ?? [];
 
   const counts = {
     pendiente: items.filter((m) => m.status === "pendiente").length,
@@ -70,7 +75,7 @@ export default function InboxPage() {
       <SectionHeader
         eyebrow="Inbox IA · WhatsApp"
         title="Cada mensaje, un registro contable."
-        description="La IA escucha tu WhatsApp, entiende el contexto del negocio y crea movimientos listos para aprobar. Vos sólo confirmás."
+        description="Tu equipo manda lo que pasa en el negocio por WhatsApp. La IA entiende, estructura y deja todo listo para que vos sólo confirmes."
         actions={
           <>
             <Button size="sm" variant="ghost">
@@ -85,6 +90,9 @@ export default function InboxPage() {
         }
       />
 
+      {/* Banner Antes / Ahora */}
+      <BeforeAfterBanner />
+
       {/* Stats */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatPill label="Pendientes" value={counts.pendiente} tone="brand" />
@@ -93,9 +101,9 @@ export default function InboxPage() {
         <StatPill label="Tasa de acierto IA" value="96%" tone="ai" />
       </div>
 
-      {/* Inbox + Detail layout */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[420px_1fr]">
-        {/* List */}
+      {/* Inbox 3 columnas */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[340px_1fr_400px]">
+        {/* Columna 1: Lista */}
         <Card className="overflow-hidden">
           <div className="border-b border-line p-3">
             <div className="flex items-center gap-2 rounded-lg border border-line bg-bg-subtle px-3 py-2">
@@ -106,24 +114,20 @@ export default function InboxPage() {
               />
               <Filter className="h-4 w-4 text-ink-subtle" />
             </div>
-            <div className="mt-3 flex gap-1 overflow-x-auto">
-              {FILTERS.map((f) => (
-                <button
-                  key={f.key}
-                  onClick={() => setFilter(f.key)}
-                  className={cn(
-                    "shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                    filter === f.key
-                      ? "border-brand-500/30 bg-brand-500/10 text-brand-300"
-                      : "border-line bg-bg-subtle text-ink-muted hover:text-ink",
-                  )}
-                >
-                  {f.label}
-                </button>
-              ))}
+            <div className="mt-3">
+              <SegmentedTabs
+                options={[
+                  { value: "todos", label: "Todos" },
+                  { value: "pendiente", label: "Pendientes", count: counts.pendiente },
+                  { value: "revision", label: "Revisión", count: counts.revision },
+                  { value: "aprobado", label: "OK", count: counts.aprobado },
+                ]}
+                value={filter}
+                onChange={setFilter}
+              />
             </div>
           </div>
-          <ul className="max-h-[640px] divide-y divide-line overflow-y-auto scrollbar-thin">
+          <ul className="max-h-[680px] divide-y divide-line overflow-y-auto scrollbar-thin">
             {filtered.length === 0 && (
               <li className="grid place-items-center gap-2 px-6 py-16 text-center">
                 <div className="grid h-10 w-10 place-items-center rounded-full border border-line bg-bg-subtle text-ink-muted">
@@ -131,7 +135,7 @@ export default function InboxPage() {
                 </div>
                 <p className="text-sm text-ink">Sin mensajes en esta vista</p>
                 <p className="text-xs text-ink-muted">
-                  Probá con otro filtro o esperá nuevos registros.
+                  Probá otro filtro o esperá nuevos registros.
                 </p>
               </li>
             )}
@@ -139,21 +143,22 @@ export default function InboxPage() {
               const ChannelIcon = CHANNEL_ICON[m.channel];
               const active = m.id === selectedId;
               return (
-                <li key={m.id}>
+                <li key={m.id} className="relative">
                   <button
                     onClick={() => setSelectedId(m.id)}
                     className={cn(
                       "flex w-full items-start gap-3 px-4 py-3 text-left transition-colors",
-                      active
-                        ? "bg-bg-elevated"
-                        : "hover:bg-bg-subtle",
+                      active ? "bg-bg-elevated" : "hover:bg-bg-subtle/60",
                     )}
                   >
                     {active && (
-                      <span className="absolute left-0 h-10 w-0.5 -translate-y-0.5 rounded-full bg-brand-500" />
+                      <span className="absolute left-0 top-1/2 h-10 w-0.5 -translate-y-1/2 rounded-r bg-brand-500" />
                     )}
-                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-gradient-to-br from-brand-400/20 to-brand-600/20 text-xs font-semibold text-brand-300">
+                    <div className="relative grid h-9 w-9 shrink-0 place-items-center rounded-full bg-gradient-to-br from-brand-400/20 to-brand-600/20 text-xs font-semibold text-brand-300">
                       {initials(m.sender)}
+                      {m.status === "pendiente" && (
+                        <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-bg-elevated bg-brand-500" />
+                      )}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
@@ -182,16 +187,65 @@ export default function InboxPage() {
           </ul>
         </Card>
 
-        {/* Detail */}
-        <Card className="overflow-hidden">
+        {/* Columna 2: Conversación */}
+        <Card className="flex flex-col overflow-hidden">
           <AnimatePresence mode="wait">
             <motion.div
               key={selected.id}
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.25 }}
+              className="flex h-full min-h-[560px] flex-col"
             >
-              <MessageDetail
+              <div className="flex items-center justify-between border-b border-line px-5 py-3">
+                <div className="flex items-center gap-3">
+                  <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-brand-400/20 to-brand-600/20 text-xs font-semibold text-brand-300">
+                    {initials(selected.sender)}
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-ink">{selected.sender}</div>
+                    <div className="flex items-center gap-1.5 text-[11px] text-ink-muted">
+                      <span className="h-1.5 w-1.5 rounded-full bg-success-500" />
+                      en línea · {selected.role} · WhatsApp
+                    </div>
+                  </div>
+                </div>
+                <StatusBadge status={selected.status} large />
+              </div>
+
+              <div className="flex-1 space-y-4 overflow-y-auto bg-[linear-gradient(180deg,rgba(132,204,22,0.02),transparent_40%)] p-5 scrollbar-thin">
+                <DayDivider label="Hoy" />
+                <ConversationThread turns={turns} sender={selected.sender} />
+                <TypingIndicator />
+              </div>
+
+              <div className="border-t border-line bg-bg-subtle/40 p-3">
+                <div className="flex items-center gap-2 rounded-xl border border-line bg-bg-elevated px-3 py-2">
+                  <Sparkles className="h-4 w-4 text-ai-400" />
+                  <input
+                    placeholder="Respondé como copiloto…"
+                    className="flex-1 bg-transparent text-sm placeholder:text-ink-subtle focus:outline-none"
+                  />
+                  <Button variant="ai" size="sm">
+                    <Send className="h-3.5 w-3.5" />
+                    Enviar
+                  </Button>
+                </div>
+              </div>
+            </motion.div>
+          </AnimatePresence>
+        </Card>
+
+        {/* Columna 3: Registro detectado */}
+        <Card className="overflow-hidden">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={selected.id}
+              initial={{ opacity: 0, x: 8 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.25 }}
+            >
+              <ExtractedPanel
                 item={selected}
                 onApprove={() =>
                   setStatusOverrides((s) => ({ ...s, [selected.id]: "aprobado" }))
@@ -208,7 +262,57 @@ export default function InboxPage() {
   );
 }
 
-function MessageDetail({
+function BeforeAfterBanner() {
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-ai-400/20 bg-gradient-to-r from-ai-500/[0.06] via-bg-elevated/40 to-success-500/[0.04]">
+      <div className="grid grid-cols-1 gap-3 p-4 md:grid-cols-[auto_1fr_auto_1fr] md:items-center md:gap-6 md:p-5">
+        <Badge tone="ai">
+          <Sparkles className="h-3 w-3" /> Diferencial
+        </Badge>
+        <div>
+          <div className="eyebrow text-danger-400/90">Antes</div>
+          <p className="text-sm text-ink">
+            Mensajes perdidos en WhatsApp, planillas que nadie completa, decisiones a fin de mes.
+          </p>
+        </div>
+        <div className="hidden text-ai-400 md:block">→</div>
+        <div>
+          <div className="eyebrow text-success-400/90">Ahora</div>
+          <p className="text-sm text-ink">
+            Administración ordenada en tiempo real. Cada mensaje se convierte en un dato útil.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DayDivider({ label }: { label: string }) {
+  return (
+    <div className="my-2 flex items-center gap-3">
+      <div className="h-px flex-1 bg-line" />
+      <span className="rounded-full border border-line bg-bg-subtle px-2.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-subtle">
+        {label}
+      </span>
+      <div className="h-px flex-1 bg-line" />
+    </div>
+  );
+}
+
+function TypingIndicator() {
+  return (
+    <div className="flex items-center gap-2 pl-9 text-[11px] text-ai-400">
+      <span className="flex gap-1">
+        <span className="h-1.5 w-1.5 animate-pulseDot rounded-full bg-ai-400" style={{ animationDelay: "0ms" }} />
+        <span className="h-1.5 w-1.5 animate-pulseDot rounded-full bg-ai-400" style={{ animationDelay: "150ms" }} />
+        <span className="h-1.5 w-1.5 animate-pulseDot rounded-full bg-ai-400" style={{ animationDelay: "300ms" }} />
+      </span>
+      Copiloto está escuchando…
+    </div>
+  );
+}
+
+function ExtractedPanel({
   item,
   onApprove,
   onReview,
@@ -217,141 +321,116 @@ function MessageDetail({
   onApprove: () => void;
   onReview: () => void;
 }) {
-  const ChannelIcon = CHANNEL_ICON[item.channel];
   const isApproved = item.status === "aprobado";
+  const confidencePct = Math.round(item.extracted.confidence * 100);
 
   return (
     <div className="flex h-full flex-col">
-      <CardHeader>
-        <div className="flex items-start gap-3">
-          <div className="grid h-10 w-10 place-items-center rounded-full bg-gradient-to-br from-brand-400/20 to-brand-600/20 text-sm font-semibold text-brand-300">
-            {initials(item.sender)}
-          </div>
-          <div>
-            <CardTitle>{item.sender}</CardTitle>
-            <p className="mt-0.5 text-xs text-ink-muted">
-              {item.role} · {relativeTime(item.receivedAt)} ·{" "}
-              <span className="inline-flex items-center gap-1">
-                <ChannelIcon className="h-3 w-3" /> {item.channel}
-              </span>
-            </p>
-          </div>
-        </div>
-        <StatusBadge status={item.status} large />
-      </CardHeader>
-
-      <CardContent className="space-y-4 pt-0">
-        {/* Mensaje original */}
-        <div>
-          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-subtle">
-            Mensaje original
-          </div>
-          <div className="rounded-2xl rounded-tl-sm border border-line bg-success-500/[0.04] p-3.5">
-            <div className="mb-1 inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-success-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-success-500" />
-              WhatsApp Business
+      <div className="border-b border-line px-5 py-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="grid h-8 w-8 place-items-center rounded-lg border border-ai-400/30 bg-ai-500/15">
+              <Sparkles className="h-4 w-4 text-ai-400" />
             </div>
-            <p className="text-sm leading-relaxed text-ink">{item.raw}</p>
-          </div>
-        </div>
-
-        {/* IA extracción */}
-        <div className="rounded-2xl border border-ai-400/30 bg-ai-500/[0.05] p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="grid h-7 w-7 place-items-center rounded-lg border border-ai-400/30 bg-ai-500/15 text-ai-400">
-                <Sparkles className="h-3.5 w-3.5" />
-              </div>
-              <div className="leading-tight">
-                <div className="text-sm font-medium text-ink">La IA entendió</div>
-                <div className="text-[11px] text-ink-muted">
-                  Confianza{" "}
-                  <span className="font-medium text-ai-400">
-                    {Math.round(item.extracted.confidence * 100)}%
-                  </span>
-                  {item.extracted.missing && item.extracted.missing.length > 0 && (
-                    <> · Falta confirmar: {item.extracted.missing.join(", ")}</>
-                  )}
-                </div>
+            <div>
+              <div className="text-sm font-semibold text-ink">Registro detectado</div>
+              <div className="text-[11px] text-ink-muted">
+                Borrador generado por la IA
               </div>
             </div>
-            <Badge tone="ai">Borrador automático</Badge>
           </div>
+          <Badge tone="ai">{item.extracted.tipo}</Badge>
+        </div>
 
-          <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
-            <FieldRow label="Tipo" value={item.extracted.tipo} />
-            {item.extracted.monto !== undefined && (
-              <FieldRow
-                label="Monto"
-                value={formatARS(item.extracted.monto)}
-                highlight
-              />
-            )}
-            {item.extracted.proveedor && (
-              <FieldRow label="Proveedor" value={item.extracted.proveedor} />
-            )}
-            {item.extracted.empleado && (
-              <FieldRow label="Empleado" value={item.extracted.empleado} />
-            )}
-            {item.extracted.insumo && (
-              <FieldRow label="Insumo" value={item.extracted.insumo} />
-            )}
-            {item.extracted.cantidad && (
-              <FieldRow label="Cantidad" value={item.extracted.cantidad} />
-            )}
-            {item.extracted.medioPago && (
-              <FieldRow label="Medio de pago" value={item.extracted.medioPago} />
-            )}
-            {item.extracted.canal && (
-              <FieldRow label="Canal" value={item.extracted.canal} />
-            )}
-            <FieldRow label="Categoría" value={item.extracted.categoria ?? "—"} />
-            <FieldRow label="Fecha" value={item.extracted.fecha} />
+        {/* Confidence bar */}
+        <div className="mt-4">
+          <div className="mb-1.5 flex items-center justify-between text-[11px]">
+            <span className="text-ink-subtle">Confianza de la IA</span>
+            <span className="font-semibold text-ai-400 tabular-nums">{confidencePct}%</span>
           </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-bg-subtle">
+            <motion.div
+              initial={{ width: 0 }}
+              animate={{ width: `${confidencePct}%` }}
+              transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+              className="h-full rounded-full bg-gradient-to-r from-ai-400 to-ai-600"
+            />
+          </div>
+        </div>
+      </div>
 
-          {item.extracted.missing && item.extracted.missing.length > 0 && (
-            <div className="mt-3 flex items-center gap-2 rounded-lg border border-warn-500/30 bg-warn-500/10 px-3 py-2 text-xs text-warn-400">
-              <CircleHelp className="h-3.5 w-3.5" />
-              Falta info para registrar: {item.extracted.missing.join(", ")}
+      <div className="flex-1 space-y-1 overflow-y-auto px-5 py-4 scrollbar-thin">
+        {item.extracted.monto !== undefined && (
+          <div className="mb-3 rounded-xl border border-brand-500/20 bg-brand-500/[0.05] p-3">
+            <div className="text-[10px] uppercase tracking-wider text-brand-300/80">
+              Monto detectado
             </div>
-          )}
-        </div>
-
-        {/* Acciones */}
-        <div className="flex flex-col gap-2 border-t border-line pt-4 md:flex-row md:items-center md:justify-between">
-          <p className="text-xs text-ink-muted">
-            Al aprobar, el movimiento queda registrado y disponible en los reportes.
-          </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="ghost" size="md" onClick={onReview}>
-              <CircleHelp className="h-4 w-4" />
-              Pedir dato faltante
-            </Button>
-            <Button variant="ghost" size="md">
-              <XCircle className="h-4 w-4" />
-              Descartar
-            </Button>
-            <Button
-              variant="primary"
-              size="md"
-              onClick={onApprove}
-              disabled={isApproved}
-            >
-              {isApproved ? (
-                <>
-                  <CheckCircle2 className="h-4 w-4" />
-                  Aprobado
-                </>
-              ) : (
-                <>
-                  <Check className="h-4 w-4" />
-                  Aprobar registro
-                </>
-              )}
-            </Button>
+            <div className="mt-1 text-2xl font-semibold tracking-tight text-gradient-brand tabular-nums">
+              {formatARS(item.extracted.monto)}
+            </div>
           </div>
+        )}
+
+        <FieldRow label="Tipo de movimiento" value={item.extracted.tipo} />
+        {item.extracted.proveedor && <FieldRow label="Proveedor" value={item.extracted.proveedor} />}
+        {item.extracted.empleado && <FieldRow label="Empleado" value={item.extracted.empleado} />}
+        {item.extracted.insumo && <FieldRow label="Insumo" value={item.extracted.insumo} />}
+        {item.extracted.cantidad && <FieldRow label="Cantidad" value={item.extracted.cantidad} />}
+        {item.extracted.medioPago && <FieldRow label="Medio de pago" value={item.extracted.medioPago} />}
+        {item.extracted.canal && <FieldRow label="Canal" value={item.extracted.canal} />}
+        <FieldRow label="Categoría" value={item.extracted.categoria ?? "—"} />
+        <FieldRow label="Fecha" value={item.extracted.fecha} />
+
+        {item.extracted.missing && item.extracted.missing.length > 0 && (
+          <div className="mt-3 flex items-start gap-2 rounded-xl border border-warn-500/30 bg-warn-500/[0.08] p-3 text-xs">
+            <CircleHelp className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn-400" />
+            <div>
+              <div className="font-medium text-warn-400">Falta confirmar</div>
+              <div className="mt-0.5 text-ink-muted">
+                {item.extracted.missing.join(", ")}. La IA te lo está preguntando por WhatsApp.
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="border-t border-line bg-bg-subtle/40 p-3">
+        <div className="grid grid-cols-2 gap-2">
+          <Button variant="ghost" size="sm" onClick={onReview}>
+            <CircleHelp className="h-3.5 w-3.5" />
+            Pedir dato
+          </Button>
+          <Button variant="ghost" size="sm">
+            <Edit3 className="h-3.5 w-3.5" />
+            Editar
+          </Button>
+          <Button variant="ghost" size="sm">
+            <XCircle className="h-3.5 w-3.5" />
+            Descartar
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={onApprove}
+            disabled={isApproved}
+          >
+            {isApproved ? (
+              <>
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Aprobado
+              </>
+            ) : (
+              <>
+                <Check className="h-3.5 w-3.5" />
+                Aprobar
+              </>
+            )}
+          </Button>
         </div>
-      </CardContent>
+        <p className="mt-2 text-[10px] leading-relaxed text-ink-subtle">
+          La IA no reemplaza tu criterio: te muestra lo que antes no veías.
+        </p>
+      </div>
     </div>
   );
 }
@@ -359,23 +438,14 @@ function MessageDetail({
 function FieldRow({
   label,
   value,
-  highlight,
 }: {
   label: string;
   value: string;
-  highlight?: boolean;
 }) {
   return (
-    <div className="flex items-baseline justify-between gap-3 border-b border-line/60 py-1.5 last:border-b-0">
+    <div className="flex items-baseline justify-between gap-3 border-b border-line/60 py-2 last:border-b-0">
       <span className="text-xs text-ink-subtle">{label}</span>
-      <span
-        className={cn(
-          "text-right text-sm tabular-nums",
-          highlight ? "font-semibold text-brand-300" : "text-ink",
-        )}
-      >
-        {value}
-      </span>
+      <span className="text-right text-sm text-ink">{value}</span>
     </div>
   );
 }
@@ -429,7 +499,7 @@ function StatusBadge({
     return (
       <Badge tone="warn" className={large ? "text-xs" : undefined}>
         <CircleHelp className="h-3 w-3" />
-        Revisión
+        Dato faltante
       </Badge>
     );
   return (

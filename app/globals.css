@@ -5,33 +5,55 @@
 @layer base {
   :root {
     color-scheme: dark;
+    --noise: url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.06 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
   }
   html,
   body {
     height: 100%;
-    background-color: hsl(222 27% 5%);
+    background-color: hsl(222 30% 4%);
     color: hsl(210 20% 98%);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    font-feature-settings: "ss01", "cv11", "tnum";
   }
   body {
     background-image:
-      radial-gradient(ellipse 60% 40% at 50% -10%, rgba(249, 115, 22, 0.12), transparent 60%),
-      radial-gradient(ellipse 50% 40% at 110% 0%, rgba(139, 92, 246, 0.10), transparent 60%);
+      radial-gradient(ellipse 70% 50% at 50% -10%, rgba(249, 115, 22, 0.16), transparent 60%),
+      radial-gradient(ellipse 55% 45% at 110% 0%, rgba(139, 92, 246, 0.14), transparent 60%),
+      radial-gradient(ellipse 40% 30% at -10% 30%, rgba(34, 197, 94, 0.06), transparent 60%);
     background-attachment: fixed;
   }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image: var(--noise);
+    opacity: 0.4;
+    mix-blend-mode: overlay;
+    z-index: 0;
+  }
   ::selection {
-    background: rgba(249, 115, 22, 0.35);
+    background: rgba(249, 115, 22, 0.4);
     color: white;
+  }
+  h1, h2, h3 {
+    letter-spacing: -0.018em;
   }
 }
 
 @layer components {
   .card {
-    @apply rounded-2xl border border-line bg-bg-elevated/70 backdrop-blur-sm;
+    @apply relative rounded-2xl border border-line/80 bg-bg-elevated/60 backdrop-blur-md;
+    background-image: linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0));
     box-shadow:
-      0 1px 0 0 rgba(255, 255, 255, 0.03) inset,
-      0 1px 2px rgba(0, 0, 0, 0.3);
+      0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
+      0 0 0 1px rgba(255, 255, 255, 0.02),
+      0 1px 2px rgba(0, 0, 0, 0.4),
+      0 12px 32px -16px rgba(0, 0, 0, 0.6);
+  }
+  .card-quiet {
+    @apply rounded-xl border border-line/70 bg-bg-subtle/50;
   }
   .card-hover {
     @apply transition-all duration-200 hover:border-line-strong hover:bg-bg-elevated;
@@ -39,6 +61,15 @@
 
   .chip {
     @apply inline-flex items-center gap-1.5 rounded-full border border-line bg-bg-subtle px-2.5 py-1 text-xs font-medium text-ink-muted;
+  }
+
+  .surface-raised {
+    background-image:
+      radial-gradient(ellipse 100% 60% at 50% 0%, rgba(255,255,255,0.05), transparent 60%);
+  }
+
+  .ring-divider {
+    box-shadow: inset 0 -1px 0 hsl(220 14% 14%);
   }
 
   .btn-primary {
@@ -57,10 +88,16 @@
 
   .grid-bg {
     background-image:
-      linear-gradient(to right, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+      linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
     background-size: 32px 32px;
     mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, black, transparent 80%);
+  }
+
+  .grid-dots {
+    background-image: radial-gradient(rgba(255,255,255,0.08) 1px, transparent 1px);
+    background-size: 16px 16px;
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 50%, black, transparent 90%);
   }
 
   .scrollbar-thin::-webkit-scrollbar {
@@ -74,6 +111,20 @@
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
     background: hsl(220 14% 25%);
   }
+
+  .divider-soft {
+    background: linear-gradient(to right, transparent, hsl(220 14% 16%), transparent);
+    height: 1px;
+  }
+
+  .eyebrow {
+    @apply text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-subtle;
+  }
+
+  .glass {
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01));
+    backdrop-filter: blur(14px);
+  }
 }
 
 @layer utilities {
@@ -82,6 +133,9 @@
   }
   .mask-fade-b {
     mask-image: linear-gradient(to bottom, black 70%, transparent);
+  }
+  .mask-fade-r {
+    mask-image: linear-gradient(to right, black 80%, transparent);
   }
   .ring-glow-brand {
     box-shadow:
@@ -92,5 +146,17 @@
     box-shadow:
       0 0 0 1px rgba(139, 92, 246, 0.3),
       0 12px 40px -12px rgba(139, 92, 246, 0.45);
+  }
+  .text-gradient-brand {
+    background: linear-gradient(90deg, #FDBA74, #F97316 60%, #C2410C);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .text-gradient-ai {
+    background: linear-gradient(90deg, #C4B5FD, #A78BFA 60%, #7C3AED);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
   }
 }
