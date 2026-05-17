@@ -6,6 +6,8 @@ import {
   BarChart3,
   Boxes,
   ChefHat,
+  ClipboardList,
+  FileText,
   Inbox,
   LayoutDashboard,
   Receipt,
@@ -33,6 +35,25 @@ const NAV = [
         accent: "ai" as const,
       },
       { href: "/reportes", label: "Reportes IA", icon: Sparkles, accent: "ai" as const },
+    ],
+  },
+  {
+    label: "IA y documentos",
+    items: [
+      {
+        href: "/facturas",
+        label: "Facturas",
+        icon: FileText,
+        badge: "OCR",
+        accent: "ai" as const,
+      },
+      {
+        href: "/cierres",
+        label: "Cierres diarios",
+        icon: ClipboardList,
+        badge: "2",
+        accent: "ai" as const,
+      },
     ],
   },
   {

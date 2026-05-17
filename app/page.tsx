@@ -29,9 +29,17 @@ import {
   expensesByCategory,
   insights,
   kpiSparklines,
+  operationalIntelligence,
   salesByDay,
   todaySnapshot,
 } from "@/lib/mock-data";
+import {
+  Activity,
+  Banknote,
+  Boxes as BoxesIcon,
+  LineChart,
+  Radio,
+} from "lucide-react";
 import { formatARS, formatPercent } from "@/lib/format";
 
 export default function DashboardPage() {
@@ -164,6 +172,9 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* INTELIGENCIA OPERATIVA (ERP conversacional) */}
+      <OpIntelSection />
 
       {/* AI recommendations + Activity */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -346,5 +357,85 @@ function KpiSparkCard({
       </div>
       {hint && <p className="mt-2 text-[11px] text-ink-subtle">{hint}</p>}
     </div>
+  );
+}
+
+const OP_ICON = {
+  stock: BoxesIcon,
+  caja: Banknote,
+  costo: LineChart,
+  canal: Radio,
+  trend: Activity,
+};
+
+function OpIntelSection() {
+  return (
+    <section>
+      <div className="mb-3 flex items-end justify-between">
+        <div>
+          <div className="eyebrow mb-1 flex items-center gap-1.5 text-ai-400">
+            <Sparkles className="h-3 w-3" /> Inteligencia operativa
+          </div>
+          <h2 className="text-lg font-semibold tracking-tight text-ink">
+            Tu copiloto cruza datos que un dashboard común no ve.
+          </h2>
+        </div>
+        <Link
+          href="/reportes"
+          className="inline-flex items-center gap-1 text-xs text-ai-400 hover:text-ai-300"
+        >
+          Ver análisis completo <ArrowRight className="h-3 w-3" />
+        </Link>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {operationalIntelligence.map((o, idx) => {
+          const Icon = OP_ICON[o.icon] ?? Activity;
+          const toneClass = {
+            warn: "border-warn-500/25 bg-warn-500/[0.06] text-warn-400",
+            danger: "border-danger-500/25 bg-danger-500/[0.06] text-danger-400",
+            info: "border-ai-400/25 bg-ai-500/[0.06] text-ai-400",
+            success: "border-success-500/25 bg-success-500/[0.06] text-success-400",
+          }[o.tone];
+          return (
+            <div
+              key={o.id}
+              className="card group relative overflow-hidden p-4"
+              style={{ animationDelay: `${idx * 40}ms` }}
+            >
+              <div className={`mb-3 inline-flex items-center gap-2 rounded-lg border px-2 py-1 ${toneClass}`}>
+                <Icon className="h-3.5 w-3.5" />
+                <span className="text-[10px] font-semibold uppercase tracking-wider">
+                  {o.icon === "stock"
+                    ? "Stock"
+                    : o.icon === "caja"
+                      ? "Caja"
+                      : o.icon === "costo"
+                        ? "Costos"
+                        : o.icon === "canal"
+                          ? "Canal"
+                          : "Tendencia"}
+                </span>
+              </div>
+              <h3 className="text-sm font-semibold text-ink leading-snug">
+                {o.title}
+              </h3>
+              <p className="mt-1.5 text-xs text-ink-muted leading-relaxed">
+                {o.detail}
+              </p>
+              {o.action && (
+                <Link
+                  href={o.action.href}
+                  className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-brand-300 transition-colors hover:text-brand-200"
+                >
+                  {o.action.label}
+                  <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+                </Link>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }

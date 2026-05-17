@@ -22,7 +22,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Drawer } from "@/components/ui/drawer";
 import { SegmentedTabs } from "@/components/ui/tabs";
+import { CostHistoryChart } from "@/components/charts/cost-history-chart";
 import {
+  costingAlerts,
+  ingredientCostHistory,
+  productCostHistory,
   productRecommendations,
   products,
   recipes,
@@ -116,6 +120,9 @@ export default function ProductosPage() {
           </span>
         </div>
       </div>
+
+      {/* Banner costeo dinámico */}
+      <CosteoBanner />
 
       {/* Grid */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -213,12 +220,74 @@ export default function ProductosPage() {
   );
 }
 
+function CosteoBanner() {
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-ai-400/25 bg-gradient-to-r from-ai-500/[0.07] via-bg-elevated/40 to-brand-500/[0.05] p-5">
+      <div className="absolute -right-16 -top-16 h-44 w-44 rounded-full bg-ai-500/15 blur-3xl" />
+      <div className="relative grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="md:col-span-2">
+          <div className="mb-1.5 flex items-center gap-2">
+            <Badge tone="ai">
+              <Sparkles className="h-3 w-3" /> Costeo dinámico
+            </Badge>
+            <span className="text-[10px] uppercase tracking-wider text-ink-subtle">
+              · Recalcula con cada factura
+            </span>
+          </div>
+          <h3 className="text-base font-semibold tracking-tight text-ink md:text-lg">
+            Cuando cambia el precio de un insumo, cambia el costo real de tus productos.
+          </h3>
+          <p className="mt-1 max-w-2xl text-xs text-ink-muted md:text-sm">
+            Cada factura procesada por OCR actualiza el precio promedio de la materia prima
+            y recalcula automáticamente la rentabilidad de cada producto que la usa.
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {costingAlerts.slice(0, 3).map((a, i) => (
+            <div
+              key={i}
+              className={cn(
+                "rounded-xl border p-2.5",
+                a.tone === "danger" && "border-danger-500/25 bg-danger-500/[0.06]",
+                a.tone === "warn" && "border-warn-500/25 bg-warn-500/[0.06]",
+                a.tone === "info" && "border-ai-400/25 bg-ai-500/[0.06]",
+              )}
+            >
+              <div
+                className={cn(
+                  "mb-1 h-1.5 w-1.5 rounded-full",
+                  a.tone === "danger" && "bg-danger-500",
+                  a.tone === "warn" && "bg-warn-500",
+                  a.tone === "info" && "bg-ai-500",
+                )}
+              />
+              <div className="text-[10px] font-semibold leading-snug text-ink line-clamp-3">
+                {a.title}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type DetailTab = "receta" | "costeo" | "ia";
+
 function ProductDetail({ product }: { product: typeof products[number] }) {
   const recipe = recipes[product.nombre] ?? [];
   const recos = productRecommendations[product.nombre] ?? [];
 
   const baseMargin = ((product.precio - product.costo) / product.precio) * 100;
   const [meatBump, setMeatBump] = useState(0);
+  const [tab, setTab] = useState<DetailTab>("receta");
+
+  const productHistory = productCostHistory[product.nombre];
+  const variation = productHistory
+    ? ((productHistory[productHistory.length - 1].precio - productHistory[0].precio) /
+        productHistory[0].precio) *
+      100
+    : 0;
 
   // Simulación: aumento de carne sube costo proporcional al share de carne en la receta.
   const meatShare =
@@ -252,7 +321,20 @@ function ProductDetail({ product }: { product: typeof products[number] }) {
         </div>
       </div>
 
-      {/* Receta */}
+      {/* Tabs internos */}
+      <div className="flex">
+        <SegmentedTabs
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: "receta", label: "Receta" },
+            { value: "costeo", label: "Costeo dinámico" },
+            { value: "ia", label: "Recomendaciones IA", count: recos.length || undefined },
+          ]}
+        />
+      </div>
+
+      {tab === "receta" && (
       <section>
         <div className="mb-2 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-ink">Receta y composición de costo</h3>
@@ -281,7 +363,14 @@ function ProductDetail({ product }: { product: typeof products[number] }) {
           ))}
         </div>
       </section>
+      )}
 
+      {tab === "costeo" && (
+        <CosteoTab product={product} history={productHistory} variation={variation} recipe={recipe} />
+      )}
+
+      {tab === "receta" && (
+      <>
       {/* Simulador */}
       <section className="rounded-2xl border border-ai-400/30 bg-ai-500/[0.05] p-4">
         <div className="mb-3 flex items-center gap-2">
@@ -353,8 +442,11 @@ function ProductDetail({ product }: { product: typeof products[number] }) {
         )}
       </section>
 
+      </>
+      )}
+
       {/* Recomendaciones IA */}
-      {recos.length > 0 && (
+      {tab === "ia" && recos.length > 0 && (
         <section>
           <div className="mb-2 flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-ai-400" />
@@ -401,6 +493,151 @@ function ProductDetail({ product }: { product: typeof products[number] }) {
           <ArrowRight className="h-4 w-4" />
         </Button>
       </div>
+    </div>
+  );
+}
+
+function CosteoTab({
+  product,
+  history,
+  variation,
+  recipe,
+}: {
+  product: typeof products[number];
+  history?: { fecha: string; precio: number }[];
+  variation: number;
+  recipe: { nombre: string; share: number }[];
+}) {
+  // Top ingredientes con historial conocido
+  const ingHistKeys = Object.keys(ingredientCostHistory);
+  const tracked = recipe
+    .map((i) => ({
+      nombre: i.nombre,
+      share: i.share,
+      key: ingHistKeys.find(
+        (k) =>
+          i.nombre.toLowerCase().includes(k.toLowerCase()) ||
+          k.toLowerCase().includes(i.nombre.split(" ")[0].toLowerCase()),
+      ),
+    }))
+    .filter((x) => x.key)
+    .slice(0, 3);
+
+  return (
+    <div className="space-y-5">
+      {/* Header costo histórico */}
+      <div className="rounded-2xl border border-line bg-bg-subtle/40 p-4">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <div className="eyebrow mb-1">Costo del producto · últimos 5 meses</div>
+            <h3 className="text-lg font-semibold tracking-tight text-ink">
+              {product.nombre}
+            </h3>
+          </div>
+          <div className="text-right">
+            <div className="text-[10px] uppercase tracking-wider text-ink-subtle">
+              Variación acumulada
+            </div>
+            <div
+              className={cn(
+                "text-2xl font-semibold tabular-nums",
+                variation > 0 ? "text-danger-400" : "text-success-400",
+              )}
+            >
+              {variation > 0 ? "+" : ""}
+              {variation.toFixed(1)}%
+            </div>
+          </div>
+        </div>
+        <div className="mt-3">
+          {history ? (
+            <CostHistoryChart data={history} tone="brand" height={160} />
+          ) : (
+            <p className="text-xs text-ink-muted">Sin historial registrado todavía.</p>
+          )}
+        </div>
+      </div>
+
+      {/* Insumos sensibles */}
+      {tracked.length > 0 && (
+        <section>
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-ink">
+              Insumos que más impactan el costo
+            </h3>
+            <Badge tone="ai">
+              <Sparkles className="h-3 w-3" /> Detectados por IA
+            </Badge>
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            {tracked.map((t) => {
+              const hist = ingredientCostHistory[t.key!];
+              const lastV = hist[hist.length - 1].precio;
+              const firstV = hist[0].precio;
+              const variation = ((lastV - firstV) / firstV) * 100;
+              return (
+                <div key={t.key} className="card-quiet overflow-hidden">
+                  <div className="border-b border-line p-3">
+                    <div className="text-xs text-ink-muted">{t.key}</div>
+                    <div className="mt-0.5 flex items-baseline justify-between">
+                      <div className="text-sm font-semibold text-ink tabular-nums">
+                        {formatARS(lastV)}
+                      </div>
+                      <div
+                        className={cn(
+                          "text-xs tabular-nums",
+                          variation > 0 ? "text-danger-400" : "text-success-400",
+                        )}
+                      >
+                        {variation > 0 ? "+" : ""}
+                        {variation.toFixed(1)}%
+                      </div>
+                    </div>
+                    <div className="mt-0.5 text-[10px] text-ink-subtle">
+                      {t.share.toFixed(1)}% del costo del producto
+                    </div>
+                  </div>
+                  <CostHistoryChart data={hist} tone="danger" height={80} />
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* Alertas de costeo */}
+      <section className="rounded-2xl border border-warn-500/20 bg-warn-500/[0.04] p-4">
+        <div className="mb-2 flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-warn-400" />
+          <h3 className="text-sm font-semibold text-ink">Alertas de margen y costeo</h3>
+        </div>
+        <ul className="space-y-2 text-sm">
+          {costingAlerts.map((a, idx) => (
+            <li
+              key={idx}
+              className={cn(
+                "flex items-start gap-2 rounded-xl border p-3",
+                a.tone === "danger" && "border-danger-500/25 bg-danger-500/[0.06]",
+                a.tone === "warn" && "border-warn-500/25 bg-warn-500/[0.06]",
+                a.tone === "info" && "border-ai-400/25 bg-ai-500/[0.06]",
+              )}
+            >
+              <span
+                className={cn(
+                  "mt-1 h-1.5 w-1.5 shrink-0 rounded-full",
+                  a.tone === "danger" && "bg-danger-500",
+                  a.tone === "warn" && "bg-warn-500",
+                  a.tone === "info" && "bg-ai-500",
+                )}
+              />
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-ink">{a.title}</div>
+                <div className="mt-0.5 text-xs text-ink-muted">{a.detail}</div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </section>
     </div>
   );
 }

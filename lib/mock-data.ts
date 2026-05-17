@@ -803,3 +803,442 @@ export const todaySnapshot = {
   margenHoy: 33.4,
   costoHoyPct: 66.6,
 };
+
+// ---------- INTELIGENCIA OPERATIVA (ERP conversacional) ----------
+export const operationalIntelligence: {
+  id: string;
+  icon: "stock" | "caja" | "costo" | "canal" | "trend";
+  tone: "warn" | "danger" | "info" | "success";
+  title: string;
+  detail: string;
+  action?: { label: string; href: string };
+}[] = [
+  {
+    id: "op1",
+    icon: "stock",
+    tone: "warn",
+    title: "Vendiste 36 burgers pero el stock consumido no coincide",
+    detail: "Debería haberse descontado 6,5 kg de carne. Sólo se registraron 5,4 kg. Diferencia ≈ 1,1 kg / $11.300.",
+    action: { label: "Auditar consumo", href: "/stock" },
+  },
+  {
+    id: "op2",
+    icon: "caja",
+    tone: "info",
+    title: "El retiro de socios representa 33% de la caja del día",
+    detail: "$230.000 sobre $693.000. Por encima del límite sugerido (20%). Revisar política de retiros.",
+    action: { label: "Ver cierre", href: "/cierres" },
+  },
+  {
+    id: "op3",
+    icon: "costo",
+    tone: "danger",
+    title: "El costo operativo del foodtruck está 9% por encima del promedio",
+    detail: "Insumos + combustible + Día Licha. Sugerimos revisar contrato de gas y consumo de descartables.",
+    action: { label: "Ver costos", href: "/gastos" },
+  },
+  {
+    id: "op4",
+    icon: "canal",
+    tone: "success",
+    title: "La venta por QR aumentó 18% esta semana",
+    detail: "Pasó de $151k a $178k diarios promedio. Buen momento para empujar el descuento de Mercado Pago.",
+    action: { label: "Ver ventas", href: "/ventas" },
+  },
+];
+
+// ---------- FACTURAS / OCR ----------
+export type InvoiceStatus =
+  | "procesando"
+  | "revision"
+  | "aprobado"
+  | "contador";
+
+export type InvoiceItem = {
+  desc: string;
+  qty: string;
+  unit: number;
+  total: number;
+  matched?: string;
+};
+
+export type Invoice = {
+  id: string;
+  proveedor: string;
+  cuit: string;
+  numero: string;
+  tipo: "A" | "B" | "C";
+  fecha: string;
+  recibida: Date;
+  source: "foto" | "pdf";
+  status: InvoiceStatus;
+  confidence: number;
+  metodoPago: string;
+  subtotal: number;
+  iva: number;
+  total: number;
+  items: InvoiceItem[];
+  sender: string;
+  vencimiento?: string;
+};
+
+export const invoices: Invoice[] = [
+  {
+    id: "f1",
+    proveedor: "Frigorífico Don José",
+    cuit: "30-71238412-5",
+    numero: "A-0004-00012845",
+    tipo: "A",
+    fecha: "16/05/2026",
+    vencimiento: "30/05/2026",
+    recibida: new Date(Date.now() - 1000 * 60 * 12),
+    source: "foto",
+    status: "revision",
+    confidence: 0.94,
+    metodoPago: "Transferencia",
+    subtotal: 148_760,
+    iva: 31_240,
+    total: 180_000,
+    sender: "Mateo Iglesias",
+    items: [
+      { desc: "Carne premium 180g - corte", qty: "20 kg", unit: 7_438, total: 148_760, matched: "Carne premium 180g" },
+    ],
+  },
+  {
+    id: "f2",
+    proveedor: "Panadería La Espiga",
+    cuit: "30-66781234-2",
+    numero: "B-0002-00009881",
+    tipo: "B",
+    fecha: "15/05/2026",
+    recibida: new Date(Date.now() - 1000 * 60 * 60 * 3),
+    source: "foto",
+    status: "procesando",
+    confidence: 0.0,
+    metodoPago: "Pendiente",
+    subtotal: 51_570,
+    iva: 10_830,
+    total: 62_400,
+    sender: "Lucía Romero",
+    items: [
+      { desc: "Pan brioche x 120 unidades", qty: "120 u", unit: 430, total: 51_570, matched: "Pan brioche" },
+    ],
+  },
+  {
+    id: "f3",
+    proveedor: "La Serenísima",
+    cuit: "30-50000003-2",
+    numero: "A-0011-00345122",
+    tipo: "A",
+    fecha: "14/05/2026",
+    vencimiento: "28/05/2026",
+    recibida: new Date(Date.now() - 1000 * 60 * 60 * 26),
+    source: "pdf",
+    status: "aprobado",
+    confidence: 0.98,
+    metodoPago: "Cuenta corriente · 14 días",
+    subtotal: 69_421,
+    iva: 14_579,
+    total: 84_000,
+    sender: "Mateo Iglesias",
+    items: [
+      { desc: "Cheddar block 1kg", qty: "10 kg", unit: 6_942, total: 69_421, matched: "Queso cheddar" },
+    ],
+  },
+  {
+    id: "f4",
+    proveedor: "Coca-Cola FEMSA",
+    cuit: "30-50000694-1",
+    numero: "A-0009-00012445",
+    tipo: "A",
+    fecha: "12/05/2026",
+    recibida: new Date(Date.now() - 1000 * 60 * 60 * 80),
+    source: "pdf",
+    status: "contador",
+    confidence: 0.99,
+    metodoPago: "Cuenta corriente · 30 días",
+    subtotal: 79_339,
+    iva: 16_661,
+    total: 96_000,
+    sender: "Mateo Iglesias",
+    items: [
+      { desc: "Coca-Cola 500ml x 24u", qty: "4 cajas", unit: 19_835, total: 79_339, matched: "Gaseosas 500ml" },
+    ],
+  },
+  {
+    id: "f5",
+    proveedor: "Verdulería Centro",
+    cuit: "27-32145698-7",
+    numero: "C-0001-00002238",
+    tipo: "C",
+    fecha: "13/05/2026",
+    recibida: new Date(Date.now() - 1000 * 60 * 60 * 50),
+    source: "foto",
+    status: "aprobado",
+    confidence: 0.86,
+    metodoPago: "Efectivo",
+    subtotal: 28_400,
+    iva: 0,
+    total: 28_400,
+    sender: "Lucía Romero",
+    items: [
+      { desc: "Lechuga manteca", qty: "6 kg", unit: 1_900, total: 11_400, matched: "Lechuga" },
+      { desc: "Tomate redondo", qty: "6 kg", unit: 2_833, total: 17_000, matched: "Tomate" },
+    ],
+  },
+  {
+    id: "f6",
+    proveedor: "Frigorífico Sur",
+    cuit: "30-71540032-9",
+    numero: "A-0007-00001102",
+    tipo: "A",
+    fecha: "10/05/2026",
+    vencimiento: "24/05/2026",
+    recibida: new Date(Date.now() - 1000 * 60 * 60 * 168),
+    source: "pdf",
+    status: "contador",
+    confidence: 0.97,
+    metodoPago: "Transferencia",
+    subtotal: 163_223,
+    iva: 34_277,
+    total: 197_500,
+    sender: "Mateo Iglesias",
+    items: [
+      { desc: "Carne premium 180g", qty: "25 kg", unit: 6_529, total: 163_223, matched: "Carne premium 180g" },
+    ],
+  },
+];
+
+// ---------- CIERRES DIARIOS (foodtruck-style) ----------
+export type Closure = {
+  id: string;
+  punto: string;
+  fecha: string;
+  recibida: Date;
+  sender: string;
+  raw: string;
+  parsed: {
+    ingresos: { medio: string; monto: number }[];
+    gastos: { concepto: string; monto: number }[];
+    retiros: { concepto: string; monto: number }[];
+    cambio: number;
+    productos: { nombre: string; cantidad: number }[];
+    total: number;
+    neto: number;
+  };
+  inconsistencias: { tone: "warn" | "danger" | "info"; msg: string }[];
+  status: "pendiente" | "aprobado";
+};
+
+export const closures: Closure[] = [
+  {
+    id: "c1",
+    punto: "CARRO foodtruck",
+    fecha: "16/05/2026",
+    recibida: new Date(Date.now() - 1000 * 60 * 25),
+    sender: "Día Licha",
+    status: "pendiente",
+    raw: `CARRO foodtruck 16/05
+
+EFECTIVO: $290.000
+TARJETA: $225.000
+QR: $178.000
+
+TOTAL: $693.000
+
+GASTOS:
+$60.000 (DIA LICHA)
+
+RETIRO: $230.000
+
+CAMBIO: $8.000
+
+Burgers: 36`,
+    parsed: {
+      ingresos: [
+        { medio: "Efectivo", monto: 290_000 },
+        { medio: "Tarjeta", monto: 225_000 },
+        { medio: "QR", monto: 178_000 },
+      ],
+      gastos: [{ concepto: "Día Licha", monto: 60_000 }],
+      retiros: [{ concepto: "Retiro socios", monto: 230_000 }],
+      cambio: 8_000,
+      productos: [{ nombre: "Burgers", cantidad: 36 }],
+      total: 693_000,
+      neto: 403_000,
+    },
+    inconsistencias: [
+      {
+        tone: "warn",
+        msg: "36 burgers vendidos pero el consumo de carne registrado equivale a 30 burgers (5,4 kg).",
+      },
+      {
+        tone: "info",
+        msg: "El retiro de socios representa el 33% del bruto del día (sugerido máx. 20%).",
+      },
+    ],
+  },
+  {
+    id: "c2",
+    punto: "CARRO foodtruck",
+    fecha: "15/05/2026",
+    recibida: new Date(Date.now() - 1000 * 60 * 60 * 22),
+    sender: "Día Licha",
+    status: "aprobado",
+    raw: `CARRO foodtruck 15/05
+
+EFECTIVO: $245.000
+TARJETA: $198.000
+QR: $151.000
+
+TOTAL: $594.000
+
+GASTOS:
+$45.000 (descartables)
+
+RETIRO: $120.000
+
+Burgers: 31`,
+    parsed: {
+      ingresos: [
+        { medio: "Efectivo", monto: 245_000 },
+        { medio: "Tarjeta", monto: 198_000 },
+        { medio: "QR", monto: 151_000 },
+      ],
+      gastos: [{ concepto: "Descartables", monto: 45_000 }],
+      retiros: [{ concepto: "Retiro socios", monto: 120_000 }],
+      cambio: 0,
+      productos: [{ nombre: "Burgers", cantidad: 31 }],
+      total: 594_000,
+      neto: 429_000,
+    },
+    inconsistencias: [],
+  },
+  {
+    id: "c3",
+    punto: "Local Palermo",
+    fecha: "16/05/2026",
+    recibida: new Date(Date.now() - 1000 * 60 * 60 * 1),
+    sender: "Lucía Romero",
+    status: "pendiente",
+    raw: `LOCAL 16/05 cierre noche
+
+Efectivo $185.000
+MercadoPago $260.000
+Tarjeta $295.000
+PedidosYa $102.500
+
+Propinas: $42.000
+Anticipo Diego $50.000
+
+Total bruto: $842.500
+Total neto: $750.500`,
+    parsed: {
+      ingresos: [
+        { medio: "Efectivo", monto: 185_000 },
+        { medio: "MercadoPago", monto: 260_000 },
+        { medio: "Tarjeta", monto: 295_000 },
+        { medio: "PedidosYa", monto: 102_500 },
+      ],
+      gastos: [],
+      retiros: [
+        { concepto: "Anticipo Diego", monto: 50_000 },
+        { concepto: "Propinas separadas", monto: 42_000 },
+      ],
+      cambio: 0,
+      productos: [],
+      total: 842_500,
+      neto: 750_500,
+    },
+    inconsistencias: [
+      {
+        tone: "info",
+        msg: "Las propinas quedaron registradas como movimiento aparte, no afectan margen.",
+      },
+    ],
+  },
+];
+
+// ---------- HISTORIAL DE COSTOS POR INSUMO ----------
+export type CostPoint = { fecha: string; precio: number };
+
+export const ingredientCostHistory: Record<string, CostPoint[]> = {
+  "Carne premium 180g": [
+    { fecha: "Ene", precio: 7_400 },
+    { fecha: "Feb", precio: 7_800 },
+    { fecha: "Mar", precio: 8_200 },
+    { fecha: "Abr", precio: 9_000 },
+    { fecha: "May", precio: 10_260 },
+  ],
+  "Cheddar": [
+    { fecha: "Ene", precio: 7_200 },
+    { fecha: "Feb", precio: 7_500 },
+    { fecha: "Mar", precio: 7_900 },
+    { fecha: "Abr", precio: 8_200 },
+    { fecha: "May", precio: 8_400 },
+  ],
+  "Pan brioche": [
+    { fecha: "Ene", precio: 380 },
+    { fecha: "Feb", precio: 400 },
+    { fecha: "Mar", precio: 430 },
+    { fecha: "Abr", precio: 460 },
+    { fecha: "May", precio: 520 },
+  ],
+  "Bacon ahumado": [
+    { fecha: "Ene", precio: 31_000 },
+    { fecha: "Feb", precio: 33_400 },
+    { fecha: "Mar", precio: 36_200 },
+    { fecha: "Abr", precio: 39_800 },
+    { fecha: "May", precio: 42_000 },
+  ],
+};
+
+// Costo total del producto mes a mes (último 5)
+export const productCostHistory: Record<string, CostPoint[]> = {
+  "Clásica La Birra": [
+    { fecha: "Ene", precio: 2_780 },
+    { fecha: "Feb", precio: 2_960 },
+    { fecha: "Mar", precio: 3_120 },
+    { fecha: "Abr", precio: 3_280 },
+    { fecha: "May", precio: 3_450 },
+  ],
+  "Doble Cheddar": [
+    { fecha: "Ene", precio: 4_150 },
+    { fecha: "Feb", precio: 4_420 },
+    { fecha: "Mar", precio: 4_680 },
+    { fecha: "Abr", precio: 4_880 },
+    { fecha: "May", precio: 5_120 },
+  ],
+  "Bacon Lover": [
+    { fecha: "Ene", precio: 5_100 },
+    { fecha: "Feb", precio: 5_420 },
+    { fecha: "Mar", precio: 5_780 },
+    { fecha: "Abr", precio: 6_080 },
+    { fecha: "May", precio: 6_350 },
+  ],
+  "Veggie": [
+    { fecha: "Ene", precio: 2_800 },
+    { fecha: "Feb", precio: 2_900 },
+    { fecha: "Mar", precio: 2_980 },
+    { fecha: "Abr", precio: 3_040 },
+    { fecha: "May", precio: 3_100 },
+  ],
+};
+
+export const costingAlerts: { tone: "warn" | "danger" | "info"; title: string; detail: string }[] = [
+  {
+    tone: "danger",
+    title: "Bacon Lover perdió 8% de margen este mes",
+    detail: "El aumento de bacon (+5,5%) y carne (+14%) erosionó la rentabilidad.",
+  },
+  {
+    tone: "warn",
+    title: "El aumento de cheddar impactó en 5 productos",
+    detail: "Clásica, Doble, Bacon Lover, Combo y Veggie tuvieron +$120 a +$280 de costo extra.",
+  },
+  {
+    tone: "info",
+    title: "Sugerencia: subir Doble Cheddar $400 para mantener rentabilidad",
+    detail: "Cubriría el aumento acumulado de los últimos 60 días sin afectar demanda.",
+  },
+];
