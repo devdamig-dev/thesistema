@@ -10,6 +10,7 @@ import {
   FileText,
   Inbox,
   LayoutDashboard,
+  Megaphone,
   Receipt,
   ShoppingCart,
   Sparkles,
@@ -35,6 +36,13 @@ const NAV = [
         accent: "ai" as const,
       },
       { href: "/reportes", label: "Reportes IA", icon: Sparkles, accent: "ai" as const },
+      {
+        href: "/marketing",
+        label: "Marketing IA",
+        icon: Megaphone,
+        badge: "Nuevo",
+        accent: "ai" as const,
+      },
     ],
   },
   {

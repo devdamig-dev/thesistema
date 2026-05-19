@@ -1242,3 +1242,364 @@ export const costingAlerts: { tone: "warn" | "danger" | "info"; title: string; d
     detail: "Cubriría el aumento acumulado de los últimos 60 días sin afectar demanda.",
   },
 ];
+
+// ---------- MARKETING IA / CENTRO DE CRECIMIENTO ----------
+export type GrowthArea =
+  | "Producto"
+  | "Cliente"
+  | "Horario"
+  | "Canal"
+  | "Combo"
+  | "Margen";
+
+export const growthSummary = {
+  oportunidadMes: 1_280_000,
+  clientesReactivar: 42,
+  campanasSugeridas: 6,
+  productosSubperformantes: 3,
+};
+
+export const growthInsights: {
+  id: string;
+  prioridad: Priority;
+  area: GrowthArea;
+  titulo: string;
+  detalle: string;
+  impacto: string;
+  confianza: number;
+  cta: string;
+}[] = [
+  {
+    id: "g1",
+    prioridad: "alta",
+    area: "Horario",
+    titulo: "Los martes tienen 38% menos venta que el promedio",
+    detalle: "Mejor momento para empujar una promo de combos por WhatsApp e Instagram. Tu base ya pidió 2 veces los últimos 30 días.",
+    impacto: "+$140.000 / semana",
+    confianza: 0.86,
+    cta: "Generar promo del martes",
+  },
+  {
+    id: "g2",
+    prioridad: "alta",
+    area: "Cliente",
+    titulo: "42 clientes frecuentes están inactivos hace más de 21 días",
+    detalle: "Pidieron 3+ veces y no volvieron. Ticket promedio histórico: $13.400. Listos para campaña de reactivación con beneficio.",
+    impacto: "+$560.000 / mes",
+    confianza: 0.91,
+    cta: "Crear campaña de reactivación",
+  },
+  {
+    id: "g3",
+    prioridad: "media",
+    area: "Producto",
+    titulo: "Bacon Lover tiene alto margen y baja salida",
+    detalle: "Margen 49% pero sólo 6% de las ventas. La IA propone empujarla como combo o pack con cerveza para subir su rotación.",
+    impacto: "+$210.000 / mes",
+    confianza: 0.79,
+    cta: "Sugerir combo destacado",
+  },
+  {
+    id: "g4",
+    prioridad: "media",
+    area: "Combo",
+    titulo: "El Combo Clásico es tu producto más rentable",
+    detalle: "Margen 58% y representa el 32% de las ventas. Podemos protagonizarlo en historias de Instagram tres veces por semana.",
+    impacto: "+$95.000 / semana",
+    confianza: 0.84,
+    cta: "Armar plan de contenido",
+  },
+  {
+    id: "g5",
+    prioridad: "baja",
+    area: "Canal",
+    titulo: "WhatsApp tiene 3x mejor conversión que Instagram",
+    detalle: "Ticket promedio $13.900 vs $8.600. Sugerimos migrar parte del presupuesto de Meta Ads hacia listas de difusión segmentadas.",
+    impacto: "+18% ROAS",
+    confianza: 0.73,
+    cta: "Ver plan de reasignación",
+  },
+  {
+    id: "g6",
+    prioridad: "baja",
+    area: "Margen",
+    titulo: "Subir bebidas $200 no afectaría conversión",
+    detalle: "Comparativa con 4 hamburgueserías premium: tus bebidas están 12% por debajo del rango. Suba blanda y de bajo riesgo.",
+    impacto: "+$78.000 / mes",
+    confianza: 0.76,
+    cta: "Aplicar nuevo precio",
+  },
+];
+
+export type GrowthCampaign = {
+  id: string;
+  nombre: string;
+  canal: "WhatsApp" | "Instagram";
+  tipo: "Promoción" | "Reactivación" | "Lanzamiento" | "Contenido";
+  audiencia: string;
+  alcance: number;
+  enviarA: string;
+  copy: string;
+  caption?: string;
+  cta: string;
+  horario: string;
+  impacto: string;
+  confianza: number;
+  estado: "sugerida" | "lista" | "programada";
+};
+
+export const suggestedCampaigns: GrowthCampaign[] = [
+  {
+    id: "cp1",
+    nombre: "Promo Martes Combos",
+    canal: "WhatsApp",
+    tipo: "Promoción",
+    audiencia: "Clientes frecuentes salón + delivery",
+    alcance: 184,
+    enviarA: "Lista difusión · Birra VIP",
+    copy: `Hola {{nombre}} 👋
+Hoy martes te armamos algo especial:
+Combo Clásico (Burger + Papas + Bebida) por $11.900 — ahorrás $2.600.
+
+¿Te lo pasamos a buscar o vas al local? Respondé a este mensaje y te lo dejamos listo en 15 min. 🍔`,
+    cta: "Pedir por WhatsApp",
+    horario: "Martes 18:30",
+    impacto: "+$140.000 estimado / martes",
+    confianza: 0.86,
+    estado: "sugerida",
+  },
+  {
+    id: "cp2",
+    nombre: "Reactivación 21 días sin pedir",
+    canal: "WhatsApp",
+    tipo: "Reactivación",
+    audiencia: "42 clientes inactivos hace >21 días",
+    alcance: 42,
+    enviarA: "Segmento · Inactivos VIP",
+    copy: `{{nombre}}, te extrañamos 🍔
+Hace un tiempo no pasás por La Birra. Te dejamos 15% off en tu próximo pedido — usá el código VOLVE15 cuando nos escribas.
+
+Válido hasta el domingo. ¿Te tentamos con una Doble Cheddar? 🧀`,
+    cta: "Pedir con código VOLVE15",
+    horario: "Jueves 13:00",
+    impacto: "+$560.000 estimado / mes",
+    confianza: 0.91,
+    estado: "sugerida",
+  },
+  {
+    id: "cp3",
+    nombre: "Empujar Bacon Lover",
+    canal: "Instagram",
+    tipo: "Contenido",
+    audiencia: "Seguidores + audiencias similares (Meta)",
+    alcance: 12_400,
+    enviarA: "Feed + reel + 3 historias",
+    caption: `🥓 No es una hamburguesa más. Es la Bacon Lover.
+Medallón 180g + cheddar + bacon ahumado real + salsa BBQ de la casa.
+
+Esta semana: combo Bacon Lover + papas + IPA por $15.900.
+Pedila por WhatsApp, delivery o en el local. 📍 Palermo`,
+    copy: "🥓 No es una hamburguesa más. Es la Bacon Lover.",
+    cta: "Pedir online",
+    horario: "Mar/Vie 19:00",
+    impacto: "+$210.000 estimado / mes",
+    confianza: 0.79,
+    estado: "lista",
+  },
+  {
+    id: "cp4",
+    nombre: "Combo Clásico estrella",
+    canal: "Instagram",
+    tipo: "Contenido",
+    audiencia: "Seguidores zona Palermo",
+    alcance: 8_900,
+    enviarA: "3 historias / semana",
+    caption: `El más pedido por algo: Combo Clásico.
+Burger 180g + papas rústicas + bebida = $14.500.
+
+✨ Tip: pedilo por WhatsApp y te lo dejamos listo en 20 minutos.`,
+    copy: "El más pedido por algo: Combo Clásico.",
+    cta: "Reservar mesa",
+    horario: "Lun · Mié · Vie 12:00",
+    impacto: "+$95.000 estimado / semana",
+    confianza: 0.84,
+    estado: "sugerida",
+  },
+];
+
+export const audienceSegments: {
+  id: string;
+  nombre: string;
+  size: number;
+  ticketProm: number;
+  recencia: string;
+  recomendacion: string;
+  tone: "brand" | "success" | "warn" | "ai";
+}[] = [
+  {
+    id: "a1",
+    nombre: "Birra VIP",
+    size: 78,
+    ticketProm: 18_200,
+    recencia: "<7 días",
+    recomendacion: "Adelantar lanzamientos y combos exclusivos.",
+    tone: "brand",
+  },
+  {
+    id: "a2",
+    nombre: "Frecuentes inactivos",
+    size: 42,
+    ticketProm: 13_400,
+    recencia: "21–45 días",
+    recomendacion: "Campaña de reactivación con código por WhatsApp.",
+    tone: "warn",
+  },
+  {
+    id: "a3",
+    nombre: "Delivery zona Palermo",
+    size: 156,
+    ticketProm: 11_800,
+    recencia: "<14 días",
+    recomendacion: "Promo del martes y combo de la semana.",
+    tone: "success",
+  },
+  {
+    id: "a4",
+    nombre: "Curiosos Instagram",
+    size: 1_240,
+    ticketProm: 0,
+    recencia: "Nunca compró",
+    recomendacion: "Reel + historia con CTA directa a WhatsApp.",
+    tone: "ai",
+  },
+];
+
+export const bestHours: { dia: string; tramo: string; medio: "WhatsApp" | "Instagram"; conversion: number }[] = [
+  { dia: "Mar", tramo: "18:30 – 20:00", medio: "WhatsApp", conversion: 14.2 },
+  { dia: "Jue", tramo: "13:00 – 14:30", medio: "WhatsApp", conversion: 12.8 },
+  { dia: "Vie", tramo: "19:00 – 21:00", medio: "Instagram", conversion: 9.6 },
+  { dia: "Dom", tramo: "12:00 – 13:30", medio: "Instagram", conversion: 8.9 },
+];
+
+export type CopyTone = "Cercano" | "Premium" | "Divertido" | "Urgente";
+export type CopyObjective = "Promo" | "Reactivación" | "Lanzamiento" | "Recordatorio";
+
+export const copyLibrary: Record<
+  string,
+  { whatsapp: string; instagram: string }
+> = {
+  "Cercano|Promo": {
+    whatsapp: `Hola {{nombre}} 👋
+Hoy te armamos algo especial:
+Combo Clásico por $11.900 — ahorrás $2.600.
+
+¿Te lo dejamos listo en 15 min? 🍔`,
+    instagram: `🍔 Hoy es de combo.
+Burger 180g + papas + bebida = $11.900.
+Pedilo por WhatsApp y lo pasás a buscar caliente. 🔥`,
+  },
+  "Cercano|Reactivación": {
+    whatsapp: `{{nombre}}, te extrañamos 🍔
+Hace un tiempo no pasás por La Birra. Te dejamos 15% off con el código VOLVE15.
+Válido hasta el domingo.`,
+    instagram: `Llevamos varias semanas sin verte.
+Usá VOLVE15 esta semana y ahorrá 15% en tu pedido. 💛`,
+  },
+  "Premium|Promo": {
+    whatsapp: `{{nombre}}, edición limitada para vos.
+Combo Doble Cheddar + IPA artesanal por $15.900 — sólo esta semana.
+
+Reservá tu pedido respondiendo a este mensaje.`,
+    instagram: `Edición limitada.
+Combo Doble Cheddar + IPA artesanal — $15.900.
+Sólo esta semana en La Birra Burger.`,
+  },
+  "Premium|Reactivación": {
+    whatsapp: `{{nombre}}, queremos que vuelvas.
+Te invitamos con un cheddar extra en tu próxima Doble Cheddar.
+Mostralo en el local o pedilo por WhatsApp.`,
+    instagram: `Cheddar extra de regalo en tu próxima Doble Cheddar.
+Por ser parte de La Birra desde el primer día.`,
+  },
+  "Divertido|Promo": {
+    whatsapp: `Martes triste? Combo feliz 🍔
+$11.900 te separa de la noche perfecta.
+Decí "combo del martes" y lo dejamos listo.`,
+    instagram: `Martes ≠ aburrido.
+Combo Clásico $11.900. Pedilo y agradecenos después. 🤝`,
+  },
+  "Divertido|Reactivación": {
+    whatsapp: `Eh, {{nombre}}, ¿estás bien? 👀
+Hace rato no pedís. Te tiramos un 15% off con VOLVE15.
+La cocina te espera.`,
+    instagram: `Hace mucho que no nos vemos.
+Tiramos VOLVE15 — 15% off esta semana. 💛`,
+  },
+  "Urgente|Promo": {
+    whatsapp: `🚨 SOLO HOY
+Combo Clásico $11.900 (precio normal $14.500).
+Respondé este mensaje antes de las 22 hs.`,
+    instagram: `🚨 Sólo hoy.
+Combo Clásico $11.900 hasta las 22 hs.
+WhatsApp en bio.`,
+  },
+  "Urgente|Reactivación": {
+    whatsapp: `Última oportunidad: tu código VOLVE15 vence el domingo.
+15% off en tu próximo pedido. No lo pierdas, {{nombre}}.`,
+    instagram: `Último día con VOLVE15.
+15% off antes de medianoche.`,
+  },
+  "Cercano|Lanzamiento": {
+    whatsapp: `Tenemos novedad 🍔
+Estrenamos la Smash Onion — doble medallón aplastado y cebolla caramelizada.
+Probala esta semana, pedila por WhatsApp.`,
+    instagram: `Nueva en la carta: Smash Onion.
+Doble medallón, cebolla caramelizada, salsa de la casa.
+Sólo esta semana con un precio de lanzamiento.`,
+  },
+  "Cercano|Recordatorio": {
+    whatsapp: `{{nombre}}, te recordamos que tenés tu pedido reservado para hoy.
+Te avisamos cuando esté listo. 🍔`,
+    instagram: `Reservaste para hoy?
+Te recordamos llevarte la entrada — siempre hay birra fría esperándote.`,
+  },
+  "Premium|Lanzamiento": {
+    whatsapp: `Edición limitada · 100 unidades.
+Smash Onion: doble medallón, cebolla caramelizada, mostaza ahumada.
+Reservá tu unidad respondiendo a este mensaje.`,
+    instagram: `Lanzamiento exclusivo.
+Smash Onion. 100 unidades. Esta semana.`,
+  },
+  "Premium|Recordatorio": {
+    whatsapp: `Su mesa está reservada para hoy a las 21:00.
+Nos vemos en La Birra Burger Palermo.`,
+    instagram: `Recordá que tu reserva sigue en pie.
+Te esperamos en Palermo.`,
+  },
+  "Divertido|Lanzamiento": {
+    whatsapp: `🚨 nueva burger en la familia
+Conocé a Smash Onion. Es como la Clásica pero con onda. 😎
+Esta semana en La Birra.`,
+    instagram: `Smash Onion entró en escena 🧅🔥
+Doble medallón, cebolla caramelizada, hambre.
+Esta semana en La Birra.`,
+  },
+  "Divertido|Recordatorio": {
+    whatsapp: `Ey, tu burger te está esperando 🍔
+No la dejes plantada. Hoy 21 hs te esperamos.`,
+    instagram: `Tu pedido está reservado.
+No nos hagas comerla nosotros 😅`,
+  },
+  "Urgente|Lanzamiento": {
+    whatsapp: `🚨 Smash Onion · sólo 100 unidades.
+Hoy salieron 47. Reservá la tuya antes de que se agote.`,
+    instagram: `Quedan 53 Smash Onion.
+Antes de medianoche o se acaba.`,
+  },
+  "Urgente|Recordatorio": {
+    whatsapp: `⚠️ Última hora para retirar tu pedido.
+Cerramos cocina a las 23 hs.`,
+    instagram: `Si reservaste hoy, pasá antes de las 23 hs.
+La cocina cierra puntual.`,
+  },
+};
