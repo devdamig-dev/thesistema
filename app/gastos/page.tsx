@@ -1,9 +1,12 @@
+"use client";
+
 import { Calculator, Plus, Receipt } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ToastPresets, useToast } from "@/components/ui/toast";
 import { breakEven, fixedExpenses } from "@/lib/mock-data";
 import { formatARS } from "@/lib/format";
 
@@ -17,6 +20,7 @@ const STATUS_TONE = {
 
 export default function GastosPage() {
   const total = fixedExpenses.reduce((s, e) => s + e.monto, 0);
+  const { toast } = useToast();
   return (
     <div className="space-y-8">
       <SectionHeader
@@ -24,7 +28,11 @@ export default function GastosPage() {
         title="Lo que cuesta abrir cada día."
         description="Costos estructurales del mes y cuánto tenés que facturar diariamente para cubrirlos."
         actions={
-          <Button size="sm" variant="primary">
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => toast(ToastPresets.comingSoon("Alta de gasto fijo"))}
+          >
             <Plus className="h-4 w-4" /> Nuevo gasto fijo
           </Button>
         }
@@ -102,10 +110,18 @@ export default function GastosPage() {
               Calculado sobre {formatARS(breakEven.mensual, { compact: true })} mensuales y 30 días de operación. Incluye sueldos, alquiler, servicios, comisiones y publicidad.
             </p>
             <div className="mt-6 flex flex-wrap gap-2">
-              <Button variant="primary" size="sm">
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => toast(ToastPresets.comingSoon("Proyección mensual"))}
+              >
                 Ver proyección mensual
               </Button>
-              <Button variant="ghost" size="sm">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => toast(ToastPresets.comingSoon("Editor de supuestos"))}
+              >
                 Ajustar supuestos
               </Button>
             </div>

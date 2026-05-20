@@ -10,58 +10,44 @@ import {
   FileText,
   Inbox,
   LayoutDashboard,
+  LucideIcon,
   Megaphone,
   Receipt,
+  Settings,
   ShoppingCart,
   Sparkles,
-  Truck,
   Users,
   UserSquare2,
-  Settings,
-  HelpCircle,
+  LifeBuoy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { businessInfo } from "@/lib/mock-data";
 
-const NAV = [
+type NavItem = {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  badge?: string;
+  accent?: "ai" | "brand";
+};
+
+type NavGroup = { label: string; items: NavItem[] };
+
+const NAV: NavGroup[] = [
   {
     label: "General",
     items: [
       { href: "/", label: "Dashboard", icon: LayoutDashboard },
-      {
-        href: "/inbox",
-        label: "Inbox IA",
-        icon: Inbox,
-        badge: "3",
-        accent: "ai" as const,
-      },
-      { href: "/reportes", label: "Reportes IA", icon: Sparkles, accent: "ai" as const },
-      {
-        href: "/marketing",
-        label: "Marketing IA",
-        icon: Megaphone,
-        badge: "Nuevo",
-        accent: "ai" as const,
-      },
+      { href: "/inbox", label: "Inbox IA", icon: Inbox, badge: "3", accent: "ai" },
+      { href: "/reportes", label: "Reportes IA", icon: Sparkles, accent: "ai" },
+      { href: "/marketing", label: "Marketing IA", icon: Megaphone, badge: "Nuevo", accent: "ai" },
     ],
   },
   {
     label: "IA y documentos",
     items: [
-      {
-        href: "/facturas",
-        label: "Facturas",
-        icon: FileText,
-        badge: "OCR",
-        accent: "ai" as const,
-      },
-      {
-        href: "/cierres",
-        label: "Cierres diarios",
-        icon: ClipboardList,
-        badge: "2",
-        accent: "ai" as const,
-      },
+      { href: "/facturas", label: "Facturas OCR", icon: FileText, badge: "OCR", accent: "ai" },
+      { href: "/cierres", label: "Cierres diarios", icon: ClipboardList, badge: "2", accent: "ai" },
     ],
   },
   {
@@ -79,6 +65,13 @@ const NAV = [
     items: [
       { href: "/empleados", label: "Empleados", icon: Users },
       { href: "/clientes", label: "Clientes", icon: UserSquare2 },
+    ],
+  },
+  {
+    label: "Sistema",
+    items: [
+      { href: "/ayuda", label: "Ayuda", icon: LifeBuoy },
+      { href: "/ajustes", label: "Ajustes", icon: Settings },
     ],
   },
 ];
@@ -101,7 +94,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                 const active =
                   item.href === "/"
                     ? pathname === "/"
-                    : pathname.startsWith(item.href);
+                    : pathname === item.href || pathname.startsWith(item.href + "/");
                 const Icon = item.icon;
                 return (
                   <li key={item.href}>
@@ -129,7 +122,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                         )}
                       />
                       <span className="flex-1 truncate">{item.label}</span>
-                      {"badge" in item && item.badge && (
+                      {item.badge && (
                         <span
                           className={cn(
                             "rounded-md border px-1.5 py-0.5 text-[10px] font-semibold",
@@ -180,7 +173,7 @@ function Footer() {
   return (
     <div className="space-y-3 border-t border-line px-3 py-3">
       <Link
-        href="#"
+        href="/ajustes/ia"
         className="group block rounded-xl border border-ai-400/25 bg-gradient-to-br from-ai-500/[0.08] via-bg-elevated/40 to-bg-elevated/40 p-3 transition-colors hover:border-ai-400/50"
       >
         <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-ai-400">
@@ -195,24 +188,8 @@ function Footer() {
         </div>
       </Link>
 
-      <div className="flex items-center justify-between px-2">
-        <Link
-          href="#"
-          className="flex items-center gap-2 text-xs text-ink-muted hover:text-ink"
-        >
-          <HelpCircle className="h-3.5 w-3.5" />
-          Ayuda
-        </Link>
-        <Link
-          href="#"
-          className="flex items-center gap-2 text-xs text-ink-muted hover:text-ink"
-        >
-          <Settings className="h-3.5 w-3.5" />
-          Ajustes
-        </Link>
-      </div>
       <Link
-        href="#"
+        href="/ajustes"
         className="flex items-center gap-3 rounded-lg border border-line bg-bg-elevated/60 p-2.5 transition-colors hover:border-line-strong"
       >
         <div className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-xs font-semibold text-white">

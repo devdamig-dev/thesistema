@@ -1,3 +1,5 @@
+"use client";
+
 import { ArrowDownRight, ArrowUpRight, Calendar, Download, Sparkles } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
 import { KpiCard } from "@/components/ui/kpi-card";
@@ -7,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { ChannelBar } from "@/components/charts/channel-bar";
 import { SalesAreaChart } from "@/components/charts/sales-area-chart";
 import { InsightCard } from "@/components/common/insight-card";
+import { ToastPresets, useToast } from "@/components/ui/toast";
 import { dailySalesTable, salesByChannel, salesByDay } from "@/lib/mock-data";
 import { formatARS, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -16,6 +19,7 @@ export default function VentasPage() {
   const ticketPromedio =
     salesByChannel.reduce((s, c) => s + c.ticket * c.share, 0) /
     salesByChannel.reduce((s, c) => s + c.share, 0);
+  const { toast } = useToast();
 
   return (
     <div className="space-y-8">
@@ -25,11 +29,19 @@ export default function VentasPage() {
         description="Vista unificada de salón, delivery propio, apps y WhatsApp. La IA detecta patrones de demanda y oportunidades."
         actions={
           <>
-            <Button size="sm" variant="ghost">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => toast(ToastPresets.comingSoon("Selector de período"))}
+            >
               <Calendar className="h-4 w-4" />
               Mayo 2026
             </Button>
-            <Button size="sm" variant="ghost">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => toast(ToastPresets.exported())}
+            >
               <Download className="h-4 w-4" />
               Exportar CSV
             </Button>

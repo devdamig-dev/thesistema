@@ -1,3 +1,5 @@
+"use client";
+
 import {
   ArrowRight,
   ArrowUpRight,
@@ -18,6 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Sparkline } from "@/components/ui/sparkline";
+import { ToastPresets, useToast } from "@/components/ui/toast";
 import { SalesAreaChart } from "@/components/charts/sales-area-chart";
 import { ExpensesDonut } from "@/components/charts/expenses-donut";
 import { InsightCard } from "@/components/common/insight-card";
@@ -45,6 +48,7 @@ import { formatARS, formatPercent } from "@/lib/format";
 export default function DashboardPage() {
   const k = dashboardKpis;
   const t = todaySnapshot;
+  const { toast } = useToast();
 
   return (
     <div className="space-y-8">
@@ -54,11 +58,19 @@ export default function DashboardPage() {
         description="Lo que está pasando en La Birra Burger, en tiempo real. Datos cargados por WhatsApp y ordenados por la IA."
         actions={
           <>
-            <Button size="sm" variant="ghost">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => toast(ToastPresets.comingSoon("Selector de período"))}
+            >
               <Calendar className="h-4 w-4" />
               Mayo 2026
             </Button>
-            <Button size="sm" variant="ghost">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => toast(ToastPresets.exported())}
+            >
               <Download className="h-4 w-4" />
               Exportar
             </Button>

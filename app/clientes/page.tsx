@@ -1,3 +1,6 @@
+"use client";
+
+import Link from "next/link";
 import { MessageSquareText, Plus, Send, UserSquare2 } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
 import { KpiCard } from "@/components/ui/kpi-card";
@@ -5,12 +8,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { InsightCard } from "@/components/common/insight-card";
+import { ToastPresets, useToast } from "@/components/ui/toast";
 import { customers } from "@/lib/mock-data";
 import { formatARS } from "@/lib/format";
 
 export default function ClientesPage() {
   const frecuentes = customers.filter((c) => c.estado === "frecuente").length;
   const inactivos = customers.filter((c) => c.estado === "inactivo").length;
+  const { toast } = useToast();
   return (
     <div className="space-y-8">
       <SectionHeader
@@ -18,7 +23,11 @@ export default function ClientesPage() {
         title="Quiénes vuelven y quiénes dejaron de volver."
         description="La IA arma campañas por WhatsApp y detecta oportunidades de reactivación con clientes inactivos."
         actions={
-          <Button size="sm" variant="primary">
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => toast(ToastPresets.comingSoon("Alta de cliente"))}
+          >
             <Plus className="h-4 w-4" /> Cargar cliente
           </Button>
         }
@@ -44,9 +53,11 @@ export default function ClientesPage() {
             Clientes
           </CardTitle>
           <div className="flex gap-2">
-            <Button size="sm" variant="ai">
-              <Send className="h-4 w-4" /> Campaña WhatsApp
-            </Button>
+            <Link href="/marketing">
+              <Button size="sm" variant="ai">
+                <Send className="h-4 w-4" /> Campaña WhatsApp
+              </Button>
+            </Link>
           </div>
         </CardHeader>
         <div className="overflow-x-auto">

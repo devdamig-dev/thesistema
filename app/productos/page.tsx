@@ -23,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Drawer } from "@/components/ui/drawer";
 import { SegmentedTabs } from "@/components/ui/tabs";
 import { CostHistoryChart } from "@/components/charts/cost-history-chart";
+import { ToastPresets, useToast } from "@/components/ui/toast";
 import {
   costingAlerts,
   ingredientCostHistory,
@@ -53,6 +54,7 @@ export default function ProductosPage() {
   const [cat, setCat] = useState<Categoria>("Todos");
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<typeof products[number] | null>(null);
+  const { toast } = useToast();
 
   const counts = useMemo(() => {
     const map: Record<string, number> = { Todos: products.length };
@@ -78,10 +80,24 @@ export default function ProductosPage() {
         description="Cada producto está vinculado a sus insumos. Si cambia el costo de un ingrediente, recalculamos el margen y avisamos."
         actions={
           <>
-            <Button size="sm" variant="ghost">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                toast({
+                  tone: "ai",
+                  title: "Sugerencias de precio listas",
+                  description: "Revisalas en cada ficha de producto con el simulador.",
+                })
+              }
+            >
               <Sparkles className="h-4 w-4 text-ai-400" /> Sugerir precios
             </Button>
-            <Button size="sm" variant="primary">
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => toast(ToastPresets.comingSoon("Alta de producto"))}
+            >
               <Plus className="h-4 w-4" /> Nuevo producto
             </Button>
           </>
@@ -281,6 +297,7 @@ function ProductDetail({ product }: { product: typeof products[number] }) {
   const baseMargin = ((product.precio - product.costo) / product.precio) * 100;
   const [meatBump, setMeatBump] = useState(0);
   const [tab, setTab] = useState<DetailTab>("receta");
+  const { toast } = useToast();
 
   const productHistory = productCostHistory[product.nombre];
   const variation = productHistory
@@ -480,15 +497,30 @@ function ProductDetail({ product }: { product: typeof products[number] }) {
 
       {/* Acciones */}
       <div className="flex flex-wrap gap-2 border-t border-line pt-4">
-        <Button variant="primary">
+        <Button
+          variant="primary"
+          onClick={() => toast(ToastPresets.productUpdated())}
+        >
           <Sparkles className="h-4 w-4" />
           Sugerir nuevo precio
         </Button>
-        <Button variant="ghost">
+        <Button
+          variant="ghost"
+          onClick={() =>
+            toast({
+              tone: "warn",
+              title: `${product.nombre} pausado`,
+              description: "Dejó de aparecer en menú y canales de venta.",
+            })
+          }
+        >
           <AlertTriangle className="h-4 w-4 text-warn-400" />
           Pausar producto
         </Button>
-        <Button variant="ghost">
+        <Button
+          variant="ghost"
+          onClick={() => toast(ToastPresets.comingSoon("Impacto en menú"))}
+        >
           Ver impacto en menú
           <ArrowRight className="h-4 w-4" />
         </Button>
