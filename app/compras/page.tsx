@@ -1,3 +1,5 @@
+"use client";
+
 import { AlertTriangle, ArrowDownRight, ArrowUpRight, Plus, Truck } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
 import { KpiCard } from "@/components/ui/kpi-card";
@@ -5,12 +7,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { InsightCard } from "@/components/common/insight-card";
+import { ToastPresets, useToast } from "@/components/ui/toast";
 import { recentPurchases, topSuppliers } from "@/lib/mock-data";
 import { formatARS, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export default function ComprasPage() {
   const totalMes = topSuppliers.reduce((s, p) => s + p.totalMes, 0);
+  const { toast } = useToast();
   return (
     <div className="space-y-8">
       <SectionHeader
@@ -19,10 +23,18 @@ export default function ComprasPage() {
         description="Comparamos precios entre proveedores y alertamos cuando un insumo se sale del rango habitual."
         actions={
           <>
-            <Button size="sm" variant="ghost">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => toast(ToastPresets.comingSoon("Alta de proveedor"))}
+            >
               <Truck className="h-4 w-4" /> Nuevo proveedor
             </Button>
-            <Button size="sm" variant="primary">
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => toast(ToastPresets.comingSoon("Carga manual de compra"))}
+            >
               <Plus className="h-4 w-4" /> Registrar compra
             </Button>
           </>

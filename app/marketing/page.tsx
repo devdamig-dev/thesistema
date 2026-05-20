@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PriorityBadge } from "@/components/ui/priority-badge";
 import { SegmentedTabs } from "@/components/ui/tabs";
+import { ToastPresets, useToast } from "@/components/ui/toast";
 import {
   audienceSegments,
   bestHours,
@@ -47,6 +48,7 @@ import { formatARS, formatNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export default function MarketingPage() {
+  const { toast } = useToast();
   return (
     <div className="space-y-10">
       <SectionHeader
@@ -55,11 +57,25 @@ export default function MarketingPage() {
         description="Detectamos oportunidades en tus datos y armamos campañas listas para enviar por WhatsApp e Instagram. Vos sólo aprobás."
         actions={
           <>
-            <Button size="sm" variant="ghost">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => toast(ToastPresets.comingSoon("Calendario de campañas"))}
+            >
               <CalendarClock className="h-4 w-4" />
               Mayo · Calendario
             </Button>
-            <Button size="sm" variant="ai">
+            <Button
+              size="sm"
+              variant="ai"
+              onClick={() =>
+                toast({
+                  tone: "ai",
+                  title: "Abriendo el copiloto",
+                  description: "Te llevamos a Reportes IA para hacer la pregunta.",
+                })
+              }
+            >
               <Wand2 className="h-4 w-4" />
               Pedirle al copiloto
             </Button>
@@ -92,6 +108,7 @@ export default function MarketingPage() {
    HERO — oportunidad detectada
    ============================================================ */
 function OpportunityHero() {
+  const { toast } = useToast();
   return (
     <div className="relative overflow-hidden rounded-3xl border border-line bg-bg-elevated/60 surface-raised">
       <div className="absolute inset-0 grid-dots opacity-50" />
@@ -117,11 +134,25 @@ function OpportunityHero() {
             Cruzamos ventas por día, productos con mejor rentabilidad, frecuencia de compra y comportamiento por canal. La IA prioriza lo que más mueve la aguja esta semana.
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
-            <Button variant="ai" size="md">
+            <Button
+              variant="ai"
+              size="md"
+              onClick={() =>
+                toast({
+                  tone: "ai",
+                  title: "Plan semanal generado",
+                  description: "Listo en Marketing IA — revisalo en Campañas sugeridas.",
+                })
+              }
+            >
               <Rocket className="h-4 w-4" />
               Generar plan semanal
             </Button>
-            <Button variant="ghost" size="md">
+            <Button
+              variant="ghost"
+              size="md"
+              onClick={() => toast(ToastPresets.comingSoon("Explorador de segmentos"))}
+            >
               <Target className="h-4 w-4" />
               Ver segmentos
             </Button>
@@ -200,6 +231,7 @@ function OppMetric({
    INSIGHTS — recomendaciones estratégicas
    ============================================================ */
 function InsightsBoard() {
+  const { toast } = useToast();
   return (
     <section>
       <div className="mb-3 flex items-end justify-between">
@@ -254,7 +286,12 @@ function InsightsBoard() {
                 <Rocket className="h-4 w-4 text-success-400/50" />
               </div>
               <div className="mt-3">
-                <Button variant="ai" size="sm" className="w-full">
+                <Button
+                  variant="ai"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => toast(ToastPresets.campaignGenerated())}
+                >
                   <Wand2 className="h-3.5 w-3.5" />
                   {g.cta}
                 </Button>
@@ -320,6 +357,7 @@ function SuggestedCampaigns() {
 }
 
 function CampaignCard({ campaign: c }: { campaign: GrowthCampaign }) {
+  const { toast } = useToast();
   const channelTone =
     c.canal === "WhatsApp"
       ? "border-success-500/25 bg-success-500/10 text-success-400"
@@ -366,15 +404,37 @@ function CampaignCard({ campaign: c }: { campaign: GrowthCampaign }) {
         </div>
 
         <div className="flex flex-wrap gap-2 pt-2">
-          <Button variant="primary" size="sm">
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() =>
+              toast(
+                c.estado === "lista"
+                  ? {
+                      tone: "success",
+                      title: `Campaña "${c.nombre}" enviada`,
+                      description: `Llegó a ${formatNumber(c.alcance)} contactos por ${c.canal}.`,
+                    }
+                  : ToastPresets.campaignGenerated(),
+              )
+            }
+          >
             <Rocket className="h-3.5 w-3.5" />
             {c.estado === "lista" ? "Enviar campaña" : "Generar copies"}
           </Button>
-          <Button variant="ghost" size="sm">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => toast(ToastPresets.campaignScheduled())}
+          >
             <CalendarClock className="h-3.5 w-3.5" />
             Programar
           </Button>
-          <Button variant="ghost" size="sm">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => toast(ToastPresets.comingSoon("Editor de audiencia"))}
+          >
             Editar audiencia
           </Button>
         </div>
@@ -530,6 +590,7 @@ function CopyStudio() {
   const [tone, setTone] = useState<CopyTone>("Cercano");
   const [objective, setObjective] = useState<CopyObjective>("Promo");
   const [copied, setCopied] = useState<"whatsapp" | "instagram" | null>(null);
+  const { toast } = useToast();
 
   const key = `${tone}|${objective}`;
   const generated = copyLibrary[key] ?? copyLibrary["Cercano|Promo"];
@@ -605,7 +666,18 @@ function CopyStudio() {
               respuesta de cada audiencia para optimizar el copy.
             </div>
 
-            <Button variant="ai" size="md" className="w-full">
+            <Button
+              variant="ai"
+              size="md"
+              className="w-full"
+              onClick={() =>
+                toast({
+                  tone: "ai",
+                  title: "Variante generada",
+                  description: "Cambiá tono u objetivo para ver más versiones.",
+                })
+              }
+            >
               <Wand2 className="h-4 w-4" />
               Generar otra variante
             </Button>
@@ -643,6 +715,7 @@ function CopyBox({
   copied: boolean;
   onCopy: () => void;
 }) {
+  const { toast } = useToast();
   const isWA = channel === "whatsapp";
   const Icon = isWA ? MessageSquareText : Instagram;
   return (
@@ -680,7 +753,16 @@ function CopyBox({
         {text}
       </pre>
       <div className="border-t border-line/70 bg-bg-subtle/40 px-3 py-2">
-        <button className="text-[11px] font-medium text-brand-300 hover:text-brand-200">
+        <button
+          className="text-[11px] font-medium text-brand-300 hover:text-brand-200"
+          onClick={() =>
+            toast({
+              tone: "success",
+              title: "Copy aplicado a una campaña nueva",
+              description: "Lo encontrás en Campañas sugeridas como borrador.",
+            })
+          }
+        >
           Usar este copy
         </button>
       </div>
@@ -692,6 +774,7 @@ function CopyBox({
    AUDIENCIAS
    ============================================================ */
 function AudiencesGrid() {
+  const { toast } = useToast();
   return (
     <Card>
       <CardHeader>
@@ -759,10 +842,30 @@ function AudiencesGrid() {
                 </span>
               </div>
               <div className="mt-3 flex gap-2">
-                <Button variant="ghost" size="sm">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    toast({
+                      tone: "info",
+                      title: `Abriendo segmento ${a.nombre}`,
+                      description: `${formatNumber(a.size)} clientes coinciden con esta audiencia.`,
+                    })
+                  }
+                >
                   Ver clientes
                 </Button>
-                <Button variant="ai" size="sm">
+                <Button
+                  variant="ai"
+                  size="sm"
+                  onClick={() =>
+                    toast({
+                      tone: "ai",
+                      title: `Activando audiencia ${a.nombre}`,
+                      description: "La IA generó la campaña recomendada. Revisala en Campañas sugeridas.",
+                    })
+                  }
+                >
                   <Send className="h-3.5 w-3.5" />
                   Activar
                 </Button>
@@ -779,6 +882,7 @@ function AudiencesGrid() {
    MEJORES HORARIOS
    ============================================================ */
 function BestHoursPanel() {
+  const { toast } = useToast();
   return (
     <Card>
       <CardHeader>
@@ -836,7 +940,16 @@ function BestHoursPanel() {
           <Play className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ai-400" />
           <span className="text-xs text-ink">
             La IA puede programar automáticamente tus campañas en estos horarios.{" "}
-            <button className="font-semibold text-ai-400 hover:text-ai-300">
+            <button
+              className="font-semibold text-ai-400 hover:text-ai-300"
+              onClick={() =>
+                toast({
+                  tone: "ai",
+                  title: "Agenda inteligente activada",
+                  description: "La IA va a programar las próximas campañas en los horarios óptimos.",
+                })
+              }
+            >
               Activar agenda inteligente →
             </button>
           </span>

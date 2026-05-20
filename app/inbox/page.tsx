@@ -18,6 +18,7 @@ import {
   Sparkles,
   XCircle,
 } from "lucide-react";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { SectionHeader } from "@/components/ui/section-header";
 import { Card } from "@/components/ui/card";
@@ -25,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SegmentedTabs } from "@/components/ui/tabs";
 import { ConversationThread } from "@/components/common/conversation-thread";
+import { ToastPresets, useToast } from "@/components/ui/toast";
 import {
   InboxItem,
   InboxStatus,
@@ -46,6 +48,7 @@ export default function InboxPage() {
   const [filter, setFilter] = useState<Filter>("todos");
   const [selectedId, setSelectedId] = useState<string>(inboxItems[0].id);
   const [statusOverrides, setStatusOverrides] = useState<Record<string, InboxStatus>>({});
+  const { toast } = useToast();
 
   const items = useMemo(
     () =>
@@ -78,11 +81,17 @@ export default function InboxPage() {
         description="Tu equipo manda lo que pasa en el negocio por WhatsApp. La IA entiende, estructura y deja todo listo para que vos sólo confirmes."
         actions={
           <>
-            <Button size="sm" variant="ghost">
-              <Phone className="h-4 w-4" />
-              +54 9 11 5556-7700
-            </Button>
-            <Button size="sm" variant="ai">
+            <Link href="/ajustes/whatsapp">
+              <Button size="sm" variant="ghost">
+                <Phone className="h-4 w-4" />
+                +54 9 11 5556-7700
+              </Button>
+            </Link>
+            <Button
+              size="sm"
+              variant="ai"
+              onClick={() => toast(ToastPresets.comingSoon("Entrenamiento de IA"))}
+            >
               <Sparkles className="h-4 w-4" />
               Entrenar a la IA
             </Button>
@@ -226,7 +235,17 @@ export default function InboxPage() {
                     placeholder="Respondé como copiloto…"
                     className="flex-1 bg-transparent text-sm placeholder:text-ink-subtle focus:outline-none"
                   />
-                  <Button variant="ai" size="sm">
+                  <Button
+                    variant="ai"
+                    size="sm"
+                    onClick={() =>
+                      toast({
+                        tone: "ai",
+                        title: "Respuesta enviada",
+                        description: "El copiloto la mandó por WhatsApp.",
+                      })
+                    }
+                  >
                     <Send className="h-3.5 w-3.5" />
                     Enviar
                   </Button>
@@ -247,12 +266,16 @@ export default function InboxPage() {
             >
               <ExtractedPanel
                 item={selected}
-                onApprove={() =>
-                  setStatusOverrides((s) => ({ ...s, [selected.id]: "aprobado" }))
-                }
-                onReview={() =>
-                  setStatusOverrides((s) => ({ ...s, [selected.id]: "revision" }))
-                }
+                onApprove={() => {
+                  setStatusOverrides((s) => ({ ...s, [selected.id]: "aprobado" }));
+                  toast(ToastPresets.approved("Movimiento"));
+                }}
+                onReview={() => {
+                  setStatusOverrides((s) => ({ ...s, [selected.id]: "revision" }));
+                  toast(ToastPresets.needsDataRequested());
+                }}
+                onDiscard={() => toast(ToastPresets.dismissed("Movimiento"))}
+                onEdit={() => toast(ToastPresets.comingSoon("Editor de campos"))}
               />
             </motion.div>
           </AnimatePresence>
@@ -316,10 +339,14 @@ function ExtractedPanel({
   item,
   onApprove,
   onReview,
+  onDiscard,
+  onEdit,
 }: {
   item: InboxItem;
   onApprove: () => void;
   onReview: () => void;
+  onDiscard: () => void;
+  onEdit: () => void;
 }) {
   const isApproved = item.status === "aprobado";
   const confidencePct = Math.round(item.extracted.confidence * 100);
@@ -400,11 +427,11 @@ function ExtractedPanel({
             <CircleHelp className="h-3.5 w-3.5" />
             Pedir dato
           </Button>
-          <Button variant="ghost" size="sm">
+          <Button variant="ghost" size="sm" onClick={onEdit}>
             <Edit3 className="h-3.5 w-3.5" />
             Editar
           </Button>
-          <Button variant="ghost" size="sm">
+          <Button variant="ghost" size="sm" onClick={onDiscard}>
             <XCircle className="h-3.5 w-3.5" />
             Descartar
           </Button>

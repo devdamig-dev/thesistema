@@ -23,6 +23,7 @@ import { SectionHeader } from "@/components/ui/section-header";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ToastPresets, useToast } from "@/components/ui/toast";
 import { Closure, closures } from "@/lib/mock-data";
 import { formatARS, formatNumber, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -30,6 +31,7 @@ import { cn } from "@/lib/utils";
 export default function CierresPage() {
   const [selectedId, setSelectedId] = useState(closures[0].id);
   const [overrides, setOverrides] = useState<Record<string, "aprobado">>({});
+  const { toast } = useToast();
   const items = closures.map((c) => ({
     ...c,
     status: overrides[c.id] ?? c.status,
@@ -43,7 +45,11 @@ export default function CierresPage() {
         title="El cierre del día llega por WhatsApp. La IA lo arma."
         description="Tu equipo manda el resumen en texto libre. Detectamos ingresos por medio de pago, gastos, retiros, productos vendidos y alertamos inconsistencias."
         actions={
-          <Button size="sm" variant="ai">
+          <Button
+            size="sm"
+            variant="ai"
+            onClick={() => toast(ToastPresets.comingSoon("Plantilla automática"))}
+          >
             <Sparkles className="h-4 w-4" />
             Plantilla automática
           </Button>
@@ -129,8 +135,13 @@ export default function CierresPage() {
             >
               <ClosureDetail
                 closure={selected}
-                onApprove={() =>
-                  setOverrides((s) => ({ ...s, [selected.id]: "aprobado" }))
+                onApprove={() => {
+                  setOverrides((s) => ({ ...s, [selected.id]: "aprobado" }));
+                  toast(ToastPresets.closureApproved());
+                }}
+                onClarify={() => toast(ToastPresets.needsDataRequested())}
+                onEditValues={() =>
+                  toast(ToastPresets.comingSoon("Editor de cierres"))
                 }
               />
             </motion.div>
@@ -169,9 +180,13 @@ function BeforeAfterBanner() {
 function ClosureDetail({
   closure: c,
   onApprove,
+  onClarify,
+  onEditValues,
 }: {
   closure: Closure & { status: "pendiente" | "aprobado" };
   onApprove: () => void;
+  onClarify: () => void;
+  onEditValues: () => void;
 }) {
   const isApproved = c.status === "aprobado";
 
@@ -345,10 +360,10 @@ function ClosureDetail({
           Al aprobar, el cierre se imputa a ventas, gastos y caja del día.
         </p>
         <div className="flex flex-wrap gap-2">
-          <Button variant="ghost" size="md">
+          <Button variant="ghost" size="md" onClick={onClarify}>
             <CircleHelp className="h-4 w-4" /> Pedir aclaración
           </Button>
-          <Button variant="ghost" size="md">
+          <Button variant="ghost" size="md" onClick={onEditValues}>
             Editar valores
           </Button>
           <Button variant="primary" size="md" onClick={onApprove} disabled={isApproved}>

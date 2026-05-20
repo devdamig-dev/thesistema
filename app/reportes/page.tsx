@@ -13,11 +13,13 @@ import {
   Sparkles,
   Wand2,
 } from "lucide-react";
+import Link from "next/link";
 import { SectionHeader } from "@/components/ui/section-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PriorityBadge } from "@/components/ui/priority-badge";
+import { ToastPresets, useToast } from "@/components/ui/toast";
 import { ExpensesDonut } from "@/components/charts/expenses-donut";
 import { SalesAreaChart } from "@/components/charts/sales-area-chart";
 import {
@@ -42,6 +44,7 @@ const ANSWER_BULLETS = [
 export default function ReportesPage() {
   const [question, setQuestion] = useState("");
   const [answered, setAnswered] = useState(false);
+  const { toast } = useToast();
 
   return (
     <div className="space-y-8">
@@ -148,9 +151,15 @@ export default function ReportesPage() {
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
-                <Button variant="ghost" size="sm">Ver detalle de margen</Button>
-                <Button variant="ghost" size="sm">Comparar proveedores</Button>
-                <Button variant="ghost" size="sm">Armar campaña WhatsApp</Button>
+                <Link href="/productos">
+                  <Button variant="ghost" size="sm">Ver detalle de margen</Button>
+                </Link>
+                <Link href="/compras">
+                  <Button variant="ghost" size="sm">Comparar proveedores</Button>
+                </Link>
+                <Link href="/marketing">
+                  <Button variant="ghost" size="sm">Armar campaña WhatsApp</Button>
+                </Link>
               </div>
             </motion.div>
           )}
@@ -213,11 +222,25 @@ export default function ReportesPage() {
                 </div>
 
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button variant="primary" size="sm">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() =>
+                      toast({
+                        tone: "ai",
+                        title: `Simulación: ${d.titulo}`,
+                        description: `Impacto proyectado ${d.impacto} con ${Math.round(d.confianza * 100)}% de confianza.`,
+                      })
+                    }
+                  >
                     <Wand2 className="h-3.5 w-3.5" />
                     Simular impacto
                   </Button>
-                  <Button variant="ghost" size="sm">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => toast(ToastPresets.comingSoon("Vista de detalle"))}
+                  >
                     Ver detalle
                     <ArrowRight className="h-3.5 w-3.5" />
                   </Button>

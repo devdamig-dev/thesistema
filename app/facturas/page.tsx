@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Drawer } from "@/components/ui/drawer";
 import { SegmentedTabs } from "@/components/ui/tabs";
+import { ToastPresets, useToast } from "@/components/ui/toast";
 import {
   Invoice,
   InvoiceStatus,
@@ -45,6 +46,7 @@ export default function FacturasPage() {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Invoice | null>(null);
   const [overrides, setOverrides] = useState<Record<string, InvoiceStatus>>({});
+  const { toast } = useToast();
 
   const items = useMemo(
     () => invoices.map((i) => ({ ...i, status: overrides[i.id] ?? i.status })),
@@ -71,10 +73,18 @@ export default function FacturasPage() {
         description="Mandá la foto o el PDF por WhatsApp. La IA lee el comprobante, lo cruza con tus insumos y deja la factura lista para vos y para el contador."
         actions={
           <>
-            <Button size="sm" variant="ghost">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => toast(ToastPresets.exported())}
+            >
               <Download className="h-4 w-4" /> Exportar mes
             </Button>
-            <Button size="sm" variant="primary">
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => toast(ToastPresets.invoiceUploaded())}
+            >
               <Upload className="h-4 w-4" /> Subir factura
             </Button>
           </>
@@ -83,7 +93,16 @@ export default function FacturasPage() {
 
       {/* Upload Zone + Stats */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
-        <UploadZone />
+        <UploadZone
+          onUpload={() => toast(ToastPresets.invoiceUploaded())}
+          onWhatsapp={() =>
+            toast({
+              tone: "ai",
+              title: "Abriendo WhatsApp",
+              description: "Te abrimos un chat para enviar la factura.",
+            })
+          }
+        />
         <StatStrip
           stats={[
             { label: "Facturas del mes", value: String(counts.todas), tone: "brand" },
@@ -177,12 +196,16 @@ export default function FacturasPage() {
         {selected && (
           <InvoiceDetail
             invoice={selected}
-            onApprove={() =>
-              setOverrides((s) => ({ ...s, [selected.id]: "aprobado" }))
-            }
-            onSendAccountant={() =>
-              setOverrides((s) => ({ ...s, [selected.id]: "contador" }))
-            }
+            onApprove={() => {
+              setOverrides((s) => ({ ...s, [selected.id]: "aprobado" }));
+              toast(ToastPresets.approved("Factura"));
+            }}
+            onSendAccountant={() => {
+              setOverrides((s) => ({ ...s, [selected.id]: "contador" }));
+              toast(ToastPresets.invoiceSentToAccountant());
+            }}
+            onReject={() => toast(ToastPresets.dismissed("Factura"))}
+            onEdit={() => toast(ToastPresets.comingSoon("Editor de factura"))}
           />
         )}
       </Drawer>
@@ -192,7 +215,13 @@ export default function FacturasPage() {
 
 /* -------------------- subcomponentes -------------------- */
 
-function UploadZone() {
+function UploadZone({
+  onUpload,
+  onWhatsapp,
+}: {
+  onUpload: () => void;
+  onWhatsapp: () => void;
+}) {
   return (
     <div className="card relative overflow-hidden p-6">
       <div className="absolute inset-0 grid-dots opacity-30" />
@@ -219,10 +248,10 @@ function UploadZone() {
           </p>
         </div>
         <div className="flex gap-2 md:flex-col">
-          <Button variant="primary" size="sm">
+          <Button variant="primary" size="sm" onClick={onUpload}>
             <Upload className="h-3.5 w-3.5" /> Subir archivo
           </Button>
-          <Button variant="ghost" size="sm">
+          <Button variant="ghost" size="sm" onClick={onWhatsapp}>
             <Paperclip className="h-3.5 w-3.5" /> Desde WhatsApp
           </Button>
         </div>
@@ -354,10 +383,14 @@ function InvoiceDetail({
   invoice,
   onApprove,
   onSendAccountant,
+  onReject,
+  onEdit,
 }: {
   invoice: Invoice;
   onApprove: () => void;
   onSendAccountant: () => void;
+  onReject: () => void;
+  onEdit: () => void;
 }) {
   const isApproved = invoice.status === "aprobado" || invoice.status === "contador";
   const sentAccountant = invoice.status === "contador";
@@ -504,10 +537,10 @@ function InvoiceDetail({
 
         {/* Botones */}
         <div className="flex flex-wrap gap-2 border-t border-line pt-4">
-          <Button variant="ghost" size="md">
+          <Button variant="ghost" size="md" onClick={onReject}>
             <XCircle className="h-4 w-4" /> Rechazar
           </Button>
-          <Button variant="ghost" size="md">
+          <Button variant="ghost" size="md" onClick={onEdit}>
             Editar campos
           </Button>
           <Button variant="primary" size="md" onClick={onApprove} disabled={isApproved}>

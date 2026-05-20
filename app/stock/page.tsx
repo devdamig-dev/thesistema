@@ -1,3 +1,5 @@
+"use client";
+
 import { AlertTriangle, Boxes, Plus, Sparkles } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
 import { KpiCard } from "@/components/ui/kpi-card";
@@ -5,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { InsightCard } from "@/components/common/insight-card";
+import { ToastPresets, useToast } from "@/components/ui/toast";
 import { stockItems } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 
@@ -16,6 +19,7 @@ const STATE_STYLES = {
 
 export default function StockPage() {
   const criticos = stockItems.filter((s) => s.estado === "critico").length;
+  const { toast } = useToast();
   return (
     <div className="space-y-8">
       <SectionHeader
@@ -24,10 +28,24 @@ export default function StockPage() {
         description="La IA actualiza tu stock con cada foto, audio o texto que mandás. Calcula cobertura en días y avisa cuándo reponer."
         actions={
           <>
-            <Button size="sm" variant="ghost">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                toast({
+                  tone: "ai",
+                  title: "Reposición sugerida",
+                  description: "Generamos un borrador de orden con pan brioche, cheddar y bacon.",
+                })
+              }
+            >
               <Sparkles className="h-4 w-4" /> Sugerir reposición
             </Button>
-            <Button size="sm" variant="primary">
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => toast(ToastPresets.comingSoon("Movimiento manual de stock"))}
+            >
               <Plus className="h-4 w-4" /> Movimiento manual
             </Button>
           </>

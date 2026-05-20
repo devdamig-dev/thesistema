@@ -1,3 +1,5 @@
+"use client";
+
 import {
   AlertTriangle,
   CalendarDays,
@@ -13,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { InsightCard } from "@/components/common/insight-card";
 import { LaborVsSales } from "@/components/charts/labor-vs-sales";
+import { ToastPresets, useToast } from "@/components/ui/toast";
 import {
   employeeAlerts,
   employees,
@@ -35,6 +38,7 @@ const DAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 const HOURLY_RATE = 3_100; // ARS por hora aprox
 
 export default function EmpleadosPage() {
+  const { toast } = useToast();
   return (
     <div className="space-y-8">
       <SectionHeader
@@ -43,10 +47,24 @@ export default function EmpleadosPage() {
         description="Turnos, horas, adelantos y costo laboral. La IA cruza esta info con las ventas para detectar oportunidades."
         actions={
           <>
-            <Button size="sm" variant="ghost">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                toast({
+                  tone: "ai",
+                  title: "Grilla sugerida lista",
+                  description: "Reasignamos un turno del martes para bajar el costo laboral 8%.",
+                })
+              }
+            >
               <Sparkles className="h-4 w-4 text-ai-400" /> Sugerir grilla
             </Button>
-            <Button size="sm" variant="primary">
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => toast(ToastPresets.comingSoon("Alta de empleado"))}
+            >
               <Plus className="h-4 w-4" /> Agregar empleado
             </Button>
           </>
@@ -192,11 +210,25 @@ export default function EmpleadosPage() {
             <span className="font-semibold text-warn-400">Martes 19–23 hs:</span> baja venta proyectada con cobertura completa.
           </div>
           <div className="flex gap-2">
-            <Button size="sm" variant="ghost">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => toast(ToastPresets.comingSoon("Editor de turnos"))}
+            >
               <Clock className="h-3.5 w-3.5" />
               Ajustar turnos
             </Button>
-            <Button size="sm" variant="ai">
+            <Button
+              size="sm"
+              variant="ai"
+              onClick={() =>
+                toast({
+                  tone: "success",
+                  title: "Sugerencia IA aplicada",
+                  description: "Reducimos un turno del martes y reasignamos cobertura el sábado.",
+                })
+              }
+            >
               <Sparkles className="h-3.5 w-3.5" />
               Aplicar sugerencia IA
             </Button>
