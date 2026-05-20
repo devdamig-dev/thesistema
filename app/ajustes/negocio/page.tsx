@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { Building2, Check, MapPin, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,7 @@ import {
   TextField,
   Toggle,
 } from "@/components/ajustes/setting-row";
+import { updateBusinessAction } from "@/app/actions/business";
 
 const BRANCHES = [
   { name: "Local Palermo", address: "Av. Córdoba 4500, CABA", main: true },
@@ -36,6 +37,31 @@ const CHANNELS = [
 
 export default function AjustesNegocioPage() {
   const { toast } = useToast();
+  const [name, setName] = useState("La Birra Burger");
+  const [taxId, setTaxId] = useState("30-71234567-9");
+  const [pending, startTransition] = useTransition();
+
+  function handleSave() {
+    startTransition(async () => {
+      const result = await updateBusinessAction({ name, taxId });
+      if (result.ok) {
+        toast({
+          tone: "success",
+          title: "Configuración guardada",
+          description: result.persisted
+            ? "Sincronizamos los datos del negocio en Supabase."
+            : "En modo demo no persistimos cambios.",
+        });
+      } else {
+        toast({
+          tone: "warn",
+          title: "No pudimos guardar",
+          description: result.error,
+        });
+      }
+    });
+  }
+
   return (
     <div className="space-y-6">
       <SettingsCard
@@ -47,27 +73,40 @@ export default function AjustesNegocioPage() {
               variant="ghost"
               size="sm"
               onClick={() => toast({ tone: "neutral", title: "Cambios descartados" })}
+              disabled={pending}
             >
               Cancelar
             </Button>
             <Button
               variant="primary"
               size="sm"
-              onClick={() => toast(ToastPresets.settingsSaved())}
+              onClick={handleSave}
+              disabled={pending}
             >
-              <Check className="h-3.5 w-3.5" /> Guardar
+              <Check className="h-3.5 w-3.5" />
+              {pending ? "Guardando…" : "Guardar"}
             </Button>
           </>
         }
       >
         <SettingRow label="Nombre comercial">
-          <TextField defaultValue="La Birra Burger" />
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full rounded-lg border border-line bg-bg-subtle px-3 py-2 text-sm text-ink placeholder:text-ink-subtle focus:border-line-strong focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+          />
         </SettingRow>
         <SettingRow label="Razón social">
           <TextField defaultValue="Iglesias Hnos. S.R.L." />
         </SettingRow>
         <SettingRow label="CUIT">
-          <TextField defaultValue="30-71234567-9" />
+          <input
+            type="text"
+            value={taxId}
+            onChange={(e) => setTaxId(e.target.value)}
+            className="w-full rounded-lg border border-line bg-bg-subtle px-3 py-2 text-sm text-ink placeholder:text-ink-subtle focus:border-line-strong focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+          />
         </SettingRow>
         <SettingRow label="Condición IVA">
           <TextField defaultValue="Responsable Inscripto" />

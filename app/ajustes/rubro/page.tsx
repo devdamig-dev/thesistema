@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import {
   Beef,
   Beer,
@@ -18,94 +18,55 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ToastPresets, useToast } from "@/components/ui/toast";
 import { SettingsCard } from "@/components/ajustes/setting-row";
+import {
+  INDUSTRIES,
+  MODULE_LABELS,
+  SUGGESTED_MODULES_BY_INDUSTRY,
+  type IndustryKey,
+} from "@/lib/industries";
+import { setIndustryAction } from "@/app/actions/industry";
 import { cn } from "@/lib/utils";
 
-type Industry =
-  | "hamburgueseria"
-  | "foodtruck"
-  | "cafeteria"
-  | "pizzeria"
-  | "bar"
-  | "heladeria"
-  | "panaderia"
-  | "restaurante"
-  | "dark_kitchen";
-
-const INDUSTRIES: { key: Industry; label: string; icon: any; tagline: string }[] = [
-  { key: "hamburgueseria", label: "Hamburguesería", icon: Beef, tagline: "Recetas y food cost por producto" },
-  { key: "foodtruck", label: "Foodtruck", icon: Truck, tagline: "Cierres por punto y caja viva" },
-  { key: "cafeteria", label: "Cafetería", icon: Coffee, tagline: "Producción y combos desayuno" },
-  { key: "pizzeria", label: "Pizzería", icon: Pizza, tagline: "Recetas por porción y delivery" },
-  { key: "bar", label: "Bar", icon: Beer, tagline: "Stock de bebidas y happy hour" },
-  { key: "heladeria", label: "Heladería", icon: IceCream, tagline: "Producción diaria y merma" },
-  { key: "panaderia", label: "Panadería", icon: Cookie, tagline: "Recetas por lote y vencimientos" },
-  { key: "restaurante", label: "Restaurante", icon: UtensilsCrossed, tagline: "Carta amplia y reservas" },
-  { key: "dark_kitchen", label: "Dark kitchen", icon: Warehouse, tagline: "Multimarca y delivery only" },
-];
-
-const MODULES_BY_INDUSTRY: Record<Industry, { label: string; desc: string; tone: "brand" | "ai" | "success" }[]> = {
-  hamburgueseria: [
-    { label: "Recetas y food cost", desc: "Costos por producto y simulador de margen.", tone: "brand" },
-    { label: "Stock cocina", desc: "Carne, pan, cheddar, bacon, papas, descartables.", tone: "ai" },
-    { label: "Delivery propio + apps", desc: "Comparativa de canales y comisiones.", tone: "success" },
-    { label: "Cierres diarios", desc: "Por turno y por canal.", tone: "brand" },
-  ],
-  foodtruck: [
-    { label: "Cierres por punto", desc: "Cada ubicación con su caja y stock.", tone: "brand" },
-    { label: "Caja viva", desc: "Efectivo, QR, tarjeta y retiros minuto a minuto.", tone: "ai" },
-    { label: "Combustible y traslados", desc: "Costos variables del recorrido.", tone: "success" },
-    { label: "Stock móvil", desc: "Lo que cargás antes de salir vs lo vendido.", tone: "brand" },
-  ],
-  cafeteria: [
-    { label: "Producción diaria", desc: "Medialunas, sándwiches, masas frescas.", tone: "brand" },
-    { label: "Combos de desayuno", desc: "Por turno y por estacionalidad.", tone: "ai" },
-    { label: "Merma", desc: "Lo que no se vendió antes de cerrar.", tone: "success" },
-    { label: "Clientes frecuentes", desc: "Quiénes vienen 3+ veces por semana.", tone: "brand" },
-  ],
-  pizzeria: [
-    { label: "Recetas por porción", desc: "Costo por molde y por porción individual.", tone: "brand" },
-    { label: "Delivery propio + apps", desc: "Tiempos y comisiones por canal.", tone: "ai" },
-    { label: "Stock cocina + bebidas", desc: "Harina, queso, fiambres, gaseosas, vinos.", tone: "success" },
-    { label: "Promociones por día", desc: "Lunes/jueves pizza libre.", tone: "brand" },
-  ],
-  bar: [
-    { label: "Stock de bebidas", desc: "Cerveza, vino, destilados con su cobertura.", tone: "brand" },
-    { label: "Recetas de tragos", desc: "Costos por copa o por jarra.", tone: "ai" },
-    { label: "Happy hour", desc: "Promos por franja horaria y por canal.", tone: "success" },
-    { label: "Consumo por turno", desc: "Mozos, barra, cocina.", tone: "brand" },
-  ],
-  heladeria: [
-    { label: "Producción diaria", desc: "Sabores producidos vs sabores vendidos.", tone: "brand" },
-    { label: "Merma", desc: "Pérdida por temperatura o vencimiento.", tone: "ai" },
-    { label: "Estacionalidad", desc: "Curva de venta por sabor y por mes.", tone: "success" },
-    { label: "Combos familiares", desc: "Kilos, medios kilos y postres.", tone: "brand" },
-  ],
-  panaderia: [
-    { label: "Producción por lote", desc: "Cuántos kg de masa, cuántas piezas, qué rinde.", tone: "brand" },
-    { label: "Vencimientos", desc: "Productos que vencen en menos de 24 hs.", tone: "ai" },
-    { label: "Merma", desc: "Pan no vendido, harina perdida, devoluciones.", tone: "success" },
-    { label: "Recetas por lote", desc: "Escalado de costos según producción.", tone: "brand" },
-  ],
-  restaurante: [
-    { label: "Carta amplia", desc: "Entradas, principales, postres con receta.", tone: "brand" },
-    { label: "Reservas", desc: "Mesas, cubiertos, ocupación por turno.", tone: "ai" },
-    { label: "Mozos y propinas", desc: "Asignaciones y reparto.", tone: "success" },
-    { label: "Bodega", desc: "Stock de vinos y rotación.", tone: "brand" },
-  ],
-  dark_kitchen: [
-    { label: "Multimarca", desc: "Una cocina, varias marcas en apps.", tone: "brand" },
-    { label: "Delivery only", desc: "Sin salón ni cierres por mesa.", tone: "ai" },
-    { label: "Comisiones por app", desc: "Comparativa de rentabilidad por marca.", tone: "success" },
-    { label: "Picking y packaging", desc: "Tiempos por pedido y errores.", tone: "brand" },
-  ],
+const ICONS: Record<IndustryKey, any> = {
+  hamburgueseria: Beef,
+  foodtruck: Truck,
+  cafeteria: Coffee,
+  pizzeria: Pizza,
+  bar: Beer,
+  heladeria: IceCream,
+  panaderia: Cookie,
+  restaurante: UtensilsCrossed,
+  dark_kitchen: Warehouse,
 };
 
 export default function AjustesRubroPage() {
-  const [industry, setIndustry] = useState<Industry>("hamburgueseria");
+  const [industry, setIndustry] = useState<IndustryKey>("hamburgueseria");
+  const [pending, startTransition] = useTransition();
   const { toast } = useToast();
 
-  const suggested = MODULES_BY_INDUSTRY[industry];
+  const suggested = SUGGESTED_MODULES_BY_INDUSTRY[industry];
   const current = INDUSTRIES.find((i) => i.key === industry)!;
+
+  function applyIndustry() {
+    startTransition(async () => {
+      const result = await setIndustryAction(industry);
+      if (result.ok) {
+        toast({
+          tone: "success",
+          title: `Rubro actualizado a ${current.label}`,
+          description: result.persisted
+            ? "Sincronizamos los módulos sugeridos en Supabase."
+            : "Re-acomodamos el sidebar y las recomendaciones de la IA.",
+        });
+      } else {
+        toast({
+          tone: "warn",
+          title: "No pudimos guardar el rubro",
+          description: result.error,
+        });
+      }
+    });
+  }
 
   return (
     <div className="space-y-6">
@@ -115,7 +76,7 @@ export default function AjustesRubroPage() {
       >
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-3">
           {INDUSTRIES.map((i) => {
-            const Icon = i.icon;
+            const Icon = ICONS[i.key];
             const active = i.key === industry;
             return (
               <button
@@ -165,21 +126,18 @@ export default function AjustesRubroPage() {
                   title: "Vista previa restablecida",
                 })
               }
+              disabled={pending}
             >
               Restablecer
             </Button>
             <Button
               variant="primary"
               size="sm"
-              onClick={() =>
-                toast({
-                  tone: "success",
-                  title: `Rubro actualizado a ${current.label}`,
-                  description: "Re-acomodamos el sidebar y las recomendaciones de la IA.",
-                })
-              }
+              onClick={applyIndustry}
+              disabled={pending}
             >
-              <Check className="h-3.5 w-3.5" /> Aplicar rubro
+              <Check className="h-3.5 w-3.5" />
+              {pending ? "Guardando…" : "Aplicar rubro"}
             </Button>
           </>
         }
@@ -189,28 +147,30 @@ export default function AjustesRubroPage() {
           La IA recomienda activar estos módulos en base a {current.label.toLowerCase()}
         </div>
         <ul className="grid grid-cols-1 gap-2 md:grid-cols-2">
-          {suggested.map((m) => (
-            <li
-              key={m.label}
-              className="flex items-start gap-3 rounded-xl border border-line bg-bg-subtle/40 p-3"
-            >
-              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-line bg-bg-elevated">
-                <Sparkles className="h-3.5 w-3.5 text-ai-400" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-ink">{m.label}</span>
-                  <Badge tone={m.tone}>Sugerido</Badge>
+          {suggested.map((key) => {
+            const meta = MODULE_LABELS[key] ?? { label: key, desc: "" };
+            return (
+              <li
+                key={key}
+                className="flex items-start gap-3 rounded-xl border border-line bg-bg-subtle/40 p-3"
+              >
+                <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-line bg-bg-elevated">
+                  <Sparkles className="h-3.5 w-3.5 text-ai-400" />
                 </div>
-                <p className="mt-0.5 text-[11px] text-ink-muted leading-relaxed">
-                  {m.desc}
-                </p>
-              </div>
-            </li>
-          ))}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-ink">{meta.label}</span>
+                    <Badge tone="ai">Sugerido</Badge>
+                  </div>
+                  <p className="mt-0.5 text-[11px] text-ink-muted leading-relaxed">
+                    {meta.desc}
+                  </p>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       </SettingsCard>
-
     </div>
   );
 }
