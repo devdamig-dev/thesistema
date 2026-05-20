@@ -1,13 +1,22 @@
 "use client";
 
 import { ReactNode, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 
+const BARE_ROUTES = ["/login"];
+
 export function AppShell({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const pathname = usePathname();
+
+  // Rutas sin sidebar/topbar (login, etc.)
+  if (BARE_ROUTES.some((r) => pathname === r || pathname.startsWith(r + "/"))) {
+    return <div className="min-h-screen">{children}</div>;
+  }
 
   return (
     <div className="relative flex min-h-screen">
