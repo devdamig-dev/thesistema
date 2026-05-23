@@ -1,27 +1,28 @@
 /**
- * Webhook WhatsApp Cloud API · stub.
+ * Webhook WhatsApp Cloud API · Sprint 2.
  *
- * Esta ruta queda preparada para recibir mensajes desde Meta. En
- * Sprint 1 sólo:
- *   - Devuelve 200 con el challenge en GET (verificación de Meta).
- *   - En POST guarda el mensaje en `whatsapp_messages` y crea una
- *     `ai_extraction` placeholder con confidence = 0 (la integración
- *     con Claude/GPT va en Sprint 2).
+ * Flujo:
+ *   1. Verifica firma/token (GET).
+ *   2. Recibe POST con payload simplificado o Cloud API.
+ *   3. Inserta el mensaje en `whatsapp_messages`.
+ *   4. Llama a la IA (`extractFromMessage`) para extraer campos.
+ *   5. Inserta el resultado en `ai_extractions` con estado pending /
+ *      needs_review / failed según confidence y fuente.
+ *   6. Devuelve 200 con `message_id` y `extraction_id`.
+ *
+ * En modo demo, devolvemos 200 sin persistir para que tests con curl
+ * sigan funcionando.
  *
  * Variables de entorno:
- *   META_VERIFY_TOKEN — token compartido con Meta para verificar el
- *                       endpoint cuando se registra el webhook.
- *
- * Para producción real falta:
- *   - Validar la firma X-Hub-Signature-256.
- *   - Resolver el business_id desde el número receptor.
- *   - Disparar la edge function que llama al LLM.
- *   - Manejar audios/imágenes (subir a Storage y referenciar).
+ *   META_VERIFY_TOKEN    — token compartido para Meta (default: gastropilot-dev).
+ *   ANTHROPIC_API_KEY    — opcional. Si no está, usamos el heurístico.
+ *   ANTHROPIC_MODEL_ID   — opcional. Default: claude-haiku-4-5-20251001.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isDatabaseMode } from "@/lib/env";
+import { extractFromMessage } from "@/lib/ai/extract";
 
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN ?? "gastropilot-dev";
 
@@ -48,31 +49,33 @@ export async function POST(request: NextRequest) {
   }
 
   if (!isDatabaseMode()) {
-    // En modo demo no escribimos en DB, sólo devolvemos OK.
-    return NextResponse.json({ ok: true, persisted: false, mode: "demo" });
+    // Modo demo: corremos la extracción para que el caller pueda ver
+    // lo que la IA detectó, pero no persistimos.
+    const incoming = normalizeIncoming(body);
+    const extraction = await extractFromMessage(incoming.raw, incoming.sender_name);
+    return NextResponse.json({
+      ok: true,
+      persisted: false,
+      mode: "demo",
+      extraction,
+    });
   }
 
   try {
     const supabase = createSupabaseAdminClient();
     const db = supabase as any;
 
-    // Resolver business — en sprint próximo, mapear por número receptor.
-    // Por ahora, tomamos el primer business del workspace activo.
+    // En sprint próximo: mapear business_id por número receptor de Meta.
+    // Por ahora tomamos el primer business (mono-tenant inicial).
     const bizRes = await db.from("businesses").select("id").limit(1).maybeSingle();
     const biz = bizRes.data as { id: string } | null;
     if (!biz) {
-      return NextResponse.json(
-        { ok: false, reason: "no_business" },
-        { status: 404 },
-      );
+      return NextResponse.json({ ok: false, reason: "no_business" }, { status: 404 });
     }
 
-    // Cloud API empaqueta los mensajes así:
-    //   entry[].changes[].value.messages[]
-    // Para sprint 1 aceptamos un payload simplificado:
-    //   { from: "Mateo", role: "Socio", channel: "text", text: "..." }
     const incoming = normalizeIncoming(body);
 
+    // 1) Persistir el mensaje
     const msgRes = await db
       .from("whatsapp_messages")
       .insert({
@@ -89,21 +92,49 @@ export async function POST(request: NextRequest) {
     const msg = msgRes.data as { id: string } | null;
     if (!msg) {
       return NextResponse.json(
-        { ok: false, reason: msgRes.error?.message ?? "insert_failed" },
+        { ok: false, reason: msgRes.error?.message ?? "insert_message_failed" },
         { status: 500 },
       );
     }
 
-    // Extracción placeholder. La IA real entra en Sprint 2.
-    await db.from("ai_extractions").insert({
-      message_id: msg.id,
-      type: "unknown",
-      fields: {},
-      confidence: 0,
-      status: "pending",
-    });
+    // 2) Extraer con IA
+    const extraction = await extractFromMessage(incoming.raw, incoming.sender_name);
 
-    return NextResponse.json({ ok: true, message_id: msg.id, persisted: true });
+    // 3) Estado inicial según confidence y fuente
+    const status =
+      extraction.source === "failed" || extraction.confidence < 0.4
+        ? "failed"
+        : extraction.missing_fields.length > 0 || extraction.confidence < 0.7
+          ? "needs_review"
+          : "pending";
+
+    // 4) Persistir extracción
+    const extractionRes = await db
+      .from("ai_extractions")
+      .insert({
+        message_id: msg.id,
+        business_id: biz.id,
+        type: extraction.movement_type,
+        fields: extraction.detected_fields,
+        missing: extraction.missing_fields,
+        confidence: extraction.confidence,
+        status,
+        source: extraction.source,
+        summary: extraction.normalized_summary,
+        target_entity: extraction.target_entity,
+      })
+      .select("id")
+      .maybeSingle();
+    const extractionRow = extractionRes.data as { id: string } | null;
+
+    return NextResponse.json({
+      ok: true,
+      persisted: true,
+      message_id: msg.id,
+      extraction_id: extractionRow?.id,
+      extraction,
+      status,
+    });
   } catch (error: any) {
     return NextResponse.json(
       { ok: false, reason: error?.message ?? "unknown_error" },
@@ -118,7 +149,7 @@ function normalizeIncoming(payload: any): {
   channel: "text" | "audio" | "image" | "document";
   raw: string;
 } {
-  // Forma simplificada que usamos en sprint 1.
+  // Payload simplificado (para curl/test).
   if (typeof payload?.text === "string") {
     return {
       sender_name: payload.from ?? "Sin nombre",
@@ -127,7 +158,7 @@ function normalizeIncoming(payload: any): {
       raw: payload.text,
     };
   }
-  // Forma Cloud API real (la implementamos completa en sprint 2).
+  // Cloud API real (parseo parcial — completar en sprint próximo).
   const change = payload?.entry?.[0]?.changes?.[0]?.value;
   const message = change?.messages?.[0];
   const contact = change?.contacts?.[0];

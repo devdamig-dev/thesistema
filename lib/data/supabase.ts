@@ -25,6 +25,7 @@ import {
   mapCustomer,
   mapEmployee,
   mapExpense,
+  mapInboxItem,
   mapProduct,
   mapRecommendation,
   mapSupplier,
@@ -96,8 +97,41 @@ export const business = {
 // ---------- DASHBOARD (todavía 100% mock) ----------
 export const dashboard = demo.dashboard;
 
-// ---------- INBOX (sprint próximo) ----------
-export const inbox = demo.inbox;
+// ---------- INBOX (Sprint 2 · real) ----------
+export const inbox = {
+  async list() {
+    const supabase = createSupabaseServerClient();
+    if (!supabase) return demo.inbox.list();
+    const db = supabase as any;
+
+    // 1) Mensajes ordenados por más recientes
+    const msgRes = await db
+      .from("whatsapp_messages")
+      .select("*")
+      .order("received_at", { ascending: false })
+      .limit(50);
+    const messages = (msgRes.data as Tables["whatsapp_messages"]["Row"][] | null) ?? [];
+    if (msgRes.error || messages.length === 0) return demo.inbox.list();
+
+    // 2) Extracciones asociadas (un join client-side simple)
+    const messageIds = messages.map((m) => m.id);
+    const extRes = await db
+      .from("ai_extractions")
+      .select("*")
+      .in("message_id", messageIds);
+    const extractions =
+      (extRes.data as Tables["ai_extractions"]["Row"][] | null) ?? [];
+    const byMessage = new Map(extractions.map((e) => [e.message_id, e]));
+
+    return messages.map((m) => mapInboxItem(m, byMessage.get(m.id) ?? null));
+  },
+  async getConversation(messageId: string) {
+    // Por ahora las conversaciones bidireccionales viven en mock-data.
+    // Cuando integremos respuestas reales del copiloto en Sprint 3,
+    // las leemos de una nueva tabla `whatsapp_conversation_turns`.
+    return demo.inbox.getConversation(messageId);
+  },
+};
 
 // ---------- FACTURAS (sprint próximo) ----------
 export const invoices = demo.invoices;

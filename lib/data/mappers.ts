@@ -105,6 +105,75 @@ export function mapExpense(e: ExpenseRow) {
   };
 }
 
+// ---------- INBOX (whatsapp_messages + ai_extractions) ----------
+type MessageRow = Tables["whatsapp_messages"]["Row"];
+type ExtractionRow = Tables["ai_extractions"]["Row"];
+
+const TYPE_LABELS: Record<string, string> = {
+  purchase: "Compra de insumo",
+  sale: "Cierre de ventas diario",
+  expense: "Gasto fijo",
+  stock_update: "Actualización de stock",
+  employee_advance: "Adelanto a empleado",
+  daily_closure: "Cierre operativo",
+  supplier_price_change: "Alerta de precio",
+  unknown: "Movimiento sin clasificar",
+};
+
+const STATUS_TO_INBOX: Record<string, "pendiente" | "aprobado" | "revision"> = {
+  pending: "pendiente",
+  needs_review: "revision",
+  approved: "aprobado",
+  rejected: "revision",
+  failed: "revision",
+};
+
+export function mapInboxItem(msg: MessageRow, extraction: ExtractionRow | null) {
+  const fields = (extraction?.fields as Record<string, any>) ?? {};
+
+  const extracted = {
+    tipo: TYPE_LABELS[extraction?.type ?? "unknown"] ?? "Movimiento",
+    monto: fields.total_amount ?? fields.amount,
+    proveedor: fields.supplier,
+    empleado: fields.employee_name,
+    insumo: fields.item ?? fields.ingredient,
+    cantidad:
+      fields.quantity != null && fields.unit
+        ? `${fields.quantity} ${fields.unit}`
+        : fields.qty != null && fields.unit
+          ? `${fields.qty} ${fields.unit}`
+          : undefined,
+    medioPago: fields.payment_method,
+    canal:
+      Array.isArray(fields.channels) && fields.channels.length
+        ? fields.channels.map((c: any) => c.channel).join(" / ")
+        : undefined,
+    categoria: fields.category ?? "Sin clasificar",
+    fecha: fields.date ?? "Hoy",
+    confidence: extraction?.confidence ?? 0,
+    missing: extraction?.missing as string[] | undefined,
+  };
+
+  const channel: "texto" | "audio" | "foto" =
+    msg.channel === "audio" ? "audio" : msg.channel === "image" || msg.channel === "document" ? "foto" : "texto";
+
+  return {
+    id: msg.id,
+    sender: msg.sender_name,
+    role: msg.sender_role,
+    channel,
+    receivedAt: new Date(msg.received_at),
+    status: STATUS_TO_INBOX[extraction?.status ?? "pending"] ?? "pendiente",
+    preview: msg.preview || msg.raw.slice(0, 120),
+    raw: msg.raw,
+    extracted,
+    // Extras útiles para acciones server-side. La UI tipada actual los
+    // ignora porque su tipo es estricto, pero los usamos en el cast del
+    // wrapper.
+    extractionId: extraction?.id ?? null,
+  };
+}
+
 // ---------- AI RECOMMENDATIONS ----------
 type RecRow = Tables["ai_recommendations"]["Row"];
 
