@@ -150,6 +150,8 @@ export type InboxItem = {
   status: InboxStatus;
   preview: string;
   raw: string;
+  /** ID de la extracción IA en database mode. null en demo. */
+  extractionId?: string | null;
   extracted: {
     tipo: string;
     monto?: number;

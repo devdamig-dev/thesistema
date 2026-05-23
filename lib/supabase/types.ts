@@ -478,11 +478,16 @@ export type Database = {
         Row: Timestamps & {
           id: string;
           message_id: string;
+          business_id: string | null;
           type: string;
           fields: unknown;
           missing: string[];
           confidence: number;
-          status: ApprovalStatus;
+          status: ApprovalStatus | "failed";
+          source: "claude" | "heuristic" | "failed";
+          summary: string | null;
+          target_entity: string | null;
+          target_record_id: string | null;
         };
         Insert: Partial<Database["public"]["Tables"]["ai_extractions"]["Row"]> & {
           message_id: string;
