@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   Check,
@@ -26,6 +27,11 @@ import { Drawer } from "@/components/ui/drawer";
 import { SegmentedTabs } from "@/components/ui/tabs";
 import { ToastPresets, useToast } from "@/components/ui/toast";
 import {
+  approveInvoiceAction,
+  rejectInvoiceAction,
+  uploadInvoiceAction,
+} from "@/app/actions/invoices";
+import {
   Invoice,
   InvoiceStatus,
   invoices,
@@ -42,11 +48,46 @@ const FILTERS: { value: "todas" | InvoiceStatus; label: string }[] = [
 ];
 
 export default function FacturasPage() {
+  const router = useRouter();
   const [filter, setFilter] = useState<"todas" | InvoiceStatus>("todas");
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Invoice | null>(null);
   const [overrides, setOverrides] = useState<Record<string, InvoiceStatus>>({});
+  const [pending, startTransition] = useTransition();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+
+  function handleFilesPicked(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    const formData = new FormData();
+    formData.append("file", file);
+
+    toast(ToastPresets.invoiceUploaded());
+
+    startTransition(async () => {
+      const result = await uploadInvoiceAction(formData);
+      if (result.ok) {
+        const summary = (result as any).summary;
+        const detected = summary?.extraction?.supplier ?? summary?.extraction?.items?.length;
+        toast({
+          tone: "success",
+          title: result.persisted ? "Factura procesada" : "Procesada en modo demo",
+          description: detected
+            ? `IA detectó: ${summary.extraction.supplier ?? "—"} · ${summary.extraction.items?.length ?? 0} ítems · ${Math.round((summary.extraction.confidence ?? 0) * 100)}% confianza`
+            : "Listo. Mirá el detalle abajo.",
+        });
+        router.refresh();
+      } else {
+        toast({
+          tone: "warn",
+          title: "No pudimos procesar",
+          description: result.error,
+        });
+      }
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    });
+  }
 
   const items = useMemo(
     () => invoices.map((i) => ({ ...i, status: overrides[i.id] ?? i.status })),
@@ -83,10 +124,23 @@ export default function FacturasPage() {
             <Button
               size="sm"
               variant="primary"
-              onClick={() => toast(ToastPresets.invoiceUploaded())}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={pending}
             >
-              <Upload className="h-4 w-4" /> Subir factura
+              {pending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4" />
+              )}
+              {pending ? "Procesando…" : "Subir factura"}
             </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,application/pdf"
+              className="hidden"
+              onChange={(e) => handleFilesPicked(e.target.files)}
+            />
           </>
         }
       />
@@ -94,7 +148,8 @@ export default function FacturasPage() {
       {/* Upload Zone + Stats */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
         <UploadZone
-          onUpload={() => toast(ToastPresets.invoiceUploaded())}
+          pending={pending}
+          onUpload={() => fileInputRef.current?.click()}
           onWhatsapp={() =>
             toast({
               tone: "ai",
@@ -197,14 +252,47 @@ export default function FacturasPage() {
           <InvoiceDetail
             invoice={selected}
             onApprove={() => {
+              // Si la invoice tiene id formato uuid (database mode),
+              // dispara el server action. En demo (mock-data) sólo
+              // actualiza estado local.
               setOverrides((s) => ({ ...s, [selected.id]: "aprobado" }));
-              toast(ToastPresets.approved("Factura"));
+              startTransition(async () => {
+                const result = await approveInvoiceAction(selected.id);
+                if (result.ok) {
+                  const recalc = (result as any).recalc;
+                  const recommendations =
+                    Array.isArray(recalc)
+                      ? recalc.reduce((s: number, r: any) => s + (r.recommendationsCreated ?? 0), 0)
+                      : 0;
+                  toast({
+                    tone: "success",
+                    title: "Factura aprobada",
+                    description: result.persisted
+                      ? `Stock actualizado · ${recommendations} alertas de margen generadas.`
+                      : "Modo demo · sin impacto en stock real.",
+                  });
+                  router.refresh();
+                } else {
+                  toast({ tone: "warn", title: "Error al aprobar", description: result.error });
+                }
+              });
             }}
             onSendAccountant={() => {
               setOverrides((s) => ({ ...s, [selected.id]: "contador" }));
               toast(ToastPresets.invoiceSentToAccountant());
             }}
-            onReject={() => toast(ToastPresets.dismissed("Factura"))}
+            onReject={() => {
+              setOverrides((s) => ({ ...s, [selected.id]: "revision" }));
+              startTransition(async () => {
+                const result = await rejectInvoiceAction(selected.id);
+                if (result.ok) {
+                  toast(ToastPresets.dismissed("Factura"));
+                  router.refresh();
+                } else {
+                  toast({ tone: "warn", title: "Error", description: result.error });
+                }
+              });
+            }}
             onEdit={() => toast(ToastPresets.comingSoon("Editor de factura"))}
           />
         )}
@@ -218,9 +306,11 @@ export default function FacturasPage() {
 function UploadZone({
   onUpload,
   onWhatsapp,
+  pending,
 }: {
   onUpload: () => void;
   onWhatsapp: () => void;
+  pending?: boolean;
 }) {
   return (
     <div className="card relative overflow-hidden p-6">
@@ -248,8 +338,9 @@ function UploadZone({
           </p>
         </div>
         <div className="flex gap-2 md:flex-col">
-          <Button variant="primary" size="sm" onClick={onUpload}>
-            <Upload className="h-3.5 w-3.5" /> Subir archivo
+          <Button variant="primary" size="sm" onClick={onUpload} disabled={pending}>
+            {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+            {pending ? "Procesando…" : "Subir archivo"}
           </Button>
           <Button variant="ghost" size="sm" onClick={onWhatsapp}>
             <Paperclip className="h-3.5 w-3.5" /> Desde WhatsApp
