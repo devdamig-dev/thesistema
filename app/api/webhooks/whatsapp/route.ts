@@ -23,6 +23,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isDatabaseMode } from "@/lib/env";
 import { extractFromMessage } from "@/lib/ai/extract";
+import { createNotification } from "@/lib/data/notifications";
 
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN ?? "gastropilot-dev";
 
@@ -126,6 +127,26 @@ export async function POST(request: NextRequest) {
       .select("id")
       .maybeSingle();
     const extractionRow = extractionRes.data as { id: string } | null;
+
+    // Crear notificación in-app para que el equipo vea que llegó algo.
+    await createNotification({
+      businessId: biz.id,
+      tone:
+        status === "failed"
+          ? "danger"
+          : status === "needs_review"
+            ? "warn"
+            : "ai",
+      title:
+        status === "failed"
+          ? "Nuevo mensaje IA · no entendí"
+          : status === "needs_review"
+            ? "Movimiento IA · necesita revisión"
+            : "Nuevo movimiento IA · listo para aprobar",
+      detail: extraction.normalized_summary ?? incoming.raw.slice(0, 80),
+      href: "/inbox",
+      source: "inbox",
+    });
 
     return NextResponse.json({
       ok: true,

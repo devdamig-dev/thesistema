@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Sparkline } from "@/components/ui/sparkline";
 import { ToastPresets, useToast } from "@/components/ui/toast";
+import { RealtimeRefresher } from "@/components/realtime/realtime-refresher";
 import { SalesAreaChart } from "@/components/charts/sales-area-chart";
 import { ExpensesDonut } from "@/components/charts/expenses-donut";
 import { InsightCard } from "@/components/common/insight-card";
@@ -52,6 +53,9 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-8">
+      <RealtimeRefresher
+        tables={["notifications", "ai_extractions", "ai_recommendations", "invoices"]}
+      />
       <SectionHeader
         eyebrow="Cabina de control"
         title="Buen día, Mateo 👋"

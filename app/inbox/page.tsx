@@ -1,5 +1,6 @@
 import { inbox } from "@/lib/data";
 import { inboxItems as fallbackItems } from "@/lib/mock-data";
+import { RealtimeRefresher } from "@/components/realtime/realtime-refresher";
 import InboxClient from "./inbox-client";
 
 /**
@@ -8,11 +9,19 @@ import InboxClient from "./inbox-client";
  * (sin `extractionId`) y las acciones se quedan locales. En database
  * mode, vienen de Supabase con `extractionId` y las acciones disparan
  * server actions.
+ *
+ * Realtime: subscribe a whatsapp_messages y ai_extractions para que
+ * el Inbox se actualice solo cuando entran mensajes nuevos.
  */
 export default async function InboxPage() {
   let items = await inbox.list();
   if (!items || items.length === 0) {
     items = fallbackItems;
   }
-  return <InboxClient items={items} />;
+  return (
+    <>
+      <RealtimeRefresher tables={["whatsapp_messages", "ai_extractions"]} />
+      <InboxClient items={items} />
+    </>
+  );
 }

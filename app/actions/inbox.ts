@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isDatabaseMode } from "@/lib/env";
+import { logActivity } from "@/lib/data/activity";
+import { createNotification } from "@/lib/data/notifications";
 import type {
   ExtractedAdvance,
   ExtractedDailyClosure,
@@ -498,6 +500,25 @@ export async function approveExtractionAction(extractionId: string): Promise<Act
       target_record_id: targetRecordId,
     })
     .eq("id", extractionId);
+
+  if (businessId) {
+    await logActivity({
+      businessId,
+      action: `inbox.${extraction.type}.approved`,
+      targetType: extraction.target_entity ?? undefined,
+      targetId: targetRecordId ?? undefined,
+      summary: `${extraction.summary ?? extraction.type} · aprobado desde Inbox.`,
+      data: { extractionId, type: extraction.type },
+    });
+    await createNotification({
+      businessId,
+      tone: "success",
+      title: "Movimiento aprobado",
+      detail: extraction.summary ?? `Aprobado: ${extraction.type}`,
+      href: "/inbox",
+      source: "inbox",
+    });
+  }
 
   refreshPaths();
   return {
