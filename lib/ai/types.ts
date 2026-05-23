@@ -19,6 +19,8 @@ export type MovementType =
   | "employee_advance"
   | "daily_closure"
   | "supplier_price_change"
+  | "debt_created"
+  | "debt_payment"
   | "unknown";
 
 export type TargetEntity =
@@ -28,6 +30,8 @@ export type TargetEntity =
   | "stock_movements"
   | "advance_payments"
   | "daily_closures"
+  | "debts"
+  | "debt_payments"
   | null;
 
 export interface ExtractedPurchase {
@@ -94,6 +98,21 @@ export interface ExtractedSupplierPriceChange {
   new_unit_price?: number;
 }
 
+export interface ExtractedDebtCreated {
+  creditor?: string;
+  concept?: string;
+  original_amount?: number;
+  due_date?: string;
+  interest_rate?: number;
+}
+
+export interface ExtractedDebtPayment {
+  creditor?: string;
+  concept?: string;
+  amount?: number;
+  payment_method?: string;
+}
+
 export type DetectedFields =
   | ExtractedPurchase
   | ExtractedSale
@@ -102,6 +121,8 @@ export type DetectedFields =
   | ExtractedAdvance
   | ExtractedDailyClosure
   | ExtractedSupplierPriceChange
+  | ExtractedDebtCreated
+  | ExtractedDebtPayment
   | Record<string, unknown>;
 
 export interface ExtractionResult {

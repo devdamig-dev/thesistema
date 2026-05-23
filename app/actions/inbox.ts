@@ -6,6 +6,8 @@ import { isDatabaseMode } from "@/lib/env";
 import type {
   ExtractedAdvance,
   ExtractedDailyClosure,
+  ExtractedDebtCreated,
+  ExtractedDebtPayment,
   ExtractedExpense,
   ExtractedPurchase,
   ExtractedSale,
@@ -76,6 +78,8 @@ async function resolveBranchId(db: any, businessId: string): Promise<string | nu
 function refreshPaths() {
   revalidatePath("/inbox");
   revalidatePath("/");
+  revalidatePath("/deudas");
+  revalidatePath("/balances");
 }
 
 /* ============================================================================
@@ -294,6 +298,107 @@ async function createDailyClosure(
   return (res.data as { id: string } | null)?.id ?? null;
 }
 
+async function createDebt(
+  db: any,
+  businessId: string,
+  fields: ExtractedDebtCreated,
+): Promise<string | null> {
+  if (!fields.creditor || fields.original_amount == null) return null;
+
+  // Buscar supplier que matchee el creditor (opcional)
+  let supplierId: string | null = null;
+  const sup = await db
+    .from("suppliers")
+    .select("id")
+    .eq("business_id", businessId)
+    .ilike("name", `%${fields.creditor}%`)
+    .limit(1)
+    .maybeSingle();
+  supplierId = (sup.data as { id: string } | null)?.id ?? null;
+
+  const res = await db
+    .from("debts")
+    .insert({
+      business_id: businessId,
+      creditor: fields.creditor,
+      supplier_id: supplierId,
+      concept: fields.concept,
+      original_amount: fields.original_amount,
+      pending_amount: fields.original_amount,
+      due_date: parseDebtDueDate(fields.due_date),
+      interest_rate: fields.interest_rate,
+    })
+    .select("id")
+    .maybeSingle();
+  return (res.data as { id: string } | null)?.id ?? null;
+}
+
+async function createDebtPayment(
+  db: any,
+  businessId: string,
+  fields: ExtractedDebtPayment,
+): Promise<string | null> {
+  if (fields.amount == null) return null;
+  // Buscar deuda activa más reciente que matchee el creditor.
+  if (!fields.creditor) return null;
+  const debtRes = await db
+    .from("debts")
+    .select("id, pending_amount")
+    .eq("business_id", businessId)
+    .neq("status", "settled")
+    .ilike("creditor", `%${fields.creditor}%`)
+    .order("due_date", { ascending: true, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+  const debt = debtRes.data as { id: string; pending_amount: number } | null;
+  if (!debt) return null;
+
+  const res = await db
+    .from("debt_payments")
+    .insert({
+      debt_id: debt.id,
+      amount: fields.amount,
+      payment_method: fields.payment_method ?? "Transferencia",
+      paid_at: new Date().toISOString().slice(0, 10),
+    })
+    .select("id")
+    .maybeSingle();
+  return (res.data as { id: string } | null)?.id ?? null;
+}
+
+function parseDebtDueDate(input?: string): string | null {
+  if (!input) return null;
+  // ISO ya formado
+  if (/^\d{4}-\d{2}-\d{2}$/.test(input)) return input;
+  // DD/MM o DD/MM/YYYY
+  const dm = input.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
+  if (dm) {
+    const day = dm[1].padStart(2, "0");
+    const month = dm[2].padStart(2, "0");
+    const yearRaw = dm[3] ?? String(new Date().getFullYear());
+    const year = yearRaw.length === 2 ? `20${yearRaw}` : yearRaw;
+    return `${year}-${month}-${day}`;
+  }
+  // Día de la semana → próxima ocurrencia
+  const weekdays: Record<string, number> = {
+    domingo: 0,
+    lunes: 1,
+    martes: 2,
+    miércoles: 3,
+    miercoles: 3,
+    jueves: 4,
+    viernes: 5,
+    sábado: 6,
+    sabado: 6,
+  };
+  const w = weekdays[input.toLowerCase()];
+  if (w == null) return null;
+  const today = new Date();
+  const delta = (w - today.getDay() + 7) % 7 || 7;
+  const target = new Date(today.getTime() + delta * 86400_000);
+  return target.toISOString().slice(0, 10);
+}
+
 function parseClosureDate(input?: string): string | null {
   if (!input) return null;
   // "16/05" o "16/05/2026" → ISO
@@ -356,6 +461,12 @@ export async function approveExtractionAction(extractionId: string): Promise<Act
       break;
     case "daily_closure":
       targetRecordId = await createDailyClosure(db, businessId, branchId, extraction.fields as ExtractedDailyClosure);
+      break;
+    case "debt_created":
+      targetRecordId = await createDebt(db, businessId, extraction.fields as ExtractedDebtCreated);
+      break;
+    case "debt_payment":
+      targetRecordId = await createDebtPayment(db, businessId, extraction.fields as ExtractedDebtPayment);
       break;
     case "supplier_price_change":
     case "unknown":

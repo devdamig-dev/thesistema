@@ -542,6 +542,72 @@ export type Database = {
         };
         Update: Partial<Database["public"]["Tables"]["campaigns"]["Row"]>;
       };
+      debts: {
+        Row: Timestamps & {
+          id: string;
+          business_id: string;
+          creditor: string;
+          supplier_id: string | null;
+          concept: string | null;
+          original_amount: number;
+          pending_amount: number;
+          interest_rate: number | null;
+          due_date: string | null;
+          status: "active" | "overdue" | "settled";
+          taken_at: string;
+          settled_at: string | null;
+          notes: string | null;
+          created_by: string | null;
+        };
+        Insert: Partial<Database["public"]["Tables"]["debts"]["Row"]> & {
+          business_id: string;
+          creditor: string;
+          original_amount: number;
+          pending_amount: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["debts"]["Row"]>;
+      };
+      debt_payments: {
+        Row: Timestamps & {
+          id: string;
+          debt_id: string;
+          amount: number;
+          paid_at: string;
+          payment_method: string;
+          notes: string | null;
+          created_by: string | null;
+        };
+        Insert: Partial<Database["public"]["Tables"]["debt_payments"]["Row"]> & {
+          debt_id: string;
+          amount: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["debt_payments"]["Row"]>;
+      };
+      balance_snapshots: {
+        Row: Timestamps & {
+          id: string;
+          business_id: string;
+          period_month: string;
+          sales_total: number;
+          purchases_total: number;
+          expenses_total: number;
+          payroll_total: number;
+          withdrawals_total: number;
+          debt_payments_total: number;
+          debts_pending: number;
+          stock_valued: number;
+          cash_estimated: number;
+          gross_margin_pct: number | null;
+          operating_result: number | null;
+          net_result: number | null;
+          generated_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["balance_snapshots"]["Row"]> & {
+          business_id: string;
+          period_month: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["balance_snapshots"]["Row"]>;
+      };
     };
     Views: {};
     Functions: {
