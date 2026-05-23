@@ -117,6 +117,8 @@ const TYPE_LABELS: Record<string, string> = {
   employee_advance: "Adelanto a empleado",
   daily_closure: "Cierre operativo",
   supplier_price_change: "Alerta de precio",
+  debt_created: "Nueva deuda",
+  debt_payment: "Pago de deuda",
   unknown: "Movimiento sin clasificar",
 };
 
@@ -171,6 +173,42 @@ export function mapInboxItem(msg: MessageRow, extraction: ExtractionRow | null) 
     // ignora porque su tipo es estricto, pero los usamos en el cast del
     // wrapper.
     extractionId: extraction?.id ?? null,
+  };
+}
+
+// ---------- DEUDAS ----------
+type DebtRow = Tables["debts"]["Row"];
+type DebtPaymentRow = Tables["debt_payments"]["Row"];
+
+const DEBT_STATUS_TO_UI = {
+  active: "activa",
+  overdue: "vencida",
+  settled: "saldada",
+} as const;
+
+export function mapDebt(d: DebtRow, payments: DebtPaymentRow[] = []) {
+  return {
+    id: d.id,
+    acreedor: d.creditor,
+    concepto: d.concept ?? "",
+    montoInicial: Number(d.original_amount),
+    saldoPendiente: Number(d.pending_amount),
+    interesMensual: d.interest_rate != null ? Number(d.interest_rate) : undefined,
+    vencimiento: d.due_date
+      ? new Date(d.due_date).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" })
+      : undefined,
+    estado: DEBT_STATUS_TO_UI[d.status] ?? "activa",
+    tomada: new Date(d.taken_at).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" }),
+    saldadaEl: d.settled_at
+      ? new Date(d.settled_at).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" })
+      : undefined,
+    pagos: payments.map((p) => ({
+      id: p.id,
+      fecha: new Date(p.paid_at).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" }),
+      monto: Number(p.amount),
+      metodo: p.payment_method,
+      notas: p.notes ?? undefined,
+    })),
   };
 }
 

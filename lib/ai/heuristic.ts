@@ -311,6 +311,98 @@ function detectPriceChange(text: string): ExtractionResult | null {
   };
 }
 
+function detectDebtCreated(text: string): ExtractionResult | null {
+  // "Le debemos $300.000 a Don José, vence el viernes"
+  // "Tomamos deuda de $1.200.000 para comprar equipamiento"
+  const debemos = text.match(
+    /(?:le\s+)?debemos\s+\$?\s*([\d.,]+(?:\s*mil|\s*m|\s*k)?)\s+a\s+([\w\sñáéíóú.]+?)(?:[,.\n]|\s+vence|\s+por|$)/i,
+  );
+  const tomamos = text.match(
+    /(?:tomamos|sacamos|pedimos)\s+(?:un\s+)?(?:préstamo|prestamo|deuda|crédito|credito)\s+(?:de\s+)?\$?\s*([\d.,]+(?:\s*mil|\s*m|\s*k)?)/i,
+  );
+
+  if (!debemos && !tomamos) return null;
+
+  const amount = parseArsAmount(debemos?.[1] ?? tomamos?.[1] ?? "");
+  if (!amount) return null;
+
+  let creditor = debemos?.[2]?.trim();
+  let concept: string | undefined;
+
+  if (tomamos) {
+    // "Tomamos deuda de X para comprar equipamiento" → concepto = lo que sigue a "para"
+    const para = text.match(/para\s+([^,.\n]+)/i);
+    concept = para?.[1]?.trim();
+    // Sin creditor explícito en este formato — lo dejamos como Sin acreedor.
+    if (!creditor) creditor = "Sin acreedor especificado";
+  }
+
+  // Detectar vencimiento informal
+  let due: string | undefined;
+  if (/vence\s+(?:el\s+)?lunes/i.test(text)) due = "lunes";
+  else if (/vence\s+(?:el\s+)?martes/i.test(text)) due = "martes";
+  else if (/vence\s+(?:el\s+)?mi[eé]rcoles/i.test(text)) due = "miércoles";
+  else if (/vence\s+(?:el\s+)?jueves/i.test(text)) due = "jueves";
+  else if (/vence\s+(?:el\s+)?viernes/i.test(text)) due = "viernes";
+  else if (/vence\s+(?:el\s+)?s[aá]bado/i.test(text)) due = "sábado";
+  else if (/vence\s+(?:el\s+)?domingo/i.test(text)) due = "domingo";
+  else {
+    const dateMatch = text.match(/vence\s+(?:el\s+)?(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)/i);
+    if (dateMatch) due = dateMatch[1];
+  }
+
+  const fields: Record<string, unknown> = {
+    creditor: creditor ?? "Sin acreedor",
+    original_amount: amount,
+  };
+  if (concept) fields.concept = concept;
+  if (due) fields.due_date = due;
+
+  const missing: string[] = [];
+  if (!due) missing.push("due_date");
+  if (!concept && !debemos) missing.push("concept");
+
+  return {
+    movement_type: "debt_created",
+    confidence: 0.84,
+    detected_fields: fields,
+    missing_fields: missing,
+    suggested_action: `Registrar nueva deuda con ${creditor}.`,
+    normalized_summary: `Deuda nueva · ${creditor} · $${amount.toLocaleString("es-AR")}`,
+    target_entity: "debts",
+    source: "heuristic",
+  };
+}
+
+function detectDebtPayment(text: string): ExtractionResult | null {
+  // "Pagamos $80.000 de la deuda con el proveedor de pan"
+  const m = text.match(
+    /pagamos\s+\$?\s*([\d.,]+(?:\s*mil|\s*m|\s*k)?)\s+(?:de\s+(?:la\s+)?deuda|a\s+cuenta)(?:\s+(?:con|a|de|del)\s+([\w\sñáéíóú]+?))?(?:[,.\n]|$)/i,
+  );
+  if (!m) return null;
+  const amount = parseArsAmount(m[1]);
+  if (!amount) return null;
+  const creditor = m[2]?.replace(/^(el|la|los|las|proveedor|de|del)\s+/i, "").trim();
+  const fields: Record<string, unknown> = {
+    amount,
+    payment_method: detectPayment(text) ?? "Transferencia",
+  };
+  if (creditor) fields.creditor = creditor;
+
+  return {
+    movement_type: "debt_payment",
+    confidence: 0.85,
+    detected_fields: fields,
+    missing_fields: creditor ? [] : ["creditor"],
+    suggested_action: creditor
+      ? `Registrar pago de $${amount.toLocaleString("es-AR")} a ${creditor}.`
+      : `Registrar pago — confirmar a quién.`,
+    normalized_summary: `Pago deuda ${creditor ?? ""} · $${amount.toLocaleString("es-AR")}`.trim(),
+    target_entity: "debt_payments",
+    source: "heuristic",
+  };
+}
+
 function detectPayment(text: string): string | undefined {
   if (/transfe(?:rencia)?/i.test(text)) return "Transferencia";
   if (/efectivo|cash/i.test(text)) return "Efectivo";
@@ -332,6 +424,8 @@ function capitalize(s: string) {
 
 const DETECTORS: ((text: string) => ExtractionResult | null)[] = [
   detectDailyClosure,
+  detectDebtPayment,   // antes que expense — "Pagamos X de la deuda…"
+  detectDebtCreated,   // antes que purchase — "Le debemos X a Y"
   detectPurchase,
   detectSale,
   detectAdvance,

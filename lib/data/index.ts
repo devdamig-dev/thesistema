@@ -29,6 +29,8 @@ export const employees = adapter.employees;
 export const customers = adapter.customers;
 export const marketing = adapter.marketing;
 export const reports = adapter.reports;
+export const debts = adapter.debts;
+export const balances = adapter.balances;
 
 // Helpers para casos puntuales donde la UI todavía consume todo el mock.
 // Conforme migremos cada módulo, estos pueden ir desapareciendo.

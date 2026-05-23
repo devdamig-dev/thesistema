@@ -23,6 +23,7 @@ import * as demo from "./demo";
 import {
   mapBusiness,
   mapCustomer,
+  mapDebt,
   mapEmployee,
   mapExpense,
   mapInboxItem,
@@ -235,6 +236,104 @@ export const customers = {
 
 // ---------- MARKETING (sprint próximo: tabla campaigns ya existe) ----------
 export const marketing = demo.marketing;
+
+// ---------- DEUDAS (Sprint 3 · real con fallback) ----------
+export const debts = {
+  async list() {
+    const supabase = createSupabaseServerClient();
+    if (!supabase) return demo.debts.list();
+    const db = supabase as any;
+    const dRes = await db
+      .from("debts")
+      .select("*")
+      .order("status")
+      .order("due_date", { ascending: true, nullsFirst: false });
+    const rows = dRes.data as Tables["debts"]["Row"][] | null;
+    if (dRes.error || !rows?.length) return demo.debts.list();
+
+    const payRes = await db
+      .from("debt_payments")
+      .select("*")
+      .in(
+        "debt_id",
+        rows.map((d) => d.id),
+      )
+      .order("paid_at", { ascending: false });
+    const payments =
+      (payRes.data as Tables["debt_payments"]["Row"][] | null) ?? [];
+    const byDebt = new Map<string, Tables["debt_payments"]["Row"][]>();
+    payments.forEach((p) => {
+      const arr = byDebt.get(p.debt_id) ?? [];
+      arr.push(p);
+      byDebt.set(p.debt_id, arr);
+    });
+    return rows.map((d) => mapDebt(d, byDebt.get(d.id) ?? []));
+  },
+  async kpis() {
+    const supabase = createSupabaseServerClient();
+    if (!supabase) return demo.debts.kpis();
+    const db = supabase as any;
+    const res = await db
+      .from("debts")
+      .select("pending_amount, status, due_date, creditor")
+      .neq("status", "settled");
+    const rows = res.data as
+      | Pick<Tables["debts"]["Row"], "pending_amount" | "status" | "due_date" | "creditor">[]
+      | null;
+    if (res.error || !rows?.length) return demo.debts.kpis();
+    const total = rows.reduce((s, r) => s + Number(r.pending_amount), 0);
+    const overdue = rows
+      .filter((r) => r.status === "overdue")
+      .reduce((s, r) => s + Number(r.pending_amount), 0);
+    const next = rows
+      .filter((r) => r.due_date)
+      .sort((a, b) => (a.due_date! < b.due_date! ? -1 : 1))[0];
+    return {
+      totalDeuda: total,
+      vencidas: overdue,
+      proximoVencimiento: next
+        ? `${new Date(next.due_date!).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" })} · ${next.creditor}`
+        : "—",
+      impactoMensual: Math.round(total / 6), // proxy simple: 6 cuotas
+    };
+  },
+};
+
+// ---------- BALANCES (Sprint 3 · sigue demo, snapshots opcionales) ----------
+export const balances = {
+  async snapshot() {
+    const supabase = createSupabaseServerClient();
+    if (!supabase) return demo.balances.snapshot();
+    const db = supabase as any;
+    // Si hay snapshot del mes en curso, usarlo. Si no, fallback demo.
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    const isoMonth = monthStart.toISOString().slice(0, 10);
+    const res = await db
+      .from("balance_snapshots")
+      .select("*")
+      .eq("period_month", isoMonth)
+      .maybeSingle();
+    const row = res.data as Tables["balance_snapshots"]["Row"] | null;
+    if (!row) return demo.balances.snapshot();
+    return {
+      ventasMes: Number(row.sales_total),
+      comprasMes: Number(row.purchases_total),
+      gastosMes: Number(row.expenses_total),
+      sueldosMes: Number(row.payroll_total),
+      retirosMes: Number(row.withdrawals_total),
+      deudasPendientes: Number(row.debts_pending),
+      pagosDeudaMes: Number(row.debt_payments_total),
+      stockValorizado: Number(row.stock_valued),
+      cajaEstimada: Number(row.cash_estimated),
+      margenBrutoPct: row.gross_margin_pct != null ? Number(row.gross_margin_pct) : 0,
+      resultadoOperativo: row.operating_result != null ? Number(row.operating_result) : 0,
+      resultadoNeto: row.net_result != null ? Number(row.net_result) : 0,
+    };
+  },
+  monthly: demo.balances.monthly,
+  recommendations: demo.balances.recommendations,
+};
 
 // ---------- REPORTES — recomendaciones IA reales si hay seed ----------
 export const reports = {

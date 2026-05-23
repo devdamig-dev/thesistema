@@ -796,6 +796,161 @@ export const weeklyDecisions: Decision[] = [
   },
 ];
 
+// ---------- DEUDAS ----------
+export type DebtStatus = "activa" | "vencida" | "saldada";
+
+export type DebtPayment = {
+  id: string;
+  fecha: string;
+  monto: number;
+  metodo: string;
+  notas?: string;
+};
+
+export type Debt = {
+  id: string;
+  acreedor: string;
+  concepto: string;
+  montoInicial: number;
+  saldoPendiente: number;
+  interesMensual?: number; // %
+  vencimiento?: string;
+  estado: DebtStatus;
+  tomada: string;
+  saldadaEl?: string;
+  pagos: DebtPayment[];
+};
+
+export const debts: Debt[] = [
+  {
+    id: "deuda-1",
+    acreedor: "Don José",
+    concepto: "Crédito por compra de carne",
+    montoInicial: 300_000,
+    saldoPendiente: 300_000,
+    vencimiento: "23/05/2026",
+    estado: "activa",
+    tomada: "10/05/2026",
+    pagos: [],
+  },
+  {
+    id: "deuda-2",
+    acreedor: "Panadería La Espiga",
+    concepto: "Cuenta corriente · pan brioche",
+    montoInicial: 220_000,
+    saldoPendiente: 140_000,
+    vencimiento: "26/05/2026",
+    estado: "activa",
+    tomada: "01/05/2026",
+    pagos: [
+      { id: "p1", fecha: "12/05/2026", monto: 80_000, metodo: "Transferencia" },
+    ],
+  },
+  {
+    id: "deuda-3",
+    acreedor: "Banco Galicia",
+    concepto: "Préstamo equipamiento de cocina",
+    montoInicial: 1_200_000,
+    saldoPendiente: 980_000,
+    interesMensual: 4.5,
+    vencimiento: "05/06/2026",
+    estado: "activa",
+    tomada: "05/03/2026",
+    pagos: [
+      { id: "p2", fecha: "05/04/2026", monto: 110_000, metodo: "Débito automático" },
+      { id: "p3", fecha: "05/05/2026", monto: 110_000, metodo: "Débito automático" },
+    ],
+  },
+  {
+    id: "deuda-4",
+    acreedor: "Edenor",
+    concepto: "Factura de luz abril",
+    montoInicial: 142_000,
+    saldoPendiente: 142_000,
+    vencimiento: "10/05/2026",
+    estado: "vencida",
+    tomada: "01/05/2026",
+    pagos: [],
+  },
+  {
+    id: "deuda-5",
+    acreedor: "Coca-Cola FEMSA",
+    concepto: "Pedido bebidas mayo",
+    montoInicial: 96_000,
+    saldoPendiente: 0,
+    vencimiento: "12/05/2026",
+    estado: "saldada",
+    tomada: "01/05/2026",
+    saldadaEl: "12/05/2026",
+    pagos: [{ id: "p4", fecha: "12/05/2026", monto: 96_000, metodo: "Transferencia" }],
+  },
+];
+
+export const debtKpis = {
+  totalDeuda: 1_562_000,
+  vencidas: 142_000,
+  proximoVencimiento: "23/05/2026 · Don José",
+  impactoMensual: 280_000,
+};
+
+// ---------- BALANCES ----------
+export const balanceSnapshot = {
+  ventasMes: 18_420_000,
+  comprasMes: 5_820_000,
+  gastosMes: 1_350_000 + 410_000 + 1_180_000 + 360_000, // alquiler + servicios + apps + otros
+  sueldosMes: 4_960_000,
+  retirosMes: 880_000,
+  deudasPendientes: 1_562_000,
+  pagosDeudaMes: 300_000,
+  stockValorizado: 1_840_000,
+  cajaEstimada: 2_120_000,
+  margenBrutoPct: 31.2,
+  resultadoOperativo: 18_420_000 - 5_820_000 - 4_960_000 - (1_350_000 + 410_000 + 1_180_000 + 360_000),
+  resultadoNeto:
+    18_420_000 -
+    5_820_000 -
+    4_960_000 -
+    (1_350_000 + 410_000 + 1_180_000 + 360_000) -
+    300_000 -
+    880_000,
+};
+
+export const balanceMonthly: { mes: string; ingresos: number; egresos: number; resultado: number }[] = [
+  { mes: "Dic", ingresos: 15_200_000, egresos: 12_800_000, resultado: 2_400_000 },
+  { mes: "Ene", ingresos: 16_100_000, egresos: 13_400_000, resultado: 2_700_000 },
+  { mes: "Feb", ingresos: 14_900_000, egresos: 13_100_000, resultado: 1_800_000 },
+  { mes: "Mar", ingresos: 17_300_000, egresos: 14_200_000, resultado: 3_100_000 },
+  { mes: "Abr", ingresos: 16_950_000, egresos: 14_600_000, resultado: 2_350_000 },
+  { mes: "May", ingresos: 18_420_000, egresos: 14_550_000, resultado: 3_870_000 },
+];
+
+export const balanceRecommendations: {
+  tone: "warn" | "info" | "success" | "danger";
+  title: string;
+  detail: string;
+}[] = [
+  {
+    tone: "warn",
+    title: "Las deudas representan el 8,5% de la facturación mensual",
+    detail: "Por debajo del límite saludable (10%) pero conviene no tomar deuda nueva en mayo.",
+  },
+  {
+    tone: "info",
+    title: "Resultado operativo positivo, pero caja ajustada por vencimientos",
+    detail: "El próximo vencimiento (23/05 · Don José · $300.000) consume el 14% de la caja estimada.",
+  },
+  {
+    tone: "danger",
+    title: "Priorizar pago a Edenor — factura vencida",
+    detail: "$142.000 con vencimiento 10/05. Sumar interés por mora puede llevarla a $158k.",
+  },
+  {
+    tone: "warn",
+    title: "Los retiros de socios están reduciendo la caja disponible",
+    detail: "$880.000 retirados este mes (33% del bruto). Sugerimos bajar a 20% hasta saldar Edenor.",
+  },
+];
+
 // ---------- DASHBOARD — métricas Hoy ----------
 export const todaySnapshot = {
   ventasHoy: 742_500,

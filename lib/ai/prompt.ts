@@ -27,10 +27,11 @@ Reglas:
    - 0.5-0.7 si el tipo es claro pero faltan campos importantes
    - <0.5 si dudás del tipo
 6. movement_type ∈ purchase | sale | expense | stock_update |
-   employee_advance | daily_closure | supplier_price_change | unknown
+   employee_advance | daily_closure | supplier_price_change |
+   debt_created | debt_payment | unknown
 7. target_entity es la tabla donde se insertaría al aprobar:
    purchases, sales, expenses, stock_movements, advance_payments,
-   daily_closures, o null si unknown.
+   daily_closures, debts, debt_payments, o null si unknown.
 
 ESQUEMA EXACTO DE SALIDA:
 {
@@ -103,6 +104,21 @@ supplier_price_change: {
   new_unit_price?: number
 }
 
+debt_created: {
+  creditor?: string,
+  concept?: string,
+  original_amount?: number,
+  due_date?: string,        // "viernes" | "23/05" | "2026-05-23"
+  interest_rate?: number    // % mensual
+}
+
+debt_payment: {
+  creditor?: string,
+  concept?: string,
+  amount?: number,
+  payment_method?: string
+}
+
 EJEMPLOS:
 
 Entrada: "Compramos 20kg de carne a Don José por 180mil. Pagamos transferencia."
@@ -157,6 +173,54 @@ Salida:
   "suggested_action": "Registrar adelanto a Juan.",
   "normalized_summary": "Adelanto Juan · $30.000",
   "target_entity": "advance_payments"
+}
+
+Entrada: "Le debemos $300.000 a Don José, vence el viernes."
+Salida:
+{
+  "movement_type": "debt_created",
+  "confidence": 0.9,
+  "detected_fields": {
+    "creditor": "Don José",
+    "original_amount": 300000,
+    "due_date": "viernes"
+  },
+  "missing_fields": ["concept"],
+  "suggested_action": "Registrar deuda con Don José.",
+  "normalized_summary": "Deuda nueva · Don José · $300.000",
+  "target_entity": "debts"
+}
+
+Entrada: "Pagamos $80.000 de la deuda con el proveedor de pan."
+Salida:
+{
+  "movement_type": "debt_payment",
+  "confidence": 0.88,
+  "detected_fields": {
+    "creditor": "proveedor de pan",
+    "amount": 80000,
+    "payment_method": "Transferencia"
+  },
+  "missing_fields": [],
+  "suggested_action": "Registrar pago de $80.000 al proveedor de pan.",
+  "normalized_summary": "Pago deuda proveedor pan · $80.000",
+  "target_entity": "debt_payments"
+}
+
+Entrada: "Tomamos deuda de $1.200.000 para comprar equipamiento."
+Salida:
+{
+  "movement_type": "debt_created",
+  "confidence": 0.85,
+  "detected_fields": {
+    "creditor": "Sin acreedor especificado",
+    "concept": "comprar equipamiento",
+    "original_amount": 1200000
+  },
+  "missing_fields": ["creditor", "due_date"],
+  "suggested_action": "Confirmar acreedor y fecha de vencimiento.",
+  "normalized_summary": "Deuda nueva · equipamiento · $1.200.000",
+  "target_entity": "debts"
 }`;
 
 export function buildUserPrompt(messageBody: string, sender?: string) {

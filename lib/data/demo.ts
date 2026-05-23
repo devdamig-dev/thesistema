@@ -181,6 +181,29 @@ export const marketing = {
   },
 };
 
+// ---------- DEUDAS ----------
+export const debts = {
+  async list() {
+    return mock.debts;
+  },
+  async kpis() {
+    return mock.debtKpis;
+  },
+};
+
+// ---------- BALANCES ----------
+export const balances = {
+  async snapshot() {
+    return mock.balanceSnapshot;
+  },
+  async monthly() {
+    return mock.balanceMonthly;
+  },
+  async recommendations() {
+    return mock.balanceRecommendations;
+  },
+};
+
 // ---------- REPORTES ----------
 export const reports = {
   async insights() {
