@@ -394,11 +394,21 @@ export type Database = {
           subtotal: number;
           tax: number;
           total: number;
-          status: InvoiceLifecycle;
+          status: InvoiceLifecycle | "uploaded" | "extracted" | "rejected" | "failed";
           confidence: number;
           source: "foto" | "pdf";
           document_url: string | null;
           sender: string | null;
+          storage_path: string | null;
+          storage_bucket: string;
+          file_mime: string | null;
+          file_size: number | null;
+          ocr_text: string | null;
+          ocr_provider: string | null;
+          processing_started_at: string | null;
+          processing_completed_at: string | null;
+          processing_error: string | null;
+          ai_provider: string | null;
         };
         Insert: Partial<Database["public"]["Tables"]["invoices"]["Row"]> & {
           business_id: string;
@@ -420,6 +430,11 @@ export type Database = {
           unit_price: number;
           total: number;
           matched_ingredient_id: string | null;
+          match_status: "matched" | "ambiguous" | "unmatched" | "manual";
+          match_score: number | null;
+          suggested_ingredient_id: string | null;
+          unit: string;
+          qty_numeric: number | null;
         };
         Insert: Partial<Database["public"]["Tables"]["invoice_items"]["Row"]> & {
           invoice_id: string;
@@ -429,6 +444,29 @@ export type Database = {
           total: number;
         };
         Update: Partial<Database["public"]["Tables"]["invoice_items"]["Row"]>;
+      };
+      invoice_processing_logs: {
+        Row: {
+          id: string;
+          invoice_id: string;
+          stage: string;
+          ok: boolean;
+          message: string | null;
+          data: unknown;
+          duration_ms: number | null;
+          created_at: string;
+        };
+        Insert: {
+          invoice_id: string;
+          stage: string;
+          ok: boolean;
+          message?: string | null;
+          data?: unknown;
+          duration_ms?: number | null;
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["invoice_processing_logs"]["Row"]>;
       };
       daily_closures: {
         Row: Timestamps & {
