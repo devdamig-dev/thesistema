@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isDatabaseMode } from "@/lib/env";
+import { assertPermission } from "@/lib/permissions/server-action";
 
 export type BusinessFormPayload = {
   name?: string;
@@ -14,6 +15,8 @@ export type BusinessFormPayload = {
  * persiste; en database mode escribe en la tabla.
  */
 export async function updateBusinessAction(payload: BusinessFormPayload) {
+  const guard = await assertPermission("settings.business");
+  if (guard) return guard;
   if (!isDatabaseMode()) {
     return { ok: true as const, persisted: false };
   }

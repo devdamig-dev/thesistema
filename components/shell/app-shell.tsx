@@ -7,7 +7,7 @@ import { Topbar } from "./topbar";
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import type { ModuleKey, Role } from "@/lib/permissions";
-import type { Notification } from "@/lib/data/notifications";
+import type { Notification } from "@/lib/data/notifications-types";
 
 const BARE_ROUTES = ["/login"];
 

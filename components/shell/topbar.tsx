@@ -19,7 +19,11 @@ import {
   markAllNotificationsReadAction,
   markNotificationReadAction,
 } from "@/app/actions/notifications";
-import type { Notification } from "@/lib/data/notifications";
+import {
+  PRIORITY_LABELS,
+  type Notification,
+  type NotificationPriority,
+} from "@/lib/data/notifications-types";
 import { cn } from "@/lib/utils";
 
 export function Topbar({
@@ -100,6 +104,13 @@ const TONE_RING: Record<Notification["tone"], string> = {
   success: "border-success-500/20",
   warn: "border-warn-500/20",
   danger: "border-danger-500/20",
+};
+
+const PRIORITY_BAR: Record<NotificationPriority, string> = {
+  high: "before:bg-danger-500",
+  medium: "before:bg-warn-500",
+  low: "before:bg-ai-500",
+  info: "before:bg-ink-subtle",
 };
 
 function NotificationsBell({
@@ -189,7 +200,14 @@ function NotificationsBell({
                   </li>
                 )}
                 {notifications.map((n) => (
-                  <li key={n.id} className="border-b border-line/60 last:border-0">
+                  <li
+                    key={n.id}
+                    className={cn(
+                      "relative border-b border-line/60 last:border-0",
+                      "before:absolute before:left-0 before:top-3 before:h-[calc(100%-1.5rem)] before:w-0.5 before:rounded-r",
+                      PRIORITY_BAR[n.priority],
+                    )}
+                  >
                     <div className="flex items-start gap-3 px-4 py-3">
                       <span className={cn("mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg border bg-bg-subtle/60", TONE_RING[n.tone])}>
                         {TONE_ICON[n.tone]}
@@ -234,6 +252,15 @@ function NotificationsBell({
                   </li>
                 ))}
               </ul>
+              <div className="border-t border-line bg-bg-subtle/40 px-4 py-2.5">
+                <Link
+                  href="/notificaciones"
+                  onClick={() => setOpen(false)}
+                  className="flex items-center justify-center gap-1 text-[11px] font-medium text-brand-300 hover:text-brand-200"
+                >
+                  Ver todas las notificaciones →
+                </Link>
+              </div>
             </motion.div>
           </>
         )}

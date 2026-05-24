@@ -14,6 +14,7 @@ import {
 import { recalcRecipesForIngredient } from "@/lib/recipes/recalc";
 import { logActivity } from "@/lib/data/activity";
 import { createNotification } from "@/lib/data/notifications";
+import { assertPermission } from "@/lib/permissions/server-action";
 
 /* ============================================================================
    tipos comunes
@@ -329,6 +330,8 @@ async function runOcrInMemory(file: File): Promise<string> {
 export async function approveInvoiceAction(
   invoiceId: string,
 ): Promise<ActionResult<{ purchase_id?: string; recalc?: any[] }>> {
+  const guard = await assertPermission("invoices.approve");
+  if (guard) return guard;
   if (!isDatabaseMode()) {
     refresh();
     return { ok: true, persisted: false };
@@ -474,6 +477,8 @@ export async function approveInvoiceAction(
    ============================================================================ */
 
 export async function rejectInvoiceAction(invoiceId: string): Promise<ActionResult> {
+  const guard = await assertPermission("invoices.approve");
+  if (guard) return guard;
   if (!isDatabaseMode()) {
     refresh();
     return { ok: true, persisted: false };

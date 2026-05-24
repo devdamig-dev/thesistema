@@ -1,5 +1,6 @@
 import { inbox } from "@/lib/data";
 import { inboxItems as fallbackItems } from "@/lib/mock-data";
+import { getCurrentUserContext } from "@/lib/data/auth";
 import { RealtimeRefresher } from "@/components/realtime/realtime-refresher";
 import InboxClient from "./inbox-client";
 
@@ -18,10 +19,14 @@ export default async function InboxPage() {
   if (!items || items.length === 0) {
     items = fallbackItems;
   }
+  const ctx = await getCurrentUserContext();
+  const presenceMe = ctx.userId
+    ? { id: ctx.userId, name: ctx.fullName }
+    : { id: "demo-user", name: ctx.fullName };
   return (
     <>
       <RealtimeRefresher tables={["whatsapp_messages", "ai_extractions"]} />
-      <InboxClient items={items} />
+      <InboxClient items={items} presenceMe={presenceMe} />
     </>
   );
 }

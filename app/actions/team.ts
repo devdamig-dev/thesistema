@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isDatabaseMode } from "@/lib/env";
 import type { Role } from "@/lib/permissions";
 import { logActivity } from "@/lib/data/activity";
+import { assertPermission } from "@/lib/permissions/server-action";
 
 type Result =
   | { ok: true; persisted: boolean; id?: string }
@@ -32,6 +33,8 @@ export async function inviteUserAction(payload: {
   email: string;
   role: Role;
 }): Promise<Result> {
+  const guard = await assertPermission("settings.team");
+  if (guard) return guard;
   if (!isDatabaseMode()) {
     refresh();
     return { ok: true, persisted: false };
@@ -82,6 +85,8 @@ export async function updateMemberRoleAction(
   memberId: string,
   role: Role,
 ): Promise<Result> {
+  const guard = await assertPermission("settings.team");
+  if (guard) return guard;
   if (!isDatabaseMode()) {
     refresh();
     return { ok: true, persisted: false };
@@ -104,6 +109,8 @@ export async function updateMemberRoleAction(
  * Revoca una invitación pendiente.
  */
 export async function revokeInvitationAction(invitationId: string): Promise<Result> {
+  const guard = await assertPermission("settings.team");
+  if (guard) return guard;
   if (!isDatabaseMode()) {
     refresh();
     return { ok: true, persisted: false };

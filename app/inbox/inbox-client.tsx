@@ -28,6 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SegmentedTabs } from "@/components/ui/tabs";
 import { ConversationThread } from "@/components/common/conversation-thread";
+import { PresenceIndicator } from "@/components/realtime/presence-indicator";
 import { ToastPresets, useToast } from "@/components/ui/toast";
 import {
   approveExtractionAction,
@@ -50,7 +51,13 @@ const CHANNEL_ICON = {
 
 type Filter = "todos" | InboxStatus;
 
-export default function InboxClient({ items: initialItems }: { items: InboxItem[] }) {
+export default function InboxClient({
+  items: initialItems,
+  presenceMe,
+}: {
+  items: InboxItem[];
+  presenceMe?: { id: string; name: string };
+}) {
   const router = useRouter();
   const [filter, setFilter] = useState<Filter>("todos");
   const [selectedId, setSelectedId] = useState<string>(initialItems[0]?.id ?? "");
@@ -89,6 +96,7 @@ export default function InboxClient({ items: initialItems }: { items: InboxItem[
         description="Tu equipo manda lo que pasa en el negocio por WhatsApp. La IA entiende, estructura y deja todo listo para que vos sólo confirmes."
         actions={
           <>
+            {presenceMe && <PresenceIndicator room="inbox" me={presenceMe} />}
             <Link href="/ajustes/whatsapp">
               <Button size="sm" variant="ghost">
                 <Phone className="h-4 w-4" />
