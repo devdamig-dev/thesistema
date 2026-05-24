@@ -27,7 +27,14 @@ const PREFIX_TO_MODULE: { prefix: string; module: ModuleKey }[] = [
 ];
 
 /** Rutas que están siempre permitidas (no pasan por el guard). */
-export const PUBLIC_PATHS = ["/", "/login", "/ayuda", "/notificaciones", "/logout"];
+export const PUBLIC_PATHS = [
+  "/",
+  "/login",
+  "/ayuda",
+  "/notificaciones",
+  "/logout",
+  "/sin-permisos",
+];
 export const SETTINGS_PREFIX = "/ajustes";
 
 /** Devuelve el `ModuleKey` requerido para acceder a una ruta, o null. */

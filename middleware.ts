@@ -26,6 +26,7 @@ import {
   isSettingsPath,
   moduleForPath,
 } from "@/lib/permissions/route-map";
+import { logPermissionDenied } from "@/lib/data/activity";
 
 const APP_MODE = (process.env.NEXT_PUBLIC_APP_MODE ?? "demo").toLowerCase();
 const SUPA_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -44,8 +45,10 @@ export async function middleware(request: NextRequest) {
       const requiredModule = moduleForPath(pathname);
       if (requiredModule && !canSeeModule(demoRole, requiredModule, null)) {
         const redirect = request.nextUrl.clone();
-        redirect.pathname = "/";
-        redirect.searchParams.set("denied", requiredModule);
+        redirect.pathname = "/sin-permisos";
+        redirect.search = "";
+        redirect.searchParams.set("m", requiredModule);
+        redirect.searchParams.set("from", pathname);
         return NextResponse.redirect(redirect);
       }
     }
@@ -89,9 +92,27 @@ export async function middleware(request: NextRequest) {
       const role = await resolveRoleFromDb(supabase, user.id);
       const enabledModules = await resolveEnabledModulesFromDb(supabase, user.id);
       if (!canSeeModule(role, requiredModule, enabledModules)) {
+        // Log permission denied (best-effort, no rompe el redirect si falla).
+        try {
+          const businessId = await resolveBusinessIdFromDb(supabase, user.id);
+          if (businessId) {
+            await logPermissionDenied({
+              businessId,
+              actorId: user.id,
+              actorName: user.email ?? null,
+              actorRole: role,
+              module: requiredModule,
+              pathname,
+            });
+          }
+        } catch {
+          // ignore — logging es best-effort
+        }
         const redirect = request.nextUrl.clone();
-        redirect.pathname = "/";
-        redirect.searchParams.set("denied", requiredModule);
+        redirect.pathname = "/sin-permisos";
+        redirect.search = "";
+        redirect.searchParams.set("m", requiredModule);
+        redirect.searchParams.set("from", pathname);
         return NextResponse.redirect(redirect);
       }
     }
@@ -113,6 +134,16 @@ async function resolveRoleFromDb(supabase: any, userId: string): Promise<Role> {
     .maybeSingle();
   const data = res.data as { role: Role } | null;
   return data?.role ?? "viewer";
+}
+
+async function resolveBusinessIdFromDb(supabase: any, userId: string): Promise<string | null> {
+  const res = await supabase
+    .from("business_members")
+    .select("business_id")
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+  return (res.data as { business_id: string } | null)?.business_id ?? null;
 }
 
 async function resolveEnabledModulesFromDb(
