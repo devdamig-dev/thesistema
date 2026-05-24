@@ -20,15 +20,23 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
 import * as demo from "./demo";
+import { applyBranchFilter, getEffectiveBranchIds } from "./branch-filter";
+import { getCurrentUserContext } from "./auth";
 import {
+  aggregateDailySalesTable,
+  aggregateSalesByChannel,
+  aggregateSalesByDay,
   mapBusiness,
   mapCustomer,
+  mapDailyClosure,
   mapDebt,
   mapEmployee,
   mapExpense,
   mapInboxItem,
+  mapInvoice,
   mapProduct,
   mapRecommendation,
+  mapStockItem,
   mapSupplier,
 } from "./mappers";
 
@@ -105,12 +113,27 @@ export const inbox = {
     if (!supabase) return demo.inbox.list();
     const db = supabase as any;
 
+    const ctx = await getCurrentUserContext();
+    const branchIds = await getEffectiveBranchIds(db, ctx);
+
     // 1) Mensajes ordenados por más recientes
-    const msgRes = await db
+    let msgQuery = db
       .from("whatsapp_messages")
       .select("*")
       .order("received_at", { ascending: false })
       .limit(50);
+    // Para employees con sucursal asignada, filtramos por branch_id
+    // (incluyendo NULL para mensajes "del business" sin sucursal específica)
+    // Si no hay restricción, no filtra.
+    if (branchIds !== null) {
+      // Si hay restricción, mostramos sólo los mensajes con branch en la
+      // lista o NULL (mensajes del business).
+      const ids = branchIds.length ? branchIds : ["00000000-0000-0000-0000-000000000000"];
+      msgQuery = msgQuery.or(
+        `branch_id.in.(${ids.join(",")}),branch_id.is.null`,
+      );
+    }
+    const msgRes = await msgQuery;
     const messages = (msgRes.data as Tables["whatsapp_messages"]["Row"][] | null) ?? [];
     if (msgRes.error || messages.length === 0) return demo.inbox.list();
 
@@ -134,11 +157,66 @@ export const inbox = {
   },
 };
 
-// ---------- FACTURAS (sprint próximo) ----------
-export const invoices = demo.invoices;
+// ---------- FACTURAS · DB con branch filtering ----------
+export const invoices = {
+  async list() {
+    const supabase = createSupabaseServerClient();
+    if (!supabase) return demo.invoices.list();
+    const db = supabase as any;
+    const ctx = await getCurrentUserContext();
+    const branchIds = await getEffectiveBranchIds(db, ctx);
 
-// ---------- CIERRES (sprint próximo) ----------
-export const closures = demo.closures;
+    let query = db
+      .from("invoices")
+      .select("*")
+      .order("invoice_date", { ascending: false })
+      .limit(50);
+    if (branchIds !== null) {
+      // Aceptamos null branch_id (factura del business sin sucursal específica)
+      const ids = branchIds.length ? branchIds : ["00000000-0000-0000-0000-000000000000"];
+      query = query.or(`branch_id.in.(${ids.join(",")}),branch_id.is.null`);
+    }
+    const res = await query;
+    const rows = (res.data as Tables["invoices"]["Row"][] | null) ?? [];
+    if (res.error || rows.length === 0) return demo.invoices.list();
+
+    // Joinear suppliers para nombre legible
+    const supplierIds = [...new Set(rows.map((r) => r.supplier_id).filter(Boolean))] as string[];
+    let suppliers: Map<string, string> = new Map();
+    if (supplierIds.length > 0) {
+      const sRes = await db.from("suppliers").select("id, name").in("id", supplierIds);
+      const list = (sRes.data as { id: string; name: string }[] | null) ?? [];
+      suppliers = new Map(list.map((s) => [s.id, s.name]));
+    }
+
+    return rows.map((r) => mapInvoice(r, r.supplier_id ? suppliers.get(r.supplier_id) : null));
+  },
+};
+
+// ---------- CIERRES · DB con branch filtering ----------
+export const closures = {
+  async list() {
+    const supabase = createSupabaseServerClient();
+    if (!supabase) return demo.closures.list();
+    const db = supabase as any;
+    const ctx = await getCurrentUserContext();
+    const branchIds = await getEffectiveBranchIds(db, ctx);
+
+    let query = db
+      .from("daily_closures")
+      .select("*")
+      .order("closure_date", { ascending: false })
+      .limit(50);
+    if (branchIds !== null) {
+      const ids = branchIds.length ? branchIds : ["00000000-0000-0000-0000-000000000000"];
+      query = query.or(`branch_id.in.(${ids.join(",")}),branch_id.is.null`);
+    }
+    const res = await query;
+    const rows = (res.data as Tables["daily_closures"]["Row"][] | null) ?? [];
+    if (res.error || rows.length === 0) return demo.closures.list();
+    return rows.map(mapDailyClosure);
+  },
+};
 
 // ---------- PRODUCTOS ----------
 export const products = {
@@ -162,8 +240,46 @@ export const products = {
   getIngredientCostHistory: demo.products.getIngredientCostHistory,
 };
 
-// ---------- VENTAS (todavía mock; las agregaciones requieren sprint) ----------
-export const sales = demo.sales;
+// ---------- VENTAS · DB con branch filtering ----------
+async function loadSalesRows(): Promise<Tables["sales"]["Row"][] | null> {
+  const supabase = createSupabaseServerClient();
+  if (!supabase) return null;
+  const db = supabase as any;
+  const ctx = await getCurrentUserContext();
+  const branchIds = await getEffectiveBranchIds(db, ctx);
+
+  // Últimos 30 días para tener data para todos los gráficos.
+  const since = new Date(Date.now() - 30 * 86400_000).toISOString();
+  let query = db
+    .from("sales")
+    .select("*")
+    .gte("occurred_at", since)
+    .order("occurred_at", { ascending: false });
+  if (branchIds !== null) {
+    const ids = branchIds.length ? branchIds : ["00000000-0000-0000-0000-000000000000"];
+    query = query.in("branch_id", ids);
+  }
+  const res = await query;
+  return (res.data as Tables["sales"]["Row"][] | null) ?? null;
+}
+
+export const sales = {
+  async byChannel() {
+    const rows = await loadSalesRows();
+    if (!rows || rows.length === 0) return demo.sales.byChannel();
+    return aggregateSalesByChannel(rows);
+  },
+  async daily() {
+    const rows = await loadSalesRows();
+    if (!rows || rows.length === 0) return demo.sales.daily();
+    return aggregateDailySalesTable(rows).slice(0, 7);
+  },
+  async byDay() {
+    const rows = await loadSalesRows();
+    if (!rows || rows.length === 0) return demo.sales.byDay();
+    return aggregateSalesByDay(rows).slice(-11);
+  },
+};
 
 // ---------- COMPRAS ----------
 export const purchases = {
@@ -196,8 +312,45 @@ export const expenses = {
   breakEven: demo.expenses.breakEven,
 };
 
-// ---------- STOCK ----------
-export const stock = demo.stock;
+// ---------- STOCK · DB con branch filtering ----------
+export const stock = {
+  async list() {
+    const supabase = createSupabaseServerClient();
+    if (!supabase) return demo.stock.list();
+    const db = supabase as any;
+    const ctx = await getCurrentUserContext();
+    const branchIds = await getEffectiveBranchIds(db, ctx);
+
+    let query = db.from("stock_items").select("*");
+    if (branchIds !== null) {
+      const ids = branchIds.length ? branchIds : ["00000000-0000-0000-0000-000000000000"];
+      query = query.in("branch_id", ids);
+    }
+    const res = await query;
+    const rows = (res.data as Tables["stock_items"]["Row"][] | null) ?? [];
+    if (res.error || rows.length === 0) return demo.stock.list();
+
+    // Joinear ingredients para nombre y unidad
+    const ingIds = [...new Set(rows.map((r) => r.ingredient_id))];
+    const ingRes = await db
+      .from("ingredients")
+      .select("id, name, unit")
+      .in("id", ingIds);
+    const ingredients = new Map<string, { name: string; unit: string }>(
+      ((ingRes.data as { id: string; name: string; unit: string }[] | null) ?? []).map(
+        (i) => [i.id, { name: i.name, unit: i.unit }],
+      ),
+    );
+
+    return rows
+      .map((r) => {
+        const ing = ingredients.get(r.ingredient_id);
+        if (!ing) return null;
+        return mapStockItem(r, ing.name, ing.unit);
+      })
+      .filter((x): x is NonNullable<typeof x> => !!x);
+  },
+};
 
 // ---------- EMPLEADOS ----------
 export const employees = {

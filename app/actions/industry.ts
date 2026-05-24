@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isDatabaseMode } from "@/lib/env";
+import { assertPermission } from "@/lib/permissions/server-action";
 import {
   SUGGESTED_MODULES_BY_INDUSTRY,
   type IndustryKey,
@@ -14,6 +15,8 @@ import {
  * deja el client mostrar el toast — la UI sigue funcional para venta.
  */
 export async function setIndustryAction(industry: IndustryKey) {
+  const guard = await assertPermission("settings.industry");
+  if (guard) return guard;
   if (!isDatabaseMode()) {
     return { ok: true as const, persisted: false };
   }

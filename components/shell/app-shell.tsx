@@ -6,10 +6,26 @@ import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
+import type { ModuleKey, Role } from "@/lib/permissions";
+import type { Notification } from "@/lib/data/notifications-types";
 
-const BARE_ROUTES = ["/login"];
+const BARE_ROUTES = ["/login", "/onboarding"];
 
-export function AppShell({ children }: { children: ReactNode }) {
+export type AppShellProps = {
+  children: ReactNode;
+  role: Role;
+  enabledModules: ModuleKey[] | null;
+  notifications: Notification[];
+  unreadCount: number;
+};
+
+export function AppShell({
+  children,
+  role,
+  enabledModules,
+  notifications,
+  unreadCount,
+}: AppShellProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const pathname = usePathname();
 
@@ -22,7 +38,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="relative flex min-h-screen">
       <div className="hidden w-64 shrink-0 md:block lg:w-72">
         <div className="sticky top-0 h-screen">
-          <Sidebar />
+          <Sidebar role={role} enabledModules={enabledModules} unreadCount={unreadCount} />
         </div>
       </div>
 
@@ -43,7 +59,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               transition={{ type: "spring", damping: 28, stiffness: 260 }}
               className="fixed inset-y-0 left-0 z-50 w-72 md:hidden"
             >
-              <Sidebar onNavigate={() => setMobileOpen(false)} />
+              <Sidebar
+                onNavigate={() => setMobileOpen(false)}
+                role={role}
+                enabledModules={enabledModules}
+                unreadCount={unreadCount}
+              />
               <button
                 onClick={() => setMobileOpen(false)}
                 className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-md border border-line bg-bg-subtle text-ink-muted"
@@ -57,7 +78,11 @@ export function AppShell({ children }: { children: ReactNode }) {
       </AnimatePresence>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar onOpenNav={() => setMobileOpen(true)} />
+        <Topbar
+          onOpenNav={() => setMobileOpen(true)}
+          notifications={notifications}
+          unreadCount={unreadCount}
+        />
         <main className="flex-1">
           <div className="mx-auto w-full max-w-[1400px] px-4 py-6 md:px-8 md:py-8">
             {children}

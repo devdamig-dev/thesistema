@@ -4,8 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   BarChart3,
+  Bell,
   Boxes,
   ChefHat,
+  ClipboardCheck,
   ClipboardList,
   FileText,
   HandCoins,
@@ -24,6 +26,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { businessInfo } from "@/lib/mock-data";
+import { canSeeModule, getRoleLabel, type ModuleKey, type Role } from "@/lib/permissions";
 
 type NavItem = {
   href: string;
@@ -31,6 +34,8 @@ type NavItem = {
   icon: LucideIcon;
   badge?: string;
   accent?: "ai" | "brand";
+  module?: ModuleKey;            // si tiene, se filtra por permiso
+  systemAlwaysVisible?: boolean; // ayuda + ajustes
 };
 
 type NavGroup = { label: string; items: NavItem[] };
@@ -39,56 +44,91 @@ const NAV: NavGroup[] = [
   {
     label: "General",
     items: [
-      { href: "/", label: "Dashboard", icon: LayoutDashboard },
-      { href: "/inbox", label: "Inbox IA", icon: Inbox, badge: "3", accent: "ai" },
-      { href: "/reportes", label: "Reportes IA", icon: Sparkles, accent: "ai" },
-      { href: "/marketing", label: "Marketing IA", icon: Megaphone, badge: "Nuevo", accent: "ai" },
+      { href: "/", label: "Dashboard", icon: LayoutDashboard, module: "dashboard" },
+      { href: "/inbox", label: "Inbox IA", icon: Inbox, badge: "3", accent: "ai", module: "inbox_ai" },
+      { href: "/reportes", label: "Reportes IA", icon: Sparkles, accent: "ai", module: "reports_ai" },
+      { href: "/marketing", label: "Marketing IA", icon: Megaphone, badge: "Nuevo", accent: "ai", module: "marketing_ai" },
     ],
   },
   {
     label: "IA y documentos",
     items: [
-      { href: "/facturas", label: "Facturas OCR", icon: FileText, badge: "OCR", accent: "ai" },
-      { href: "/cierres", label: "Cierres diarios", icon: ClipboardList, badge: "2", accent: "ai" },
+      { href: "/facturas", label: "Facturas OCR", icon: FileText, badge: "OCR", accent: "ai", module: "invoices_ocr" },
+      { href: "/cierres", label: "Cierres diarios", icon: ClipboardList, badge: "2", accent: "ai", module: "daily_closures" },
     ],
   },
   {
     label: "Operación",
     items: [
-      { href: "/ventas", label: "Ventas", icon: BarChart3 },
-      { href: "/compras", label: "Compras", icon: ShoppingCart },
-      { href: "/gastos", label: "Gastos fijos", icon: Receipt },
-      { href: "/deudas", label: "Deudas", icon: HandCoins },
-      { href: "/stock", label: "Stock e insumos", icon: Boxes },
-      { href: "/productos", label: "Productos", icon: ChefHat },
-      { href: "/balances", label: "Balances", icon: PieChart },
+      { href: "/ventas", label: "Ventas", icon: BarChart3, module: "sales" },
+      { href: "/compras", label: "Compras", icon: ShoppingCart, module: "purchases" },
+      { href: "/gastos", label: "Gastos fijos", icon: Receipt, module: "fixed_expenses" },
+      { href: "/deudas", label: "Deudas", icon: HandCoins, module: "debts" },
+      { href: "/stock", label: "Stock e insumos", icon: Boxes, module: "stock" },
+      { href: "/productos", label: "Productos", icon: ChefHat, module: "products" },
+      { href: "/balances", label: "Balances", icon: PieChart, module: "balances" },
     ],
   },
   {
     label: "Equipo",
     items: [
-      { href: "/empleados", label: "Empleados", icon: Users },
-      { href: "/clientes", label: "Clientes", icon: UserSquare2 },
+      { href: "/empleados", label: "Empleados", icon: Users, module: "employees" },
+      { href: "/clientes", label: "Clientes", icon: UserSquare2, module: "customers" },
     ],
   },
   {
     label: "Sistema",
     items: [
-      { href: "/ayuda", label: "Ayuda", icon: LifeBuoy },
-      { href: "/ajustes", label: "Ajustes", icon: Settings },
+      { href: "/notificaciones", label: "Notificaciones", icon: Bell, systemAlwaysVisible: true },
+      { href: "/auditoria", label: "Auditoría", icon: ClipboardCheck, systemAlwaysVisible: true },
+      { href: "/ayuda", label: "Ayuda", icon: LifeBuoy, systemAlwaysVisible: true },
+      { href: "/ajustes", label: "Ajustes", icon: Settings, systemAlwaysVisible: true },
     ],
   },
 ];
 
-export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+export function Sidebar({
+  onNavigate,
+  role,
+  enabledModules,
+  unreadCount,
+}: {
+  onNavigate?: () => void;
+  role?: Role;
+  enabledModules?: ModuleKey[] | null;
+  unreadCount?: number;
+}) {
   const pathname = usePathname();
+  const effectiveRole: Role = role ?? "owner";
+
+  // Filtrar items según permisos del rol + módulos habilitados.
+  const filteredNav = NAV.map((group) => ({
+    ...group,
+    items: group.items
+      .filter((item) => {
+        if (item.systemAlwaysVisible) return true;
+        if (!item.module) return true;
+        return canSeeModule(effectiveRole, item.module, enabledModules ?? null);
+      })
+      .map((item) => {
+        // Inject dynamic unread badge en la entrada de Notificaciones
+        if (item.href === "/notificaciones" && (unreadCount ?? 0) > 0) {
+          return {
+            ...item,
+            badge: unreadCount! > 9 ? "9+" : String(unreadCount),
+            accent: "brand" as const,
+          };
+        }
+        return item;
+      }),
+  })).filter((g) => g.items.length > 0);
 
   return (
     <aside className="relative flex h-full w-full flex-col border-r border-line bg-bg-subtle/70 backdrop-blur-xl">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-line-strong to-transparent" />
       <Brand />
       <nav className="flex-1 overflow-y-auto px-3 py-3 scrollbar-thin">
-        {NAV.map((group) => (
+        {filteredNav.map((group) => (
           <div key={group.label} className="mb-4">
             <div className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-ink-subtle">
               {group.label}
@@ -146,7 +186,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           </div>
         ))}
       </nav>
-      <Footer />
+      <Footer role={effectiveRole} />
     </aside>
   );
 }
@@ -173,7 +213,7 @@ function Brand() {
   );
 }
 
-function Footer() {
+function Footer({ role }: { role: Role }) {
   return (
     <div className="space-y-3 border-t border-line px-3 py-3">
       <Link
@@ -202,7 +242,7 @@ function Footer() {
         <div className="min-w-0 flex-1 leading-tight">
           <div className="truncate text-xs font-medium text-ink">{businessInfo.owner}</div>
           <div className="truncate text-[10px] text-ink-subtle">
-            {businessInfo.location}
+            {getRoleLabel(role)} · {businessInfo.location}
           </div>
         </div>
       </Link>

@@ -12,6 +12,9 @@ import {
   type IngredientCandidate,
 } from "@/lib/ingredients/matching";
 import { recalcRecipesForIngredient } from "@/lib/recipes/recalc";
+import { logActivity } from "@/lib/data/activity";
+import { createNotification } from "@/lib/data/notifications";
+import { assertPermission } from "@/lib/permissions/server-action";
 
 /* ============================================================================
    tipos comunes
@@ -327,6 +330,8 @@ async function runOcrInMemory(file: File): Promise<string> {
 export async function approveInvoiceAction(
   invoiceId: string,
 ): Promise<ActionResult<{ purchase_id?: string; recalc?: any[] }>> {
+  const guard = await assertPermission("invoices.approve");
+  if (guard) return guard;
   if (!isDatabaseMode()) {
     refresh();
     return { ok: true, persisted: false };
@@ -434,6 +439,35 @@ export async function approveInvoiceAction(
 
   await logStage(db, invoiceId, "approval", true, { purchase_id: purchase.id });
 
+  // Activity feed + notification
+  const totalRecommendations = recalcSummaries.reduce(
+    (s, r) => s + (r.recommendationsCreated ?? 0),
+    0,
+  );
+  await logActivity({
+    businessId: invoice.business_id,
+    action: "invoice.approved",
+    targetType: "invoices",
+    targetId: invoiceId,
+    summary: `Factura ${invoice.number} aprobada · ${items.length} ítems · purchase creada.`,
+    data: {
+      invoice_id: invoiceId,
+      purchase_id: purchase.id,
+      ingredients_affected: ingredientsToRecalc.size,
+      recommendations_created: totalRecommendations,
+    },
+  });
+  await createNotification({
+    businessId: invoice.business_id,
+    tone: totalRecommendations > 0 ? "warn" : "success",
+    title: totalRecommendations > 0
+      ? `${totalRecommendations} alerta(s) de margen tras aprobar factura`
+      : "Factura aprobada e imputada",
+    detail: `${invoice.number} · ${items.length} ítems · stock actualizado.`,
+    href: "/facturas",
+    source: "invoices",
+  });
+
   refresh();
   return { ok: true, persisted: true, purchase_id: purchase.id, recalc: recalcSummaries };
 }
@@ -443,6 +477,8 @@ export async function approveInvoiceAction(
    ============================================================================ */
 
 export async function rejectInvoiceAction(invoiceId: string): Promise<ActionResult> {
+  const guard = await assertPermission("invoices.approve");
+  if (guard) return guard;
   if (!isDatabaseMode()) {
     refresh();
     return { ok: true, persisted: false };

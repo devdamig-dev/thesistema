@@ -105,6 +105,204 @@ export function mapExpense(e: ExpenseRow) {
   };
 }
 
+// ---------- SALES ----------
+type SaleRow = Tables["sales"]["Row"];
+
+const CHANNEL_LABEL: Record<string, string> = {
+  salon: "Salón",
+  delivery: "Delivery propio",
+  whatsapp: "WhatsApp",
+  pedidos_ya: "PedidosYa",
+  rappi: "Rappi",
+  mp_qr: "Mercado Pago QR",
+};
+
+export function aggregateSalesByChannel(rows: SaleRow[]): {
+  canal: string;
+  total: number;
+  share: number;
+  ticket: number;
+  delta: number;
+}[] {
+  if (rows.length === 0) return [];
+  const map = new Map<string, { total: number; count: number }>();
+  for (const r of rows) {
+    const channel = (r.channel ?? "salon") as string;
+    const entry = map.get(channel) ?? { total: 0, count: 0 };
+    entry.total += Number(r.amount);
+    entry.count += 1;
+    map.set(channel, entry);
+  }
+  const grandTotal = [...map.values()].reduce((s, e) => s + e.total, 0);
+  return [...map.entries()]
+    .map(([channel, e]) => ({
+      canal: CHANNEL_LABEL[channel] ?? channel,
+      total: e.total,
+      share: grandTotal > 0 ? (e.total / grandTotal) * 100 : 0,
+      ticket: e.count > 0 ? Math.round(e.total / e.count) : 0,
+      delta: 0, // sin baseline histórico → 0; en sprint próximo sumamos comparativa
+    }))
+    .sort((a, b) => b.total - a.total);
+}
+
+export function aggregateSalesByDay(rows: SaleRow[]): {
+  day: string;
+  ventas: number;
+  costo: number;
+}[] {
+  if (rows.length === 0) return [];
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    const day = new Date(r.occurred_at).toISOString().slice(0, 10);
+    map.set(day, (map.get(day) ?? 0) + Number(r.amount));
+  }
+  return [...map.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([day, ventas]) => ({
+      day: new Date(day).toLocaleDateString("es-AR", { day: "2-digit", month: "short" }),
+      ventas,
+      // Estimación de costo 65% — luego lo recalculamos con cost real.
+      costo: Math.round(ventas * 0.65),
+    }));
+}
+
+export function aggregateDailySalesTable(rows: SaleRow[]): {
+  fecha: string;
+  salon: number;
+  delivery: number;
+  pya: number;
+  wa: number;
+  total: number;
+}[] {
+  if (rows.length === 0) return [];
+  const map = new Map<string, Record<string, number>>();
+  for (const r of rows) {
+    const day = new Date(r.occurred_at).toISOString().slice(0, 10);
+    const channel = (r.channel ?? "salon") as string;
+    const entry = map.get(day) ?? { salon: 0, delivery: 0, pya: 0, wa: 0, total: 0 };
+    const amount = Number(r.amount);
+    if (channel === "salon") entry.salon += amount;
+    else if (channel === "delivery") entry.delivery += amount;
+    else if (channel === "pedidos_ya") entry.pya += amount;
+    else if (channel === "whatsapp") entry.wa += amount;
+    entry.total += amount;
+    map.set(day, entry);
+  }
+  return [...map.entries()]
+    .sort(([a], [b]) => (a < b ? 1 : -1))
+    .map(([day, e]) => ({
+      fecha: new Date(day).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }),
+      salon: e.salon,
+      delivery: e.delivery,
+      pya: e.pya,
+      wa: e.wa,
+      total: e.total,
+    }));
+}
+
+// ---------- STOCK ----------
+type StockItemRow = Tables["stock_items"]["Row"];
+
+export function mapStockItem(
+  row: StockItemRow,
+  ingredientName: string,
+  ingredientUnit: string,
+) {
+  const current = Number(row.current);
+  const min = Number(row.min);
+  const ratio = min > 0 ? current / min : 1;
+  // Estado: critico (<0.5), alerta (<1), ok
+  const estado: "critico" | "alerta" | "ok" =
+    ratio < 0.5 ? "critico" : ratio < 1 ? "alerta" : "ok";
+  // Días estimados de cobertura — proxy simple sin consumo histórico.
+  // Usamos current/min como aproximación (1 día por unidad mínima).
+  const dias = Math.max(1, Math.round(current));
+  return {
+    insumo: ingredientName,
+    unidad: ingredientUnit,
+    stock: current,
+    minimo: min,
+    dias,
+    estado,
+  };
+}
+
+// ---------- DAILY CLOSURES ----------
+type ClosureRow = Tables["daily_closures"]["Row"];
+
+export function mapDailyClosure(row: ClosureRow) {
+  const parsed = (row.parsed as any) ?? {};
+  return {
+    id: row.id,
+    punto: parsed.business_unit ?? "Local principal",
+    fecha: new Date(row.closure_date).toLocaleDateString("es-AR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }),
+    recibida: new Date(row.created_at),
+    sender: parsed.sender ?? "Equipo",
+    status: row.status === "approved" ? "aprobado" : "pendiente",
+    raw: row.raw_text ?? "",
+    parsed: {
+      ingresos: parsed.incomes ?? [],
+      gastos: parsed.expenses ?? [],
+      retiros: parsed.withdrawals ?? [],
+      cambio: Number(parsed.change ?? 0),
+      productos: parsed.products ?? [],
+      total: Number(row.gross_total ?? 0),
+      neto: Number(row.net_total ?? 0),
+    },
+    inconsistencias: (row.inconsistencies as any) ?? [],
+  };
+}
+
+// ---------- INVOICES ----------
+type InvoiceRow = Tables["invoices"]["Row"];
+
+const INVOICE_STATUS_TO_UI: Record<string, string> = {
+  processing: "procesando",
+  uploaded: "procesando",
+  extracted: "revision",
+  needs_review: "revision",
+  approved: "aprobado",
+  sent_to_accountant: "contador",
+  rejected: "revision",
+  failed: "revision",
+};
+
+export function mapInvoice(row: InvoiceRow, supplierName?: string | null) {
+  return {
+    id: row.id,
+    proveedor: supplierName ?? row.sender ?? "Sin proveedor",
+    cuit: row.tax_id ?? "—",
+    numero: row.number,
+    tipo: row.type as "A" | "B" | "C",
+    fecha: new Date(row.invoice_date).toLocaleDateString("es-AR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }),
+    recibida: new Date(row.created_at),
+    source: (row.source ?? "foto") as "foto" | "pdf",
+    status: INVOICE_STATUS_TO_UI[row.status] ?? "revision",
+    confidence: Number(row.confidence ?? 0),
+    metodoPago: row.payment_method,
+    subtotal: Number(row.subtotal),
+    iva: Number(row.tax),
+    total: Number(row.total),
+    sender: row.sender ?? "—",
+    vencimiento: row.due_date
+      ? new Date(row.due_date).toLocaleDateString("es-AR", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+        })
+      : undefined,
+    items: [] as any[],
+  };
+}
+
 // ---------- INBOX (whatsapp_messages + ai_extractions) ----------
 type MessageRow = Tables["whatsapp_messages"]["Row"];
 type ExtractionRow = Tables["ai_extractions"]["Row"];
