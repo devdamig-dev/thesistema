@@ -1,14 +1,32 @@
 /**
  * Resolución del usuario actual y su contexto (business, rol, módulos
- * habilitados). Funciona en demo mode devolviendo un contexto "owner"
- * para que todos los módulos sean visibles.
+ * habilitados, sucursales asignadas).
+ *
+ * Funciona en demo mode devolviendo un contexto "owner" con todos los
+ * módulos visibles y sin restricción de sucursales.
  *
  * Sólo server-side.
  */
 
+import { cookies } from "next/headers";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isDatabaseMode } from "@/lib/env";
 import type { ModuleKey, Role } from "@/lib/permissions";
+
+/** Roles válidos — para validar la cookie de demo. */
+const VALID_ROLES: Role[] = [
+  "owner",
+  "admin",
+  "manager",
+  "accountant",
+  "marketing",
+  "employee",
+  "kitchen",
+  "cashier",
+  "waiter",
+  "delivery",
+  "viewer",
+];
 
 export type UserContext = {
   isAuthenticated: boolean;
@@ -18,6 +36,14 @@ export type UserContext = {
   email: string | null;
   role: Role;
   enabledModules: ModuleKey[] | null;
+  /**
+   * IDs de sucursales asignadas al usuario.
+   *
+   *   - null  → sin restricción (owner, admin, manager) → ve TODAS.
+   *   - []    → sin sucursales asignadas (employee nuevo) → no ve nada.
+   *   - [...] → sólo esas sucursales.
+   */
+  assignedBranchIds: string[] | null;
 };
 
 const DEMO_CONTEXT: UserContext = {
@@ -28,20 +54,41 @@ const DEMO_CONTEXT: UserContext = {
   email: "mateo@labirra.com",
   role: "owner",
   enabledModules: null,
+  assignedBranchIds: null,
 };
 
+/** Roles "sin restricción" — ven TODAS las sucursales. */
+const UNRESTRICTED_ROLES: Role[] = ["owner", "admin", "manager", "accountant"];
+
+function readDemoRoleCookie(): Role | null {
+  try {
+    const value = cookies().get("gp_demo_role")?.value;
+    if (!value) return null;
+    return (VALID_ROLES as string[]).includes(value) ? (value as Role) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getCurrentUserContext(): Promise<UserContext> {
-  if (!isDatabaseMode()) return DEMO_CONTEXT;
+  if (!isDatabaseMode()) {
+    // En demo, permitimos overridear el rol con la cookie gp_demo_role
+    // (seteada vía /api/dev/role?as=...). Útil para QA del sidebar
+    // adaptativo y el middleware guard.
+    const override = readDemoRoleCookie();
+    if (override) {
+      return { ...DEMO_CONTEXT, role: override };
+    }
+    return DEMO_CONTEXT;
+  }
   const supabase = createSupabaseServerClient();
   if (!supabase) return DEMO_CONTEXT;
   const db = supabase as any;
 
-  // 1) Usuario logueado
   const userRes = await supabase.auth.getUser();
   const user = userRes.data?.user;
   if (!user) return DEMO_CONTEXT;
 
-  // 2) Profile + organization
   const profileRes = await db
     .from("profiles")
     .select("full_name, email, organization_id")
@@ -51,14 +98,15 @@ export async function getCurrentUserContext(): Promise<UserContext> {
     | { full_name: string; email: string | null; organization_id: string | null }
     | null;
 
-  // 3) Membership al business (tomamos el primero)
   const memberRes = await db
     .from("business_members")
-    .select("business_id, role")
+    .select("id, business_id, role")
     .eq("user_id", user.id)
     .limit(1)
     .maybeSingle();
-  const member = memberRes.data as { business_id: string; role: Role } | null;
+  const member = memberRes.data as
+    | { id: string; business_id: string; role: Role }
+    | null;
   if (!member) {
     return {
       isAuthenticated: true,
@@ -68,16 +116,27 @@ export async function getCurrentUserContext(): Promise<UserContext> {
       email: profile?.email ?? user.email ?? null,
       role: "viewer",
       enabledModules: null,
+      assignedBranchIds: [],
     };
   }
 
-  // 4) Módulos habilitados del business
   const modsRes = await db
     .from("business_modules")
     .select("module_key, enabled")
     .eq("business_id", member.business_id)
     .eq("enabled", true);
   const mods = (modsRes.data as { module_key: ModuleKey; enabled: boolean }[] | null) ?? [];
+
+  // Branch assignments — sólo aplican a roles restringidos.
+  let assignedBranchIds: string[] | null = null;
+  if (!UNRESTRICTED_ROLES.includes(member.role)) {
+    const baRes = await db
+      .from("branch_assignments")
+      .select("branch_id")
+      .eq("business_member_id", member.id);
+    const branches = (baRes.data as { branch_id: string }[] | null) ?? [];
+    assignedBranchIds = branches.map((b) => b.branch_id);
+  }
 
   return {
     isAuthenticated: true,
@@ -87,5 +146,6 @@ export async function getCurrentUserContext(): Promise<UserContext> {
     email: profile?.email ?? user.email ?? null,
     role: member.role,
     enabledModules: mods.length ? mods.map((m) => m.module_key) : null,
+    assignedBranchIds,
   };
 }

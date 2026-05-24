@@ -16,7 +16,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isDatabaseMode } from "@/lib/env";
 import {
+  checkCriticalMarginForBusiness,
   checkDebtsForBusiness,
+  checkPendingExtractionsForBusiness,
   checkStockForBusiness,
 } from "@/lib/data/notification-checks";
 
@@ -45,11 +47,16 @@ export async function GET(request: NextRequest) {
       : await db.from("businesses").select("id");
     const businesses = (businessesRes.data as { id: string }[] | null) ?? [];
 
-    const results: Record<string, { debts: any; stock: any }> = {};
+    const results: Record<
+      string,
+      { debts: any; stock: any; pendingInbox: any; margin: any }
+    > = {};
     for (const b of businesses) {
       const debts = await checkDebtsForBusiness(b.id);
       const stock = await checkStockForBusiness(b.id);
-      results[b.id] = { debts, stock };
+      const pendingInbox = await checkPendingExtractionsForBusiness(b.id);
+      const margin = await checkCriticalMarginForBusiness(b.id);
+      results[b.id] = { debts, stock, pendingInbox, margin };
     }
 
     return NextResponse.json({

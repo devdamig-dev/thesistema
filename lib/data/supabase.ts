@@ -20,6 +20,8 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
 import * as demo from "./demo";
+import { applyBranchFilter, getEffectiveBranchIds } from "./branch-filter";
+import { getCurrentUserContext } from "./auth";
 import {
   mapBusiness,
   mapCustomer,
@@ -105,12 +107,27 @@ export const inbox = {
     if (!supabase) return demo.inbox.list();
     const db = supabase as any;
 
+    const ctx = await getCurrentUserContext();
+    const branchIds = await getEffectiveBranchIds(db, ctx);
+
     // 1) Mensajes ordenados por más recientes
-    const msgRes = await db
+    let msgQuery = db
       .from("whatsapp_messages")
       .select("*")
       .order("received_at", { ascending: false })
       .limit(50);
+    // Para employees con sucursal asignada, filtramos por branch_id
+    // (incluyendo NULL para mensajes "del business" sin sucursal específica)
+    // Si no hay restricción, no filtra.
+    if (branchIds !== null) {
+      // Si hay restricción, mostramos sólo los mensajes con branch en la
+      // lista o NULL (mensajes del business).
+      const ids = branchIds.length ? branchIds : ["00000000-0000-0000-0000-000000000000"];
+      msgQuery = msgQuery.or(
+        `branch_id.in.(${ids.join(",")}),branch_id.is.null`,
+      );
+    }
+    const msgRes = await msgQuery;
     const messages = (msgRes.data as Tables["whatsapp_messages"]["Row"][] | null) ?? [];
     if (msgRes.error || messages.length === 0) return demo.inbox.list();
 

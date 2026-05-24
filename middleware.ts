@@ -1,26 +1,54 @@
 /**
  * Middleware de Next.
  *
- * - En modo "demo" no hace nada — la app sigue 100% abierta.
- * - En modo "database":
- *     - Refresca la sesión de Supabase en cada request.
- *     - Si el usuario no tiene sesión y va a una ruta privada,
- *       lo manda a /login.
+ * En modo "demo" no interfiere — la app sigue 100% abierta.
  *
- * Rutas públicas en modo database: /, /login, /ayuda y assets.
+ * En modo "database":
+ *   1. Refresca la sesión de Supabase en cada request.
+ *   2. Si el usuario no tiene sesión y va a una ruta privada,
+ *      lo manda a /login.
+ *   3. Resuelve el rol + módulos habilitados del usuario y, si la
+ *      ruta requiere un módulo que el rol no puede ver, redirige a
+ *      `/?denied=<module>`.
+ *
+ * Rutas públicas: /, /login, /ayuda, /notificaciones, /logout.
+ *
+ * Settings: hoy se permiten para cualquier usuario autenticado;
+ * la granularidad por permiso (settings.team vs settings.business)
+ * se chequea en las server actions.
  */
 
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { canSeeModule, type ModuleKey, type Role } from "@/lib/permissions";
+import {
+  isPublicPath,
+  isSettingsPath,
+  moduleForPath,
+} from "@/lib/permissions/route-map";
 
 const APP_MODE = (process.env.NEXT_PUBLIC_APP_MODE ?? "demo").toLowerCase();
 const SUPA_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPA_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
-const PUBLIC_PATHS = ["/login", "/ayuda"];
-
 export async function middleware(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+
+  // ---------- DEMO MODE GUARD ----------
+  // En demo no hay sesión, pero leemos `gp_demo_role` para que el QA
+  // del guard funcione igual que en database. Sólo aplicamos guard de
+  // módulos — sin redirección a /login.
   if (APP_MODE !== "database" || !SUPA_URL || !SUPA_ANON) {
+    const demoRole = request.cookies.get("gp_demo_role")?.value as Role | undefined;
+    if (demoRole && !isPublicPath(pathname) && !isSettingsPath(pathname)) {
+      const requiredModule = moduleForPath(pathname);
+      if (requiredModule && !canSeeModule(demoRole, requiredModule, null)) {
+        const redirect = request.nextUrl.clone();
+        redirect.pathname = "/";
+        redirect.searchParams.set("denied", requiredModule);
+        return NextResponse.redirect(redirect);
+      }
+    }
     return NextResponse.next();
   }
 
@@ -42,9 +70,9 @@ export async function middleware(request: NextRequest) {
     },
   });
 
+  const isPublic = isPublicPath(pathname);
+
   const { data: { user } } = await supabase.auth.getUser();
-  const pathname = request.nextUrl.pathname;
-  const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"));
 
   if (!user && !isPublic) {
     const redirect = request.nextUrl.clone();
@@ -53,12 +81,66 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(redirect);
   }
 
+  // Página requiere módulo específico → chequear permiso.
+  if (user) {
+    const requiredModule = moduleForPath(pathname);
+    if (requiredModule) {
+      // Resolver rol + módulos habilitados del business actual.
+      const role = await resolveRoleFromDb(supabase, user.id);
+      const enabledModules = await resolveEnabledModulesFromDb(supabase, user.id);
+      if (!canSeeModule(role, requiredModule, enabledModules)) {
+        const redirect = request.nextUrl.clone();
+        redirect.pathname = "/";
+        redirect.searchParams.set("denied", requiredModule);
+        return NextResponse.redirect(redirect);
+      }
+    }
+    // Settings: dejamos pasar siempre (granularidad en actions).
+    if (isSettingsPath(pathname)) {
+      // noop
+    }
+  }
+
   return response;
+}
+
+async function resolveRoleFromDb(supabase: any, userId: string): Promise<Role> {
+  const res = await supabase
+    .from("business_members")
+    .select("role")
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+  const data = res.data as { role: Role } | null;
+  return data?.role ?? "viewer";
+}
+
+async function resolveEnabledModulesFromDb(
+  supabase: any,
+  userId: string,
+): Promise<ModuleKey[] | null> {
+  // Resolver business del usuario
+  const memberRes = await supabase
+    .from("business_members")
+    .select("business_id")
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+  const businessId = (memberRes.data as { business_id: string } | null)?.business_id;
+  if (!businessId) return null;
+
+  const modsRes = await supabase
+    .from("business_modules")
+    .select("module_key")
+    .eq("business_id", businessId)
+    .eq("enabled", true);
+  const mods =
+    (modsRes.data as { module_key: ModuleKey }[] | null)?.map((m) => m.module_key) ?? [];
+  return mods.length ? mods : null;
 }
 
 export const config = {
   matcher: [
-    // Excluye assets y APIs internas.
     "/((?!_next/static|_next/image|favicon.ico|api/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

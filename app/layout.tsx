@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { Suspense } from "react";
 import "./globals.css";
 import { AppShell } from "@/components/shell/app-shell";
 import { ToastProvider } from "@/components/ui/toast";
+import { DeniedToast } from "@/components/shell/denied-toast";
 import { getCurrentUserContext } from "@/lib/data/auth";
 import { getRecentNotifications } from "@/lib/data/notifications";
 
@@ -33,6 +35,9 @@ export default async function RootLayout({
     <html lang="es" className={`${inter.variable} dark`}>
       <body className="font-sans">
         <ToastProvider>
+          <Suspense fallback={null}>
+            <DeniedToast />
+          </Suspense>
           <AppShell
             role={ctx.role}
             enabledModules={ctx.enabledModules}

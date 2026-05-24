@@ -114,6 +114,98 @@ export async function checkDebtsForBusiness(businessId: string): Promise<CheckSu
 }
 
 /* ============================================================================
+   Extracciones IA pendientes hace > 4h
+   ============================================================================ */
+
+export async function checkPendingExtractionsForBusiness(
+  businessId: string,
+): Promise<CheckSummary> {
+  if (!isDatabaseMode()) return { created: 0, skipped: 0 };
+  const db = createSupabaseAdminClient() as any;
+  let created = 0;
+  let skipped = 0;
+
+  const fourHoursAgo = new Date(Date.now() - 4 * 3600_000).toISOString();
+  const res = await db
+    .from("ai_extractions")
+    .select("id, type, summary, created_at, status", { count: "exact" })
+    .eq("business_id", businessId)
+    .in("status", ["pending", "needs_review"])
+    .lt("created_at", fourHoursAgo);
+  const rows = (res.data as any[]) ?? [];
+  if (rows.length === 0) return { created, skipped };
+
+  const title = `${rows.length} movimientos IA esperan aprobación`;
+  if (await notificationAlreadyExists(db, businessId, title, "inbox")) {
+    skipped++;
+    return { created, skipped };
+  }
+
+  const priority: NotificationPriority = rows.length >= 5 ? "high" : "medium";
+  await createNotification({
+    businessId,
+    tone: priority === "high" ? "warn" : "ai",
+    priority,
+    category: "ai",
+    title,
+    detail: `Los movimientos más antiguos llevan más de 4 horas sin revisar.`,
+    href: "/inbox",
+    source: "inbox",
+  });
+  created++;
+  return { created, skipped };
+}
+
+/* ============================================================================
+   Productos con margen crítico (< 35%)
+   ============================================================================ */
+
+export async function checkCriticalMarginForBusiness(
+  businessId: string,
+): Promise<CheckSummary> {
+  if (!isDatabaseMode()) return { created: 0, skipped: 0 };
+  const db = createSupabaseAdminClient() as any;
+  let created = 0;
+  let skipped = 0;
+
+  const res = await db
+    .from("products")
+    .select("id, name, price, cost")
+    .eq("business_id", businessId)
+    .eq("active", true);
+  const products = (res.data as any[]) ?? [];
+
+  const critical = products.filter((p) => {
+    const price = Number(p.price);
+    const cost = Number(p.cost);
+    if (price <= 0) return false;
+    const margin = ((price - cost) / price) * 100;
+    return margin < 35;
+  });
+
+  if (critical.length === 0) return { created, skipped };
+
+  const title = `${critical.length} producto${critical.length > 1 ? "s" : ""} con margen crítico`;
+  if (await notificationAlreadyExists(db, businessId, title, "ai")) {
+    skipped++;
+    return { created, skipped };
+  }
+
+  await createNotification({
+    businessId,
+    tone: "warn",
+    priority: "high",
+    category: "ai",
+    title,
+    detail: `Margen por debajo de 35% en: ${critical.slice(0, 3).map((p) => p.name).join(", ")}${critical.length > 3 ? "…" : ""}.`,
+    href: "/productos",
+    source: "ai",
+  });
+  created++;
+  return { created, skipped };
+}
+
+/* ============================================================================
    Stock crítico + bajo (complemento del trigger SQL)
    ============================================================================ */
 
