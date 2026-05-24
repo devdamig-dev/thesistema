@@ -18,6 +18,7 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isDatabaseMode } from "@/lib/env";
+import { sendHighPriorityAlert } from "@/lib/email/alert";
 
 export type {
   Notification,
@@ -280,6 +281,46 @@ export async function createNotification(input: CreateNotificationInput): Promis
       href: input.href ?? null,
       source: input.source ?? null,
     });
+    // Si priority es alta y hay RESEND_API_KEY, disparar email inmediato.
+    const effectivePriority = input.priority ?? priorityFromTone(input.tone);
+    if (effectivePriority === "high" && process.env.RESEND_API_KEY) {
+      try {
+        // Resolver owner email del business para mandar alerta
+        const ownerRes = await db
+          .from("business_members")
+          .select("user_id")
+          .eq("business_id", input.businessId)
+          .eq("role", "owner")
+          .limit(1)
+          .maybeSingle();
+        const ownerId = (ownerRes.data as { user_id: string } | null)?.user_id;
+        if (ownerId) {
+          const profileRes = await db
+            .from("profiles")
+            .select("email")
+            .eq("id", ownerId)
+            .maybeSingle();
+          const email = (profileRes.data as { email: string | null } | null)?.email;
+          const bizRes = await db
+            .from("businesses")
+            .select("name")
+            .eq("id", input.businessId)
+            .maybeSingle();
+          const bizName = (bizRes.data as { name: string } | null)?.name ?? "Tu negocio";
+          if (email) {
+            await sendHighPriorityAlert({
+              to: email,
+              businessName: bizName,
+              title: input.title,
+              detail: input.detail,
+              href: input.href,
+            });
+          }
+        }
+      } catch (emailErr) {
+        console.error("[notifications] email alert failed:", emailErr);
+      }
+    }
   } catch (error) {
     console.error("[notifications] create failed:", error);
   }

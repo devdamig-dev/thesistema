@@ -34,6 +34,7 @@ export const PUBLIC_PATHS = [
   "/notificaciones",
   "/logout",
   "/sin-permisos",
+  "/onboarding",
 ];
 export const SETTINGS_PREFIX = "/ajustes";
 

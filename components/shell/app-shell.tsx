@@ -9,7 +9,7 @@ import { X } from "lucide-react";
 import type { ModuleKey, Role } from "@/lib/permissions";
 import type { Notification } from "@/lib/data/notifications-types";
 
-const BARE_ROUTES = ["/login"];
+const BARE_ROUTES = ["/login", "/onboarding"];
 
 export type AppShellProps = {
   children: ReactNode;
