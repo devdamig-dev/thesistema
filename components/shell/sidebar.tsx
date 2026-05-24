@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   BarChart3,
+  Bell,
   Boxes,
   ChefHat,
   ClipboardList,
@@ -77,6 +78,7 @@ const NAV: NavGroup[] = [
   {
     label: "Sistema",
     items: [
+      { href: "/notificaciones", label: "Notificaciones", icon: Bell, systemAlwaysVisible: true },
       { href: "/ayuda", label: "Ayuda", icon: LifeBuoy, systemAlwaysVisible: true },
       { href: "/ajustes", label: "Ajustes", icon: Settings, systemAlwaysVisible: true },
     ],
@@ -100,11 +102,23 @@ export function Sidebar({
   // Filtrar items según permisos del rol + módulos habilitados.
   const filteredNav = NAV.map((group) => ({
     ...group,
-    items: group.items.filter((item) => {
-      if (item.systemAlwaysVisible) return true;
-      if (!item.module) return true;
-      return canSeeModule(effectiveRole, item.module, enabledModules ?? null);
-    }),
+    items: group.items
+      .filter((item) => {
+        if (item.systemAlwaysVisible) return true;
+        if (!item.module) return true;
+        return canSeeModule(effectiveRole, item.module, enabledModules ?? null);
+      })
+      .map((item) => {
+        // Inject dynamic unread badge en la entrada de Notificaciones
+        if (item.href === "/notificaciones" && (unreadCount ?? 0) > 0) {
+          return {
+            ...item,
+            badge: unreadCount! > 9 ? "9+" : String(unreadCount),
+            accent: "brand" as const,
+          };
+        }
+        return item;
+      }),
   })).filter((g) => g.items.length > 0);
 
   return (

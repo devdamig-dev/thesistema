@@ -22,9 +22,45 @@ function LoginPageInner() {
   const router = useRouter();
   const params = useSearchParams();
   const next = params.get("next") ?? "/";
+  const inviteToken = params.get("invite_token");
   const { toast } = useToast();
   const [email, setEmail] = useState("");
   const [sending, setSending] = useState(false);
+  const [acceptingInvite, setAcceptingInvite] = useState(false);
+
+  async function handleAcceptInvite() {
+    if (!inviteToken) return;
+    setAcceptingInvite(true);
+    try {
+      const { acceptInvitationAction } = await import("@/app/actions/invitations");
+      const result = await acceptInvitationAction(inviteToken);
+      if (result.ok) {
+        toast({
+          tone: "success",
+          title: "¡Bienvenido al equipo!",
+          description: result.persisted
+            ? "Tu acceso está activo."
+            : "Modo demo · invitación simulada.",
+        });
+        router.push("/");
+      } else {
+        const messages: Record<string, string> = {
+          requires_auth: "Iniciá sesión primero y volvé a clickear el link.",
+          invitation_not_found: "Ese link de invitación no es válido.",
+          invitation_expired: "La invitación expiró. Pedí una nueva.",
+          invitation_accepted: "Ya aceptaste esta invitación.",
+          invitation_revoked: "La invitación fue revocada.",
+        };
+        toast({
+          tone: "warn",
+          title: "No pudimos aceptar la invitación",
+          description: messages[result.error] ?? result.error,
+        });
+      }
+    } finally {
+      setAcceptingInvite(false);
+    }
+  }
 
   async function handleMagicLink(e: React.FormEvent) {
     e.preventDefault();
@@ -132,12 +168,34 @@ function LoginPageInner() {
 
           <div>
             <h2 className="text-2xl font-semibold tracking-tight text-ink">
-              Entrá a GastroPilot
+              {inviteToken ? "Te invitaron a un negocio" : "Entrá a GastroPilot"}
             </h2>
             <p className="mt-1 text-sm text-ink-muted">
-              Te mandamos un link mágico a tu correo. Sin contraseñas.
+              {inviteToken
+                ? "Iniciá sesión con tu correo y aceptá la invitación para sumarte al equipo."
+                : "Te mandamos un link mágico a tu correo. Sin contraseñas."}
             </p>
           </div>
+
+          {inviteToken && (
+            <div className="rounded-xl border border-ai-400/30 bg-ai-500/[0.06] p-3">
+              <div className="text-[10px] uppercase tracking-wider text-ai-400">
+                Invitación pendiente
+              </div>
+              <p className="mt-1 text-xs text-ink">
+                Si ya tenés sesión iniciada, aceptá directo:
+              </p>
+              <Button
+                size="sm"
+                variant="ai"
+                className="mt-2 w-full"
+                onClick={handleAcceptInvite}
+                disabled={acceptingInvite}
+              >
+                {acceptingInvite ? "Aceptando…" : "Aceptar invitación"}
+              </Button>
+            </div>
+          )}
 
           <form onSubmit={handleMagicLink} className="space-y-3">
             <div>

@@ -3,6 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isDatabaseMode } from "@/lib/env";
+import { assertPermission } from "@/lib/permissions/server-action";
+import { createNotification } from "@/lib/data/notifications";
+import { logActivity } from "@/lib/data/activity";
 
 type Result =
   | { ok: true; persisted: boolean; debt_id?: string; payment_id?: string }
@@ -34,6 +37,8 @@ export async function registerDebtAction(payload: {
   interest_rate?: number;
   notes?: string;
 }): Promise<Result> {
+  const guard = await assertPermission("debts.create");
+  if (guard) return guard;
   if (!isDatabaseMode()) {
     refresh();
     return { ok: true, persisted: false };
@@ -62,6 +67,24 @@ export async function registerDebtAction(payload: {
   if (!row) {
     return { ok: false, persisted: false, error: res.error?.message ?? "insert_failed" };
   }
+  await logActivity({
+    businessId,
+    action: "debt.created",
+    targetType: "debts",
+    targetId: row.id,
+    summary: `Deuda nueva · ${payload.creditor} · $${payload.original_amount.toLocaleString("es-AR")}`,
+    data: payload as any,
+  });
+  await createNotification({
+    businessId,
+    tone: "info",
+    priority: "medium",
+    category: "debt",
+    title: `Nueva deuda · ${payload.creditor}`,
+    detail: `$${payload.original_amount.toLocaleString("es-AR")}${payload.due_date ? ` · vence ${payload.due_date}` : ""}`,
+    href: "/deudas",
+    source: "debts",
+  });
   refresh();
   return { ok: true, persisted: true, debt_id: row.id };
 }
@@ -77,6 +100,8 @@ export async function registerPaymentAction(payload: {
   paid_at?: string;
   notes?: string;
 }): Promise<Result> {
+  const guard = await assertPermission("debts.pay");
+  if (guard) return guard;
   if (!isDatabaseMode()) {
     refresh();
     return { ok: true, persisted: false };
@@ -100,6 +125,42 @@ export async function registerPaymentAction(payload: {
   if (!row) {
     return { ok: false, persisted: false, error: res.error?.message ?? "insert_failed" };
   }
+
+  // Re-leer deuda para ver si quedó saldada (trigger SQL recalcula)
+  const debtRes = await db
+    .from("debts")
+    .select("business_id, creditor, pending_amount, status")
+    .eq("id", payload.debt_id)
+    .maybeSingle();
+  const debt = debtRes.data as
+    | { business_id: string; creditor: string; pending_amount: number; status: string }
+    | null;
+  if (debt) {
+    const settled = debt.status === "settled" || Number(debt.pending_amount) <= 0;
+    await logActivity({
+      businessId: debt.business_id,
+      action: settled ? "debt.settled" : "debt.payment.registered",
+      targetType: "debt_payments",
+      targetId: row.id,
+      summary: settled
+        ? `Deuda saldada · ${debt.creditor}`
+        : `Pago parcial · ${debt.creditor} · $${payload.amount.toLocaleString("es-AR")}`,
+      data: { debt_id: payload.debt_id, payment_id: row.id, amount: payload.amount },
+    });
+    await createNotification({
+      businessId: debt.business_id,
+      tone: settled ? "success" : "info",
+      priority: settled ? "low" : "medium",
+      category: "debt",
+      title: settled ? `Deuda saldada · ${debt.creditor}` : `Pago registrado · ${debt.creditor}`,
+      detail: settled
+        ? "Felicitaciones · la deuda quedó cancelada."
+        : `Pago parcial de $${payload.amount.toLocaleString("es-AR")}. Saldo pendiente: $${Number(debt.pending_amount).toLocaleString("es-AR")}.`,
+      href: "/deudas",
+      source: "debts",
+    });
+  }
+
   refresh();
   return { ok: true, persisted: true, payment_id: row.id };
 }
@@ -109,6 +170,8 @@ export async function registerPaymentAction(payload: {
    ============================================================================ */
 
 export async function markDebtAsSettledAction(debtId: string): Promise<Result> {
+  const guard = await assertPermission("debts.pay");
+  if (guard) return guard;
   if (!isDatabaseMode()) {
     refresh();
     return { ok: true, persisted: false };
@@ -116,6 +179,14 @@ export async function markDebtAsSettledAction(debtId: string): Promise<Result> {
   const supabase = createSupabaseServerClient();
   if (!supabase) return { ok: true, persisted: false };
   const db = supabase as any;
+
+  // Leer info antes para la notificación
+  const debtRes = await db
+    .from("debts")
+    .select("business_id, creditor")
+    .eq("id", debtId)
+    .maybeSingle();
+  const debt = debtRes.data as { business_id: string; creditor: string } | null;
 
   const { error } = await db
     .from("debts")
@@ -128,6 +199,27 @@ export async function markDebtAsSettledAction(debtId: string): Promise<Result> {
   if (error) {
     return { ok: false, persisted: false, error: error.message };
   }
+
+  if (debt) {
+    await logActivity({
+      businessId: debt.business_id,
+      action: "debt.settled.manual",
+      targetType: "debts",
+      targetId: debtId,
+      summary: `Deuda marcada como saldada · ${debt.creditor}`,
+    });
+    await createNotification({
+      businessId: debt.business_id,
+      tone: "success",
+      priority: "low",
+      category: "debt",
+      title: `Deuda saldada · ${debt.creditor}`,
+      detail: "Marcada manualmente como saldada.",
+      href: "/deudas",
+      source: "debts",
+    });
+  }
+
   refresh();
   return { ok: true, persisted: true };
 }

@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isDatabaseMode } from "@/lib/env";
 import { logActivity } from "@/lib/data/activity";
 import { createNotification } from "@/lib/data/notifications";
+import { assertPermission } from "@/lib/permissions/server-action";
 import type {
   ExtractedAdvance,
   ExtractedDailyClosure,
@@ -422,6 +423,8 @@ function parseClosureDate(input?: string): string | null {
  * según el tipo. Si falta info crítica, marca como needs_review.
  */
 export async function approveExtractionAction(extractionId: string): Promise<ActionResult> {
+  const guard = await assertPermission("inbox.approve");
+  if (guard) return guard;
   if (!isDatabaseMode()) {
     refreshPaths();
     return { ok: true, persisted: false };
@@ -530,6 +533,8 @@ export async function approveExtractionAction(extractionId: string): Promise<Act
 }
 
 export async function rejectExtractionAction(extractionId: string): Promise<ActionResult> {
+  const guard = await assertPermission("inbox.approve");
+  if (guard) return guard;
   if (!isDatabaseMode()) {
     refreshPaths();
     return { ok: true, persisted: false };

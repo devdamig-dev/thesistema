@@ -4,6 +4,11 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isDatabaseMode } from "@/lib/env";
 
+function refresh() {
+  revalidatePath("/");
+  revalidatePath("/notificaciones");
+}
+
 export async function markNotificationReadAction(notificationId: string) {
   if (!isDatabaseMode()) {
     return { ok: true as const, persisted: false };
@@ -18,7 +23,7 @@ export async function markNotificationReadAction(notificationId: string) {
   if (error) {
     return { ok: false as const, persisted: false, error: error.message };
   }
-  revalidatePath("/");
+  refresh();
   return { ok: true as const, persisted: true };
 }
 
@@ -36,6 +41,24 @@ export async function markAllNotificationsReadAction() {
   if (error) {
     return { ok: false as const, persisted: false, error: error.message };
   }
-  revalidatePath("/");
+  refresh();
+  return { ok: true as const, persisted: true };
+}
+
+export async function archiveNotificationAction(notificationId: string) {
+  if (!isDatabaseMode()) {
+    return { ok: true as const, persisted: false };
+  }
+  const supabase = createSupabaseServerClient();
+  if (!supabase) return { ok: true as const, persisted: false };
+  const db = supabase as any;
+  const { error } = await db
+    .from("notifications")
+    .update({ archived_at: new Date().toISOString(), read_at: new Date().toISOString() })
+    .eq("id", notificationId);
+  if (error) {
+    return { ok: false as const, persisted: false, error: error.message };
+  }
+  refresh();
   return { ok: true as const, persisted: true };
 }
