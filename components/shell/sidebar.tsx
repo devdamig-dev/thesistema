@@ -7,6 +7,7 @@ import {
   Bell,
   Boxes,
   ChefHat,
+  ClipboardCheck,
   ClipboardList,
   FileText,
   HandCoins,
@@ -79,6 +80,7 @@ const NAV: NavGroup[] = [
     label: "Sistema",
     items: [
       { href: "/notificaciones", label: "Notificaciones", icon: Bell, systemAlwaysVisible: true },
+      { href: "/auditoria", label: "Auditoría", icon: ClipboardCheck, systemAlwaysVisible: true },
       { href: "/ayuda", label: "Ayuda", icon: LifeBuoy, systemAlwaysVisible: true },
       { href: "/ajustes", label: "Ajustes", icon: Settings, systemAlwaysVisible: true },
     ],
