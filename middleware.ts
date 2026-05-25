@@ -84,6 +84,24 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(redirect);
   }
 
+  // Check onboarding: si el business no completó el setup, redirigir.
+  // No aplica a rutas de sistema (/onboarding, /login, /logout, /ayuda, etc).
+  if (user && !isPublic && !isSettingsPath(pathname)) {
+    try {
+      const businessId = await resolveBusinessIdFromDb(supabase, user.id);
+      if (businessId) {
+        const onboarding = await checkOnboardingCompleted(supabase, businessId);
+        if (onboarding === false) {
+          const redirect = request.nextUrl.clone();
+          redirect.pathname = "/onboarding";
+          return NextResponse.redirect(redirect);
+        }
+      }
+    } catch {
+      // Best-effort — si falla la query, no bloqueamos.
+    }
+  }
+
   // Página requiere módulo específico → chequear permiso.
   if (user) {
     const requiredModule = moduleForPath(pathname);
@@ -168,6 +186,19 @@ async function resolveEnabledModulesFromDb(
   const mods =
     (modsRes.data as { module_key: ModuleKey }[] | null)?.map((m) => m.module_key) ?? [];
   return mods.length ? mods : null;
+}
+
+async function checkOnboardingCompleted(
+  supabase: any,
+  businessId: string,
+): Promise<boolean | null> {
+  const res = await supabase
+    .from("businesses")
+    .select("onboarding_completed")
+    .eq("id", businessId)
+    .maybeSingle();
+  const data = res.data as { onboarding_completed: boolean } | null;
+  return data?.onboarding_completed ?? null;
 }
 
 export const config = {
