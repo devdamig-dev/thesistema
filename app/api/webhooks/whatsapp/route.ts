@@ -24,6 +24,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isDatabaseMode } from "@/lib/env";
 import { extractFromMessage } from "@/lib/ai/extract";
 import { createNotification } from "@/lib/data/notifications";
+import { rateLimit } from "@/lib/rate-limit";
 
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN ?? "gastropilot-dev";
 
@@ -42,6 +43,16 @@ export async function GET(request: NextRequest) {
 
 // ---------- POST — recibe mensajes ----------
 export async function POST(request: NextRequest) {
+  // Rate limit: 60 requests per minute per IP.
+  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const rl = rateLimit(`webhook:${ip}`, { windowMs: 60_000, max: 60 });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { ok: false, reason: "rate_limited", remaining: rl.remaining },
+      { status: 429 },
+    );
+  }
+
   let body: any;
   try {
     body = await request.json();

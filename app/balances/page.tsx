@@ -4,6 +4,7 @@ import {
   balanceRecommendations as fallbackRecs,
   balanceSnapshot as fallbackSnapshot,
 } from "@/lib/mock-data";
+import { ErrorBoundaryCard } from "@/components/ui/error-boundary";
 import BalancesClient from "./balances-client";
 
 export default async function BalancesPage() {
@@ -13,10 +14,12 @@ export default async function BalancesPage() {
     balancesRepo.recommendations(),
   ]);
   return (
-    <BalancesClient
-      snapshot={snapshot ?? fallbackSnapshot}
-      monthly={monthly?.length ? monthly : fallbackMonthly}
-      recommendations={recommendations?.length ? recommendations : fallbackRecs}
-    />
+    <ErrorBoundaryCard module="Balances">
+      <BalancesClient
+        snapshot={snapshot ?? fallbackSnapshot}
+        monthly={monthly?.length ? monthly : fallbackMonthly}
+        recommendations={recommendations?.length ? recommendations : fallbackRecs}
+      />
+    </ErrorBoundaryCard>
   );
 }
