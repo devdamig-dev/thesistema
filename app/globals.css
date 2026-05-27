@@ -159,4 +159,68 @@
     background-clip: text;
     color: transparent;
   }
+
+  /* ===== MOBILE POLISH ===== */
+
+  /* Tablas: scroll horizontal en mobile sin romper layout */
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Prevenir que cards/grids se estiren más allá del viewport */
+  @media (max-width: 640px) {
+    /* Botones táctiles más grandes */
+    .btn-primary,
+    .btn-ghost,
+    .btn-ai {
+      min-height: 44px;
+    }
+
+    /* Cards no excedan el viewport */
+    .card {
+      max-width: 100%;
+    }
+
+    /* KPI cards: texto más compacto */
+    .card .text-2xl,
+    .card .text-\[1\.6rem\],
+    .card .text-\[1\.75rem\] {
+      font-size: 1.25rem;
+    }
+
+    /* Onboarding wizard: padding reducido */
+    .max-w-2xl {
+      max-width: 100%;
+      padding-left: 1rem;
+      padding-right: 1rem;
+    }
+
+    /* Sidebar drawer: ancho completo en mobile */
+    .w-72 {
+      width: min(18rem, 85vw);
+    }
+
+    /* Topbar: search oculto, solo icons */
+    .md\:max-w-md {
+      display: none;
+    }
+
+    /* Toast: ancho completo */
+    .max-w-sm {
+      max-width: calc(100vw - 2rem);
+    }
+  }
+
+  /* Prevenir zoom en inputs iOS */
+  @media (max-width: 768px) {
+    input[type="text"],
+    input[type="email"],
+    input[type="tel"],
+    input[type="number"],
+    input[type="search"],
+    select,
+    textarea {
+      font-size: 16px;
+    }
+  }
 }

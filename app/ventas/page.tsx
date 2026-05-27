@@ -1,4 +1,5 @@
 "use client";
+import { ErrorBoundaryCard } from "@/components/ui/error-boundary";
 
 import { ArrowDownRight, ArrowUpRight, Calendar, Download, Sparkles } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
@@ -22,6 +23,7 @@ export default function VentasPage() {
   const { toast } = useToast();
 
   return (
+    <ErrorBoundaryCard module="Ventas">
     <div className="space-y-8">
       <SectionHeader
         eyebrow="Ventas"
@@ -201,5 +203,6 @@ export default function VentasPage() {
         </div>
       </div>
     </div>
+    </ErrorBoundaryCard>
   );
 }
