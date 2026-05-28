@@ -1,6 +1,7 @@
 "use client";
 
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, Plus, Truck } from "lucide-react";
+import { useTransition } from "react";
+import { AlertTriangle, ArrowDownRight, ArrowUpRight, Download, FileSpreadsheet, Loader2, Plus, Truck } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { InsightCard } from "@/components/common/insight-card";
 import { ToastPresets, useToast } from "@/components/ui/toast";
+import { exportPurchasesCsvAction } from "@/app/actions/exports";
+import { triggerCsvDownload } from "@/lib/csv-download";
 import { recentPurchases, topSuppliers } from "@/lib/mock-data";
 import { formatARS, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -15,6 +18,23 @@ import { cn } from "@/lib/utils";
 export default function ComprasPage() {
   const totalMes = topSuppliers.reduce((s, p) => s + p.totalMes, 0);
   const { toast } = useToast();
+  const [exporting, startExport] = useTransition();
+
+  function handleExport() {
+    startExport(async () => {
+      const res = await exportPurchasesCsvAction();
+      if (res.ok) {
+        triggerCsvDownload(res.filename, res.content);
+        toast({
+          tone: "success",
+          title: "Exporte contable listo",
+          description: `${res.rows} filas · ${res.filename}. Abrí con Excel y conciliá con IVA Compras.`,
+        });
+      } else {
+        toast({ tone: "warn", title: "No pudimos exportar", description: res.error });
+      }
+    });
+  }
   return (
     <div className="space-y-8">
       <SectionHeader
@@ -23,6 +43,19 @@ export default function ComprasPage() {
         description="Comparamos precios entre proveedores y alertamos cuando un insumo se sale del rango habitual."
         actions={
           <>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleExport}
+              disabled={exporting}
+            >
+              {exporting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FileSpreadsheet className="h-4 w-4" />
+              )}
+              {exporting ? "Generando…" : "Exportar compras Excel"}
+            </Button>
             <Button
               size="sm"
               variant="ghost"

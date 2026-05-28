@@ -1,7 +1,8 @@
 "use client";
+import { useTransition } from "react";
 import { ErrorBoundaryCard } from "@/components/ui/error-boundary";
 
-import { ArrowDownRight, ArrowUpRight, Calendar, Download, Sparkles } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Calendar, Download, Loader2, Sparkles } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,6 +12,8 @@ import { ChannelBar } from "@/components/charts/channel-bar";
 import { SalesAreaChart } from "@/components/charts/sales-area-chart";
 import { InsightCard } from "@/components/common/insight-card";
 import { ToastPresets, useToast } from "@/components/ui/toast";
+import { exportSalesCsvAction } from "@/app/actions/exports";
+import { triggerCsvDownload } from "@/lib/csv-download";
 import { dailySalesTable, salesByChannel, salesByDay } from "@/lib/mock-data";
 import { formatARS, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -21,6 +24,23 @@ export default function VentasPage() {
     salesByChannel.reduce((s, c) => s + c.ticket * c.share, 0) /
     salesByChannel.reduce((s, c) => s + c.share, 0);
   const { toast } = useToast();
+  const [exporting, startExport] = useTransition();
+
+  function handleExport() {
+    startExport(async () => {
+      const res = await exportSalesCsvAction();
+      if (res.ok) {
+        triggerCsvDownload(res.filename, res.content);
+        toast({
+          tone: "success",
+          title: "Exporte listo",
+          description: `${res.rows} filas · ${res.filename} (apto contador)`,
+        });
+      } else {
+        toast({ tone: "warn", title: "No pudimos exportar", description: res.error });
+      }
+    });
+  }
 
   return (
     <ErrorBoundaryCard module="Ventas">
@@ -42,10 +62,11 @@ export default function VentasPage() {
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => toast(ToastPresets.exported())}
+              onClick={handleExport}
+              disabled={exporting}
             >
-              <Download className="h-4 w-4" />
-              Exportar CSV
+              {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              {exporting ? "Generando…" : "Exportar ventas"}
             </Button>
           </>
         }

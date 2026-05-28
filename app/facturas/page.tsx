@@ -7,6 +7,7 @@ import {
   Check,
   CheckCircle2,
   Download,
+  ExternalLink,
   FileText,
   Filter,
   Image as ImageIcon,
@@ -28,6 +29,7 @@ import { SegmentedTabs } from "@/components/ui/tabs";
 import { ToastPresets, useToast } from "@/components/ui/toast";
 import {
   approveInvoiceAction,
+  getInvoiceAttachmentUrlAction,
   rejectInvoiceAction,
   uploadInvoiceAction,
 } from "@/app/actions/invoices";
@@ -56,6 +58,29 @@ export default function FacturasPage() {
   const [pending, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+
+  function handleViewAttachment(invoiceId: string, fallback?: { tipo: string; numero: string }) {
+    startTransition(async () => {
+      const res = await getInvoiceAttachmentUrlAction(invoiceId);
+      if (res.ok) {
+        if (res.demo) {
+          toast({
+            tone: "ai",
+            title: "Vista previa demo",
+            description: `Factura ${fallback?.tipo ?? ""}-${fallback?.numero ?? ""} · subí el archivo real para abrirlo desde Supabase Storage.`,
+          });
+          return;
+        }
+        window.open(res.url, "_blank", "noopener,noreferrer");
+      } else {
+        toast({
+          tone: "warn",
+          title: "No pudimos abrir el adjunto",
+          description: res.error,
+        });
+      }
+    });
+  }
 
   function handleFilesPicked(files: FileList | null) {
     if (!files || files.length === 0) return;
@@ -251,6 +276,9 @@ export default function FacturasPage() {
         {selected && (
           <InvoiceDetail
             invoice={selected}
+            onViewAttachment={() =>
+              handleViewAttachment(selected.id, { tipo: selected.tipo, numero: selected.numero })
+            }
             onApprove={() => {
               // Si la invoice tiene id formato uuid (database mode),
               // dispara el server action. En demo (mock-data) sólo
@@ -476,12 +504,14 @@ function InvoiceDetail({
   onSendAccountant,
   onReject,
   onEdit,
+  onViewAttachment,
 }: {
   invoice: Invoice;
   onApprove: () => void;
   onSendAccountant: () => void;
   onReject: () => void;
   onEdit: () => void;
+  onViewAttachment: () => void;
 }) {
   const isApproved = invoice.status === "aprobado" || invoice.status === "contador";
   const sentAccountant = invoice.status === "contador";
@@ -494,8 +524,9 @@ function InvoiceDetail({
         <div className="rounded-xl border border-line bg-bg-elevated p-3">
           <div className="mb-2 flex items-center justify-between">
             <Badge tone="default">{invoice.source.toUpperCase()}</Badge>
-            <Button size="sm" variant="ghost">
-              <Download className="h-3 w-3" />
+            <Button size="sm" variant="ghost" onClick={onViewAttachment}>
+              <ExternalLink className="h-3 w-3" />
+              Ver adjunto
             </Button>
           </div>
           <div className="rounded-lg border border-line bg-gradient-to-b from-bg-subtle to-bg-elevated p-3">
@@ -628,6 +659,9 @@ function InvoiceDetail({
 
         {/* Botones */}
         <div className="flex flex-wrap gap-2 border-t border-line pt-4">
+          <Button variant="ghost" size="md" onClick={onViewAttachment}>
+            <ExternalLink className="h-4 w-4" /> Ver adjunto
+          </Button>
           <Button variant="ghost" size="md" onClick={onReject}>
             <XCircle className="h-4 w-4" /> Rechazar
           </Button>

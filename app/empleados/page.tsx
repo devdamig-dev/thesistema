@@ -1,9 +1,12 @@
 "use client";
 
+import { useTransition } from "react";
 import {
   AlertTriangle,
   CalendarDays,
   Clock,
+  Download,
+  Loader2,
   Plus,
   Sparkles,
   Users,
@@ -16,6 +19,8 @@ import { Badge } from "@/components/ui/badge";
 import { InsightCard } from "@/components/common/insight-card";
 import { LaborVsSales } from "@/components/charts/labor-vs-sales";
 import { ToastPresets, useToast } from "@/components/ui/toast";
+import { exportEmployeesCsvAction } from "@/app/actions/exports";
+import { triggerCsvDownload } from "@/lib/csv-download";
 import {
   employeeAlerts,
   employees,
@@ -39,6 +44,24 @@ const HOURLY_RATE = 3_100; // ARS por hora aprox
 
 export default function EmpleadosPage() {
   const { toast } = useToast();
+  const [exporting, startExport] = useTransition();
+
+  function handleExportNovedades() {
+    startExport(async () => {
+      const res = await exportEmployeesCsvAction();
+      if (res.ok) {
+        triggerCsvDownload(res.filename, res.content);
+        toast({
+          tone: "success",
+          title: "Novedades listas para liquidación",
+          description: `${res.rows} empleados · adelantos, faltas, tardes y horas incluidos.`,
+        });
+      } else {
+        toast({ tone: "warn", title: "No pudimos exportar", description: res.error });
+      }
+    });
+  }
+
   return (
     <div className="space-y-8">
       <SectionHeader
@@ -47,6 +70,19 @@ export default function EmpleadosPage() {
         description="Turnos, horas, adelantos y costo laboral. La IA cruza esta info con las ventas para detectar oportunidades."
         actions={
           <>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleExportNovedades}
+              disabled={exporting}
+            >
+              {exporting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              {exporting ? "Generando…" : "Exportar novedades"}
+            </Button>
             <Button
               size="sm"
               variant="ghost"

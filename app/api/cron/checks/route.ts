@@ -18,8 +18,10 @@ import { isDatabaseMode } from "@/lib/env";
 import {
   checkCriticalMarginForBusiness,
   checkDebtsForBusiness,
+  checkInvoicesWithoutAttachmentForBusiness,
   checkPendingExtractionsForBusiness,
   checkStockForBusiness,
+  checkTaxDebtsForBusiness,
 } from "@/lib/data/notification-checks";
 
 export async function GET(request: NextRequest) {
@@ -49,14 +51,23 @@ export async function GET(request: NextRequest) {
 
     const results: Record<
       string,
-      { debts: any; stock: any; pendingInbox: any; margin: any }
+      {
+        debts: any;
+        stock: any;
+        pendingInbox: any;
+        margin: any;
+        taxDebts: any;
+        invoicesNoAttachment: any;
+      }
     > = {};
     for (const b of businesses) {
       const debts = await checkDebtsForBusiness(b.id);
       const stock = await checkStockForBusiness(b.id);
       const pendingInbox = await checkPendingExtractionsForBusiness(b.id);
       const margin = await checkCriticalMarginForBusiness(b.id);
-      results[b.id] = { debts, stock, pendingInbox, margin };
+      const taxDebts = await checkTaxDebtsForBusiness(b.id);
+      const invoicesNoAttachment = await checkInvoicesWithoutAttachmentForBusiness(b.id);
+      results[b.id] = { debts, stock, pendingInbox, margin, taxDebts, invoicesNoAttachment };
     }
 
     return NextResponse.json({
