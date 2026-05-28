@@ -206,6 +206,116 @@ export async function checkCriticalMarginForBusiness(
 }
 
 /* ============================================================================
+   Impuestos próximos a vencer (deudas categoria=tax o payroll)
+   --------------------------------------------------------------------------
+   Eleva la prioridad: IIBB / IVA / Autónomos atrasados generan
+   intereses + multas. Mostramos un único insight agregado con la
+   suma adeudada para que el contador y el dueño lo vean rápido.
+   ============================================================================ */
+
+export async function checkTaxDebtsForBusiness(businessId: string): Promise<CheckSummary> {
+  if (!isDatabaseMode()) return { created: 0, skipped: 0 };
+  const db = createSupabaseAdminClient() as any;
+  let created = 0;
+  let skipped = 0;
+
+  const in10DaysISO = new Date(Date.now() + 10 * 86400_000).toISOString().slice(0, 10);
+  const todayISO = new Date().toISOString().slice(0, 10);
+
+  const res = await db
+    .from("debts")
+    .select("id, creditor, pending_amount, due_date, category, organism, period")
+    .eq("business_id", businessId)
+    .neq("status", "settled")
+    .in("category", ["tax", "payroll"])
+    .lte("due_date", in10DaysISO);
+  const rows = (res.data as any[]) ?? [];
+  if (rows.length === 0) return { created, skipped };
+
+  const total = rows.reduce((s, r) => s + Number(r.pending_amount ?? 0), 0);
+  const overdue = rows.filter((r) => r.due_date && r.due_date < todayISO);
+  const upcoming = rows.filter((r) => !r.due_date || r.due_date >= todayISO);
+
+  const title = overdue.length > 0
+    ? `${overdue.length} obligación${overdue.length > 1 ? "es" : ""} fiscal${overdue.length > 1 ? "es" : ""} vencida${overdue.length > 1 ? "s" : ""}`
+    : `${rows.length} impuesto${rows.length > 1 ? "s" : ""} próximo${rows.length > 1 ? "s" : ""} a vencer`;
+
+  if (await notificationAlreadyExists(db, businessId, title, "debts")) {
+    skipped++;
+    return { created, skipped };
+  }
+
+  const sample = rows
+    .slice(0, 3)
+    .map((r) => `${r.organism ?? r.creditor}${r.period ? ` (${r.period})` : ""}`)
+    .join(", ");
+
+  await createNotification({
+    businessId,
+    tone: overdue.length > 0 ? "danger" : "warn",
+    priority: overdue.length > 0 ? "high" : "medium",
+    category: "debt",
+    title,
+    detail: `Total adeudado $${total.toLocaleString("es-AR")}. Incluye: ${sample}${rows.length > 3 ? "…" : ""}.`,
+    href: "/deudas",
+    source: "debts",
+  });
+  created++;
+  return { created, skipped };
+}
+
+/* ============================================================================
+   Compras / facturas sin adjunto
+   --------------------------------------------------------------------------
+   Detecta invoices que no tienen archivo guardado en Storage. Para el
+   contador es crítico: sin adjunto no puede deducir IVA ni justificar
+   el gasto.
+   ============================================================================ */
+
+export async function checkInvoicesWithoutAttachmentForBusiness(
+  businessId: string,
+): Promise<CheckSummary> {
+  if (!isDatabaseMode()) return { created: 0, skipped: 0 };
+  const db = createSupabaseAdminClient() as any;
+  let created = 0;
+  let skipped = 0;
+
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  const isoMonth = monthStart.toISOString().slice(0, 10);
+
+  const res = await db
+    .from("invoices")
+    .select("id, number, total")
+    .eq("business_id", businessId)
+    .is("storage_path", null)
+    .gte("invoice_date", isoMonth);
+  const rows = (res.data as any[]) ?? [];
+  if (rows.length === 0) return { created, skipped };
+
+  const title = `${rows.length} factura${rows.length > 1 ? "s" : ""} sin adjunto este mes`;
+  if (await notificationAlreadyExists(db, businessId, title, "invoices")) {
+    skipped++;
+    return { created, skipped };
+  }
+
+  const total = rows.reduce((s, r) => s + Number(r.total ?? 0), 0);
+
+  await createNotification({
+    businessId,
+    tone: "warn",
+    priority: "medium",
+    category: "invoice",
+    title,
+    detail: `Total $${total.toLocaleString("es-AR")} sin respaldo documental. Subí los comprobantes para que el contador pueda computarlos.`,
+    href: "/facturas",
+    source: "invoices",
+  });
+  created++;
+  return { created, skipped };
+}
+
+/* ============================================================================
    Stock crítico + bajo (complemento del trigger SQL)
    ============================================================================ */
 

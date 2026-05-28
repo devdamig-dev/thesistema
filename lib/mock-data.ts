@@ -498,6 +498,24 @@ export const reportInsights = [
     metrica: "36%",
     tendencia: "up",
   },
+  {
+    titulo: "Carga fiscal pendiente",
+    detalle: "$961.500 en impuestos vencidos (IVA, Autónomos, Cargas). Recomendamos pagar IVA primero por intereses ARCA.",
+    metrica: "$961k",
+    tendencia: "down",
+  },
+  {
+    titulo: "Facturas sin respaldo",
+    detalle: "2 compras del mes no tienen adjunto. Sin foto/PDF el contador no puede deducir IVA Compras.",
+    metrica: "2",
+    tendencia: "down",
+  },
+  {
+    titulo: "Comisiones de apps",
+    detalle: "PedidosYa absorbe 22% del ticket. Sobre $4,6M facturados son $1,01M en comisiones del mes.",
+    metrica: "$1,01M",
+    tendencia: "down",
+  },
 ];
 
 // ---------- ATENCIÓN HOY (Dashboard) ----------
@@ -546,6 +564,33 @@ export const attentionItems: {
     cta: "Abrir Inbox",
     href: "/inbox",
     tag: "Inbox IA",
+  },
+  {
+    id: "att-tax-1",
+    priority: "alta",
+    title: "Impuestos vencidos por $961.500",
+    detail: "IVA abril, Cargas sociales abril y Autónomos mayo vencieron en ARCA. Generan intereses si no se regularizan.",
+    cta: "Ver deudas fiscales",
+    href: "/deudas?filtro=impuestos",
+    tag: "Contable",
+  },
+  {
+    id: "att-tax-2",
+    priority: "media",
+    title: "IIBB de mayo vence el 29/05",
+    detail: "Anticipo Ingresos Brutos por $184.600 en ARBA. Tenemos liquidez estimada suficiente para pagarlo.",
+    cta: "Programar pago",
+    href: "/deudas?filtro=por_vencer",
+    tag: "Contable",
+  },
+  {
+    id: "att-doc-1",
+    priority: "media",
+    title: "2 facturas del mes sin adjunto",
+    detail: "Las cargaste manualmente pero no subiste foto/PDF. El contador no las puede computar para IVA.",
+    cta: "Subir adjuntos",
+    href: "/facturas",
+    tag: "Contable",
   },
 ];
 
@@ -799,6 +844,26 @@ export const weeklyDecisions: Decision[] = [
 // ---------- DEUDAS ----------
 export type DebtStatus = "activa" | "vencida" | "saldada";
 
+/** Categorías de deuda — habilitan exportables y filtros contables. */
+export type DebtCategory =
+  | "proveedor"
+  | "impuesto"
+  | "prestamo"
+  | "alquiler"
+  | "servicio"
+  | "sueldo"
+  | "otro";
+
+export const DEBT_CATEGORY_LABELS: Record<DebtCategory, string> = {
+  proveedor: "Proveedor",
+  impuesto: "Impuesto",
+  prestamo: "Préstamo",
+  alquiler: "Alquiler",
+  servicio: "Servicio",
+  sueldo: "Sueldos / cargas sociales",
+  otro: "Otro",
+};
+
 export type DebtPayment = {
   id: string;
   fecha: string;
@@ -816,6 +881,9 @@ export type Debt = {
   interesMensual?: number; // %
   vencimiento?: string;
   estado: DebtStatus;
+  categoria: DebtCategory;
+  periodo?: string;            // "Abril 2026" — útil para impuestos
+  organismo?: string;          // "ARCA" / "AFIP" / "Banco Galicia"
   tomada: string;
   saldadaEl?: string;
   pagos: DebtPayment[];
@@ -830,6 +898,7 @@ export const debts: Debt[] = [
     saldoPendiente: 300_000,
     vencimiento: "23/05/2026",
     estado: "activa",
+    categoria: "proveedor",
     tomada: "10/05/2026",
     pagos: [],
   },
@@ -841,6 +910,7 @@ export const debts: Debt[] = [
     saldoPendiente: 140_000,
     vencimiento: "26/05/2026",
     estado: "activa",
+    categoria: "proveedor",
     tomada: "01/05/2026",
     pagos: [
       { id: "p1", fecha: "12/05/2026", monto: 80_000, metodo: "Transferencia" },
@@ -855,6 +925,8 @@ export const debts: Debt[] = [
     interesMensual: 4.5,
     vencimiento: "05/06/2026",
     estado: "activa",
+    categoria: "prestamo",
+    organismo: "Banco Galicia",
     tomada: "05/03/2026",
     pagos: [
       { id: "p2", fecha: "05/04/2026", monto: 110_000, metodo: "Débito automático" },
@@ -869,6 +941,8 @@ export const debts: Debt[] = [
     saldoPendiente: 142_000,
     vencimiento: "10/05/2026",
     estado: "vencida",
+    categoria: "servicio",
+    periodo: "Abril 2026",
     tomada: "01/05/2026",
     pagos: [],
   },
@@ -880,17 +954,105 @@ export const debts: Debt[] = [
     saldoPendiente: 0,
     vencimiento: "12/05/2026",
     estado: "saldada",
+    categoria: "proveedor",
     tomada: "01/05/2026",
     saldadaEl: "12/05/2026",
     pagos: [{ id: "p4", fecha: "12/05/2026", monto: 96_000, metodo: "Transferencia" }],
   },
+  // Impuestos / cargas — soporte al contador
+  {
+    id: "deuda-tax-1",
+    acreedor: "ARCA · IVA",
+    concepto: "IVA declarado abril 2026",
+    montoInicial: 312_500,
+    saldoPendiente: 312_500,
+    vencimiento: "20/05/2026",
+    estado: "vencida",
+    categoria: "impuesto",
+    organismo: "ARCA",
+    periodo: "Abril 2026",
+    tomada: "15/05/2026",
+    pagos: [],
+  },
+  {
+    id: "deuda-tax-2",
+    acreedor: "ARCA · Autónomos",
+    concepto: "Aporte monotributo / autónomos",
+    montoInicial: 48_900,
+    saldoPendiente: 48_900,
+    vencimiento: "20/05/2026",
+    estado: "vencida",
+    categoria: "impuesto",
+    organismo: "ARCA",
+    periodo: "Mayo 2026",
+    tomada: "01/05/2026",
+    pagos: [],
+  },
+  {
+    id: "deuda-tax-3",
+    acreedor: "ARBA · Ingresos Brutos",
+    concepto: "Anticipo IIBB mayo",
+    montoInicial: 184_600,
+    saldoPendiente: 184_600,
+    vencimiento: "29/05/2026",
+    estado: "activa",
+    categoria: "impuesto",
+    organismo: "ARBA",
+    periodo: "Mayo 2026",
+    tomada: "10/05/2026",
+    pagos: [],
+  },
+  {
+    id: "deuda-tax-4",
+    acreedor: "ARCA · Cargas sociales",
+    concepto: "F931 abril (SUSS)",
+    montoInicial: 612_000,
+    saldoPendiente: 612_000,
+    vencimiento: "12/05/2026",
+    estado: "vencida",
+    categoria: "sueldo",
+    organismo: "ARCA",
+    periodo: "Abril 2026",
+    tomada: "07/05/2026",
+    pagos: [],
+  },
+  {
+    id: "deuda-tax-5",
+    acreedor: "ARCA · Ganancias",
+    concepto: "Anticipo Ganancias 2do bimestre",
+    montoInicial: 240_000,
+    saldoPendiente: 0,
+    vencimiento: "10/04/2026",
+    estado: "saldada",
+    categoria: "impuesto",
+    organismo: "ARCA",
+    periodo: "Bimestre 2",
+    tomada: "01/04/2026",
+    saldadaEl: "09/04/2026",
+    pagos: [
+      { id: "p-tax-5", fecha: "09/04/2026", monto: 240_000, metodo: "VEP" },
+    ],
+  },
+  {
+    id: "deuda-rent-1",
+    acreedor: "Inmobiliaria Centro",
+    concepto: "Alquiler local junio",
+    montoInicial: 450_000,
+    saldoPendiente: 450_000,
+    vencimiento: "05/06/2026",
+    estado: "activa",
+    categoria: "alquiler",
+    periodo: "Junio 2026",
+    tomada: "20/05/2026",
+    pagos: [],
+  },
 ];
 
 export const debtKpis = {
-  totalDeuda: 1_562_000,
-  vencidas: 142_000,
-  proximoVencimiento: "23/05/2026 · Don José",
-  impactoMensual: 280_000,
+  totalDeuda: 3_369_500,
+  vencidas: 1_114_500,
+  proximoVencimiento: "20/05/2026 · ARCA · IVA",
+  impactoMensual: 720_000,
 };
 
 // ---------- BALANCES ----------

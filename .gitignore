@@ -7,3 +7,4 @@ dist
 *.log
 next-env.d.ts
 .vercel
+*.tsbuildinfo

@@ -36,6 +36,9 @@ export async function registerDebtAction(payload: {
   due_date?: string; // ISO yyyy-mm-dd
   interest_rate?: number;
   notes?: string;
+  category?: "supplier" | "tax" | "loan" | "rent" | "utility" | "payroll" | "other";
+  period?: string;
+  organism?: string;
 }): Promise<Result> {
   const guard = await assertPermission("debts.create");
   if (guard) return guard;
@@ -60,6 +63,9 @@ export async function registerDebtAction(payload: {
       due_date: payload.due_date,
       interest_rate: payload.interest_rate,
       notes: payload.notes,
+      category: payload.category ?? "supplier",
+      period: payload.period,
+      organism: payload.organism,
     })
     .select("id")
     .maybeSingle();

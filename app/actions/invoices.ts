@@ -497,6 +497,60 @@ export async function rejectInvoiceAction(invoiceId: string): Promise<ActionResu
    updateInvoiceItemAction
    ============================================================================ */
 
+/* ============================================================================
+   getInvoiceAttachmentUrlAction
+   --------------------------------------------------------------------------
+   Devuelve una URL firmada de Supabase Storage para que la UI pueda
+   abrir / previsualizar el adjunto. En demo devolvemos una URL
+   placeholder + flag `demo: true` para que el cliente muestre un mensaje.
+   ============================================================================ */
+
+export async function getInvoiceAttachmentUrlAction(
+  invoiceId: string,
+): Promise<
+  | { ok: true; persisted: boolean; url: string; mime?: string; demo?: boolean }
+  | { ok: false; persisted: boolean; error: string }
+> {
+  const guard = await assertPermission("invoices.view");
+  if (guard) return guard;
+
+  if (!isDatabaseMode()) {
+    return {
+      ok: true,
+      persisted: false,
+      demo: true,
+      url: "about:blank",
+    };
+  }
+
+  let db: any;
+  try {
+    db = createSupabaseAdminClient();
+  } catch (error: any) {
+    return { ok: false, persisted: false, error: error?.message ?? "admin_failed" };
+  }
+
+  const res = await db
+    .from("invoices")
+    .select("storage_path, storage_bucket, file_mime")
+    .eq("id", invoiceId)
+    .maybeSingle();
+  const row = res.data as
+    | { storage_path: string | null; storage_bucket: string | null; file_mime: string | null }
+    | null;
+  if (!row || !row.storage_path) {
+    return { ok: false, persisted: true, error: "no_attachment" };
+  }
+
+  const bucket = row.storage_bucket ?? "invoices";
+  const signed = await db.storage.from(bucket).createSignedUrl(row.storage_path, 60 * 10);
+  const url = (signed.data as any)?.signedUrl as string | undefined;
+  if (!url) {
+    return { ok: false, persisted: true, error: signed.error?.message ?? "signed_url_failed" };
+  }
+  return { ok: true, persisted: true, url, mime: row.file_mime ?? undefined };
+}
+
 export async function updateInvoiceItemAction(
   itemId: string,
   patch: {

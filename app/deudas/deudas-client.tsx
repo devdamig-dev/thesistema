@@ -8,11 +8,15 @@ import {
   CalendarClock,
   Check,
   CheckCircle2,
+  Download,
   HandCoins,
   History,
+  Landmark,
+  Loader2,
   Plus,
   RefreshCw,
   Sparkles,
+  Truck,
   Wallet,
 } from "lucide-react";
 import { motion } from "framer-motion";
@@ -23,13 +27,20 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Drawer } from "@/components/ui/drawer";
 import { SegmentedTabs } from "@/components/ui/tabs";
-import { ToastPresets, useToast } from "@/components/ui/toast";
+import { useToast } from "@/components/ui/toast";
 import {
   markDebtAsSettledAction,
   registerDebtAction,
   registerPaymentAction,
 } from "@/app/actions/debts";
-import type { Debt, DebtStatus } from "@/lib/mock-data";
+import { exportDebtsCsvAction } from "@/app/actions/exports";
+import { triggerCsvDownload } from "@/lib/csv-download";
+import {
+  DEBT_CATEGORY_LABELS,
+  type Debt,
+  type DebtCategory,
+  type DebtStatus,
+} from "@/lib/mock-data";
 import { formatARS } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -42,7 +53,41 @@ const STATUS_STYLES: Record<
   saldada: { tone: "success", label: "Saldada" },
 };
 
-type Filter = "todas" | DebtStatus;
+const CATEGORY_STYLES: Record<
+  DebtCategory,
+  { tone: "default" | "warn" | "info" | "ai" | "success" | "danger" | "brand" }
+> = {
+  proveedor: { tone: "info" },
+  impuesto: { tone: "danger" },
+  prestamo: { tone: "warn" },
+  alquiler: { tone: "brand" },
+  servicio: { tone: "default" },
+  sueldo: { tone: "ai" },
+  otro: { tone: "default" },
+};
+
+type Filter =
+  | "todas"
+  | "vencidas"
+  | "por_vencer"
+  | "impuestos"
+  | "proveedores"
+  | "saldadas";
+
+function parseDmy(dmy?: string): Date | null {
+  if (!dmy) return null;
+  const m = dmy.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return null;
+  return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+}
+
+function daysUntil(dmy?: string): number | null {
+  const d = parseDmy(dmy);
+  if (!d) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((d.getTime() - today.getTime()) / 86400000);
+}
 
 export default function DeudasClient({
   items,
@@ -57,17 +102,61 @@ export default function DeudasClient({
   const [selected, setSelected] = useState<Debt | null>(null);
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
+  const [exporting, startExport] = useTransition();
 
   const counts = useMemo(() => {
-    const map: Record<string, number> = { todas: items.length };
-    items.forEach((d) => (map[d.estado] = (map[d.estado] ?? 0) + 1));
-    return map;
+    const next: Record<Filter, number> = {
+      todas: items.length,
+      vencidas: 0,
+      por_vencer: 0,
+      impuestos: 0,
+      proveedores: 0,
+      saldadas: 0,
+    };
+    for (const d of items) {
+      const days = daysUntil(d.vencimiento);
+      if (d.estado === "vencida") next.vencidas++;
+      else if (d.estado !== "saldada" && days != null && days >= 0 && days <= 7) {
+        next.por_vencer++;
+      }
+      if (d.categoria === "impuesto" || d.categoria === "sueldo") next.impuestos++;
+      if (d.categoria === "proveedor") next.proveedores++;
+      if (d.estado === "saldada") next.saldadas++;
+    }
+    return next;
   }, [items]);
 
-  const filtered = useMemo(
-    () => (filter === "todas" ? items : items.filter((d) => d.estado === filter)),
-    [filter, items],
-  );
+  const filtered = useMemo(() => {
+    if (filter === "todas") return items;
+    if (filter === "vencidas") return items.filter((d) => d.estado === "vencida");
+    if (filter === "saldadas") return items.filter((d) => d.estado === "saldada");
+    if (filter === "impuestos") {
+      return items.filter((d) => d.categoria === "impuesto" || d.categoria === "sueldo");
+    }
+    if (filter === "proveedores") return items.filter((d) => d.categoria === "proveedor");
+    // por_vencer
+    return items.filter((d) => {
+      if (d.estado === "saldada") return false;
+      const days = daysUntil(d.vencimiento);
+      return days != null && days >= 0 && days <= 7;
+    });
+  }, [filter, items]);
+
+  function handleExport() {
+    startExport(async () => {
+      const res = await exportDebtsCsvAction();
+      if (res.ok) {
+        triggerCsvDownload(res.filename, res.content);
+        toast({
+          tone: "success",
+          title: "Exporte listo",
+          description: `${res.rows} deudas incluidas — separadas por categoría.`,
+        });
+      } else {
+        toast({ tone: "warn", title: "No pudimos exportar", description: res.error });
+      }
+    });
+  }
 
   function handleNewDebt() {
     // Mock simple sin modal: pide datos mínimos por window.prompt para no
@@ -79,11 +168,30 @@ export default function DeudasClient({
     if (!amountStr) return;
     const amount = Number(amountStr.replace(/[^\d]/g, ""));
     if (!Number.isFinite(amount) || amount <= 0) return;
+    const categoria = (window.prompt(
+      "Categoría (proveedor / impuesto / prestamo / alquiler / servicio / sueldo / otro):",
+      "proveedor",
+    ) || "proveedor") as DebtCategory;
+    const dbCategory =
+      categoria === "proveedor"
+        ? "supplier"
+        : categoria === "impuesto"
+          ? "tax"
+          : categoria === "prestamo"
+            ? "loan"
+            : categoria === "alquiler"
+              ? "rent"
+              : categoria === "servicio"
+                ? "utility"
+                : categoria === "sueldo"
+                  ? "payroll"
+                  : "other";
 
     startTransition(async () => {
       const result = await registerDebtAction({
         creditor,
         original_amount: amount,
+        category: dbCategory,
       });
       if (result.ok) {
         toast({
@@ -158,6 +266,19 @@ export default function DeudasClient({
             <Button
               size="sm"
               variant="ghost"
+              onClick={handleExport}
+              disabled={exporting}
+            >
+              {exporting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              {exporting ? "Generando…" : "Exportar deudas"}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
               onClick={() => {
                 router.refresh();
                 toast({ tone: "info", title: "Actualizando deudas…" });
@@ -217,10 +338,12 @@ export default function DeudasClient({
           value={filter}
           onChange={setFilter}
           options={[
-            { value: "todas", label: "Todas", count: counts["todas"] },
-            { value: "activa", label: "Activas", count: counts["activa"] ?? 0 },
-            { value: "vencida", label: "Vencidas", count: counts["vencida"] ?? 0 },
-            { value: "saldada", label: "Saldadas", count: counts["saldada"] ?? 0 },
+            { value: "todas", label: "Todas", count: counts.todas },
+            { value: "vencidas", label: "Vencidas", count: counts.vencidas },
+            { value: "por_vencer", label: "Por vencer", count: counts.por_vencer },
+            { value: "impuestos", label: "Impuestos", count: counts.impuestos },
+            { value: "proveedores", label: "Proveedores", count: counts.proveedores },
+            { value: "saldadas", label: "Saldadas", count: counts.saldadas },
           ]}
         />
         <span className="text-xs text-ink-muted">
@@ -242,8 +365,8 @@ export default function DeudasClient({
             <thead className="border-y border-line bg-bg-subtle/60 text-left text-[11px] uppercase tracking-wider text-ink-subtle">
               <tr>
                 <th className="px-5 py-2.5 font-medium">Acreedor</th>
-                <th className="px-5 py-2.5 font-medium">Concepto</th>
-                <th className="px-5 py-2.5 text-right font-medium">Monto inicial</th>
+                <th className="px-5 py-2.5 font-medium">Categoría</th>
+                <th className="px-5 py-2.5 font-medium">Período</th>
                 <th className="px-5 py-2.5 text-right font-medium">Saldo pendiente</th>
                 <th className="px-5 py-2.5 font-medium">Vencimiento</th>
                 <th className="px-5 py-2.5 font-medium">Estado</th>
@@ -260,9 +383,12 @@ export default function DeudasClient({
               )}
               {filtered.map((d) => {
                 const cfg = STATUS_STYLES[d.estado];
+                const categoria = (d.categoria ?? "proveedor") as DebtCategory;
+                const catCfg = CATEGORY_STYLES[categoria];
                 const progress = d.montoInicial > 0
                   ? Math.min(100, ((d.montoInicial - d.saldoPendiente) / d.montoInicial) * 100)
                   : 0;
+                const isTax = categoria === "impuesto" || categoria === "sueldo";
                 return (
                   <tr
                     key={d.id}
@@ -273,15 +399,27 @@ export default function DeudasClient({
                     }}
                   >
                     <td className="px-5 py-3">
-                      <div className="font-medium text-ink">{d.acreedor}</div>
+                      <div className="flex items-center gap-2">
+                        {isTax ? (
+                          <Landmark className="h-3.5 w-3.5 text-danger-400" />
+                        ) : categoria === "proveedor" ? (
+                          <Truck className="h-3.5 w-3.5 text-ink-muted" />
+                        ) : null}
+                        <div>
+                          <div className="font-medium text-ink">{d.acreedor}</div>
+                          {d.organismo && d.organismo !== d.acreedor && (
+                            <div className="text-[10px] text-ink-subtle">{d.organismo}</div>
+                          )}
+                        </div>
+                      </div>
                       {d.interesMensual && (
-                        <div className="text-[10px] text-warn-400">+{d.interesMensual}% mensual</div>
+                        <div className="mt-0.5 text-[10px] text-warn-400">+{d.interesMensual}% mensual</div>
                       )}
                     </td>
-                    <td className="px-5 py-3 text-ink-muted">{d.concepto || "—"}</td>
-                    <td className="px-5 py-3 text-right tabular-nums text-ink-muted">
-                      {formatARS(d.montoInicial)}
+                    <td className="px-5 py-3">
+                      <Badge tone={catCfg.tone}>{DEBT_CATEGORY_LABELS[categoria]}</Badge>
                     </td>
+                    <td className="px-5 py-3 text-ink-muted">{d.periodo ?? d.concepto ?? "—"}</td>
                     <td className="px-5 py-3 text-right">
                       <div className="text-sm font-semibold tabular-nums text-ink">
                         {formatARS(d.saldoPendiente)}

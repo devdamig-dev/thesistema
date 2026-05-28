@@ -384,7 +384,18 @@ const DEBT_STATUS_TO_UI = {
   settled: "saldada",
 } as const;
 
-export function mapDebt(d: DebtRow, payments: DebtPaymentRow[] = []) {
+const DEBT_CATEGORY_TO_UI = {
+  supplier: "proveedor",
+  tax: "impuesto",
+  loan: "prestamo",
+  rent: "alquiler",
+  utility: "servicio",
+  payroll: "sueldo",
+  other: "otro",
+} as const;
+
+export function mapDebt(d: DebtRow & { category?: string; period?: string | null; organism?: string | null }, payments: DebtPaymentRow[] = []) {
+  const rawCategory = (d as any).category as keyof typeof DEBT_CATEGORY_TO_UI | undefined;
   return {
     id: d.id,
     acreedor: d.creditor,
@@ -396,6 +407,9 @@ export function mapDebt(d: DebtRow, payments: DebtPaymentRow[] = []) {
       ? new Date(d.due_date).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" })
       : undefined,
     estado: DEBT_STATUS_TO_UI[d.status] ?? "activa",
+    categoria: rawCategory ? (DEBT_CATEGORY_TO_UI[rawCategory] ?? "proveedor") : "proveedor",
+    periodo: (d as any).period ?? undefined,
+    organismo: (d as any).organism ?? undefined,
     tomada: new Date(d.taken_at).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" }),
     saldadaEl: d.settled_at
       ? new Date(d.settled_at).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" })
