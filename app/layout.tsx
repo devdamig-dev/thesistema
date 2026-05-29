@@ -7,6 +7,7 @@ import { ToastProvider } from "@/components/ui/toast";
 import { DeniedToast } from "@/components/shell/denied-toast";
 import { getCurrentUserContext } from "@/lib/data/auth";
 import { getRecentNotifications } from "@/lib/data/notifications";
+import { checkInternalAdmin } from "@/lib/admin/auth";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -30,6 +31,11 @@ export default async function RootLayout({
   const ctx = await getCurrentUserContext();
   const notifications = await getRecentNotifications(10);
   const unreadCount = notifications.filter((n) => !n.read).length;
+  // Sólo agrega el grupo "Interno · GastroPilot" del sidebar cuando el
+  // gate del módulo /admin pasa. Para clientes normales esto siempre
+  // es false → el módulo no se filtra ni aparece en la nav.
+  const internalAdmin = await checkInternalAdmin();
+  const showInternalAdmin = internalAdmin.allowed;
 
   return (
     <html lang="es" className={`${inter.variable} dark`}>
@@ -43,6 +49,7 @@ export default async function RootLayout({
             enabledModules={ctx.enabledModules}
             notifications={notifications}
             unreadCount={unreadCount}
+            showInternalAdmin={showInternalAdmin}
           >
             {children}
           </AppShell>

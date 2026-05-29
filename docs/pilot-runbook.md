@@ -450,6 +450,95 @@ Antes de ejecutar cualquiera de los planes anteriores, asegurarse de que:
 
 ---
 
+## Telemetría interna · `/admin/telemetria`
+
+> Módulo **sólo para el equipo de GastroPilot**. No visible para el
+> cliente del piloto. Útil para saber qué está pasando realmente
+> mientras corre la prueba (qué usa la gente, qué falla, dónde
+> hace fricción).
+
+### Habilitarlo
+
+En Vercel → Project → Settings → Environment Variables:
+
+```env
+ENABLE_INTERNAL_ADMIN=true
+# Opcional: emails (comma-separated) que pueden entrar además del owner/admin.
+INTERNAL_ADMIN_EMAILS=dev@gastropilot.ai,fundador@gastropilot.ai
+```
+
+Tras redeploy:
+
+- Sin el flag → `/admin/telemetria` devuelve **404** y no se filtra en
+  el sidebar del cliente.
+- Con el flag + usuario con rol **owner/admin** o email en la
+  allowlist → la URL responde 200 y aparece el grupo "Interno ·
+  GastroPilot" en el sidebar.
+- Con el flag pero rol no autorizado (ej. `accountant`) →
+  redirige a `/sin-permisos`.
+
+En demo mode + flag activo, el módulo se abre con datos mock
+plausibles — útil para previews.
+
+### Qué muestra
+
+- **17 KPIs** del rango (24h / 7d / 30d):
+  WhatsApp recibidos · IA procesados · aprobaciones / rechazos /
+  baja confianza · facturas (subidas, OCR, aprobadas) · errores
+  OCR / IA · tiempo prom. de aprobación · usuarios activos ·
+  exportes descargados · notificaciones generadas · emails
+  enviados · webhook errors · rate-limit triggers.
+- **5 gráficos**: actividad por día, mensajes WA por tipo,
+  aprobaciones vs rechazos (pie), errores por módulo, top usuarios.
+- **Tabla de eventos** del feed (`activity_logs`) con filtros por
+  fecha, módulo, usuario, estado y texto libre.
+
+### Origen de los datos
+
+| Métrica | Tabla / fuente |
+|---|---|
+| Mensajes WhatsApp | `whatsapp_messages` |
+| IA / extracciones | `ai_extractions` |
+| Facturas / OCR | `invoices`, `invoice_processing_logs` |
+| Tiempo aprobación | `invoices.processing_started_at` → `..._completed_at` |
+| Acciones por usuario | `activity_logs.actor_id` |
+| Exportes | `activity_logs.action ~ '%.exported'` |
+| Emails enviados | `activity_logs.action in ('email.sent','digest.sent')` |
+| Errores webhook | `activity_logs.action = 'webhook.error'` |
+| Rate limit | `activity_logs.action = 'rate_limit.triggered'` |
+| Notificaciones | `notifications` |
+
+> Las acciones `webhook.error`, `rate_limit.triggered`, `digest.sent`
+> y `email.failed` se loguean automáticamente desde
+> `app/api/webhooks/whatsapp/route.ts` y `lib/email/digest.ts`. No
+> requieren migración.
+
+### Cómo usarlo durante el piloto
+
+- **Día 1–2**: validar que llegan mensajes y se crean extracciones.
+  Si "Mensajes WhatsApp" queda en 0 → el webhook no está conectado
+  o el verify token está mal.
+- **Día 3–4**: revisar gráfico "Aprobaciones vs rechazos". Si el
+  ratio de rechazadas + baja confianza > 30 %, el OCR / IA está
+  fallando con el tipo de facturas del cliente. Subir
+  `ANTHROPIC_API_KEY` o cambiar `OCR_PROVIDER` a Mindee.
+- **Día 5–7**: usar "Errores por módulo" + filtro `status=error`
+  en la tabla para hacer triaje rápido. Si hay
+  `rate_limit.triggered` repetidos, revisar si alguien está
+  spammeando el webhook.
+- **Cierre de piloto**: exportar el feed completo desde
+  `/auditoria` (ya filtra por business) y archivarlo junto al
+  reporte del cliente.
+
+### Privacidad
+
+El módulo lee datos del business activo del usuario logueado. **No
+hay cross-business** (RLS sigue aplicando vía el client server-side).
+Para inspeccionar otro business hay que loguearse con un usuario que
+pertenezca a ese business o usar el panel de Supabase directamente.
+
+---
+
 ## Referencias
 
 - Arquitectura por sprint: `docs/backend-sprint-0.md` → `docs/backend-sprint-3.md`

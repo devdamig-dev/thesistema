@@ -17,6 +17,7 @@ export type AppShellProps = {
   enabledModules: ModuleKey[] | null;
   notifications: Notification[];
   unreadCount: number;
+  showInternalAdmin?: boolean;
 };
 
 export function AppShell({
@@ -25,6 +26,7 @@ export function AppShell({
   enabledModules,
   notifications,
   unreadCount,
+  showInternalAdmin = false,
 }: AppShellProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const pathname = usePathname();
@@ -38,7 +40,12 @@ export function AppShell({
     <div className="relative flex min-h-screen">
       <div className="hidden w-64 shrink-0 md:block lg:w-72">
         <div className="sticky top-0 h-screen">
-          <Sidebar role={role} enabledModules={enabledModules} unreadCount={unreadCount} />
+          <Sidebar
+            role={role}
+            enabledModules={enabledModules}
+            unreadCount={unreadCount}
+            showInternalAdmin={showInternalAdmin}
+          />
         </div>
       </div>
 
@@ -64,6 +71,7 @@ export function AppShell({
                 role={role}
                 enabledModules={enabledModules}
                 unreadCount={unreadCount}
+                showInternalAdmin={showInternalAdmin}
               />
               <button
                 onClick={() => setMobileOpen(false)}
