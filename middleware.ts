@@ -85,8 +85,10 @@ export async function middleware(request: NextRequest) {
   }
 
   // Check onboarding: si el business no completó el setup, redirigir.
-  // No aplica a rutas de sistema (/onboarding, /login, /logout, /ayuda, etc).
-  if (user && !isPublic && !isSettingsPath(pathname)) {
+  // No aplica a rutas de sistema (/onboarding, /login, /logout, /ayuda, etc)
+  // ni al módulo interno /admin/* — el gate de admin no depende del
+  // estado de onboarding del business.
+  if (user && !isPublic && !isSettingsPath(pathname) && !pathname.startsWith("/admin")) {
     try {
       const businessId = await resolveBusinessIdFromDb(supabase, user.id);
       if (businessId) {

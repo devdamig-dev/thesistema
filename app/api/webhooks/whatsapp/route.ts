@@ -24,7 +24,33 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isDatabaseMode } from "@/lib/env";
 import { extractFromMessage } from "@/lib/ai/extract";
 import { createNotification } from "@/lib/data/notifications";
+import { logActivity } from "@/lib/data/activity";
 import { rateLimit } from "@/lib/rate-limit";
+
+async function logSystemEvent(
+  action: string,
+  summary: string,
+  data?: Record<string, unknown>,
+) {
+  if (!isDatabaseMode()) return;
+  try {
+    const db = createSupabaseAdminClient() as any;
+    const bizRes = await db.from("businesses").select("id").limit(1).maybeSingle();
+    const biz = bizRes.data as { id: string } | null;
+    if (!biz) return;
+    await logActivity({
+      businessId: biz.id,
+      actorName: "Sistema",
+      actorRole: "system",
+      action,
+      targetType: action.split(".")[0],
+      summary,
+      data,
+    });
+  } catch {
+    // best-effort
+  }
+}
 
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN ?? "gastropilot-dev";
 
@@ -47,6 +73,11 @@ export async function POST(request: NextRequest) {
   const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
   const rl = rateLimit(`webhook:${ip}`, { windowMs: 60_000, max: 60 });
   if (!rl.ok) {
+    await logSystemEvent(
+      "rate_limit.triggered",
+      `Rate limit · webhook IP ${ip} · 60/min`,
+      { ip, remaining: rl.remaining },
+    );
     return NextResponse.json(
       { ok: false, reason: "rate_limited", remaining: rl.remaining },
       { status: 429 },
@@ -57,6 +88,10 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json();
   } catch {
+    await logSystemEvent("webhook.error", "Webhook WhatsApp falló · invalid_json", {
+      ip,
+      error: "invalid_json",
+    });
     return NextResponse.json({ ok: false, reason: "invalid_json" }, { status: 400 });
   }
 
@@ -168,6 +203,11 @@ export async function POST(request: NextRequest) {
       status,
     });
   } catch (error: any) {
+    await logSystemEvent(
+      "webhook.error",
+      `Webhook WhatsApp falló · ${error?.message ?? "unknown_error"}`,
+      { error: error?.message ?? "unknown_error" },
+    );
     return NextResponse.json(
       { ok: false, reason: error?.message ?? "unknown_error" },
       { status: 500 },

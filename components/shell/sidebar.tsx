@@ -18,6 +18,7 @@ import {
   PieChart,
   Receipt,
   Settings,
+  ShieldAlert,
   ShoppingCart,
   Sparkles,
   Users,
@@ -92,17 +93,42 @@ export function Sidebar({
   role,
   enabledModules,
   unreadCount,
+  showInternalAdmin = false,
 }: {
   onNavigate?: () => void;
   role?: Role;
   enabledModules?: ModuleKey[] | null;
   unreadCount?: number;
+  /**
+   * Si true, muestra el grupo "Interno" con `/admin/telemetria`. Sólo
+   * el server layout lo activa cuando `ENABLE_INTERNAL_ADMIN=true`.
+   */
+  showInternalAdmin?: boolean;
 }) {
   const pathname = usePathname();
   const effectiveRole: Role = role ?? "owner";
 
+  const navWithAdmin: NavGroup[] = showInternalAdmin
+    ? [
+        ...NAV,
+        {
+          label: "Interno · GastroPilot",
+          items: [
+            {
+              href: "/admin/telemetria",
+              label: "Telemetría",
+              icon: ShieldAlert,
+              badge: "interno",
+              accent: "ai",
+              systemAlwaysVisible: true,
+            },
+          ],
+        },
+      ]
+    : NAV;
+
   // Filtrar items según permisos del rol + módulos habilitados.
-  const filteredNav = NAV.map((group) => ({
+  const filteredNav = navWithAdmin.map((group) => ({
     ...group,
     items: group.items
       .filter((item) => {

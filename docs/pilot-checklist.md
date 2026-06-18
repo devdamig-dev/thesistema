@@ -1,5 +1,9 @@
 # Checklist de piloto · GastroPilot AI
 
+> Este archivo es el **resumen rápido**. Para la guía completa con
+> pasos numerados, smoke tests, checklist post-deploy, plan de 7 días
+> y métricas a medir → **`docs/pilot-runbook.md`**.
+
 ## Antes de arrancar
 
 ### 1. Crear proyecto en Supabase
@@ -28,8 +32,13 @@ CRON_TOKEN=tu-token-secreto          # Protege los endpoints cron
 supabase db push
 
 # Opción B: SQL Editor en el panel
-# Copiar en orden: 0001 → 0002 → ... → 0010
+# Copiar en orden: 0001 → 0002 → ... → 0011
 ```
+
+> **Nota:** la migración `0011_accounting_categories.sql` agrega
+> categorías de deuda (impuesto / sueldo / alquiler / etc) para los
+> exportables contables. Es opcional para la primera demo pero
+> requerida para el piloto real.
 
 ### 4. Crear primer usuario
 - Authentication → Users → Add user (email + password)
@@ -140,6 +149,15 @@ En Vercel Pro se activan automáticamente. En Hobby sólo 1/día.
 
 ---
 
+## Exportables contables (sprint contable)
+
+- `/compras` → **Exportar compras Excel** · CSV con CUIT, PV, número, subtotal, IVA, total, medio pago, estado IA, adjunto. Apto para IVA Compras.
+- `/ventas` → **Exportar ventas** · CSV con sucursal, canal, comisión PYa, neto, IVA estimado.
+- `/empleados` → **Exportar novedades** · novedades de nómina (horas, faltas, adelantos) para liquidación mensual.
+- `/deudas` → **Exportar deudas** · separado por categoría (impuesto / proveedor / alquiler / etc).
+
+Todos con BOM UTF-8 + separador `;` para abrir directo en Excel-AR.
+
 ## Soporte y debugging
 
 - `/auditoria` → ver todas las acciones del equipo
@@ -148,3 +166,17 @@ En Vercel Pro se activan automáticamente. En Hobby sólo 1/día.
 - `/api/dev/ocr-pipeline?file=carne.pdf` → probar pipeline OCR
 - `activity_logs` en Supabase → audit trail completo
 - `invoice_processing_logs` → trazabilidad del pipeline OCR
+
+---
+
+## Runbook completo
+
+Para el piloto real, seguir **`docs/pilot-runbook.md`** que cubre:
+
+- 11 pasos de setup numerados con casillas
+- 9 smoke tests mínimos antes de entregar
+- Checklist técnico post-deploy
+- Checklist de uso para el dueño / encargado
+- Plan de prueba de 7 días con checkpoints
+- Métricas a medir (adopción, calidad, impacto contable, técnicas)
+- Plan de stop & rollback

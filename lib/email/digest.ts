@@ -10,6 +10,7 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isDatabaseMode } from "@/lib/env";
 import { sendEmail, type SendEmailResult } from "./resend";
+import { logActivity } from "@/lib/data/activity";
 
 export type DigestSummary = {
   businessId: string;
@@ -133,6 +134,25 @@ export async function buildAndSendDigestForBusiness(
     subject,
     html,
     tags: [{ name: "type", value: "daily-digest" }],
+  });
+
+  // Telemetría: registramos el evento para que el módulo /admin/telemetria
+  // muestre "emails enviados" y trace fallas.
+  const ok = !!(emailResult && emailResult.ok);
+  await logActivity({
+    businessId,
+    actorName: "Sistema",
+    actorRole: "system",
+    action: ok ? "digest.sent" : "email.failed",
+    targetType: "email",
+    summary: ok
+      ? `Digest diario enviado a ${recipients.length} destinatario${recipients.length === 1 ? "" : "s"}`
+      : `Digest diario no se envió · ${(emailResult as any)?.reason ?? "unknown"}`,
+    data: {
+      recipients_count: recipients.length,
+      sales_yesterday: summary.salesYesterday,
+      mode: emailResult?.mode ?? "demo",
+    },
   });
 
   return { businessId, recipients, emailResult, data: summary };
