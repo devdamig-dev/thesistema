@@ -51,7 +51,12 @@ exception when duplicate_object then null; end $$;
 do $$ begin
   create type role_key as enum (
     'owner', 'admin', 'manager', 'accountant',
-    'kitchen', 'cashier', 'waiter', 'delivery', 'viewer'
+    'kitchen', 'cashier', 'waiter', 'delivery', 'viewer',
+    -- Valores que históricamente se agregaron en migration 0007.
+    -- Los incluimos en la creación inicial para que Supabase SQL Editor
+    -- pueda correr todo en una sola transacción (PG no permite usar
+    -- enum values recién agregados dentro de la misma tx — error 55P04).
+    'marketing', 'employee'
   );
 exception when duplicate_object then null; end $$;
 
@@ -79,13 +84,19 @@ exception when duplicate_object then null; end $$;
 
 do $$ begin
   create type invoice_lifecycle as enum (
-    'processing', 'needs_review', 'approved', 'sent_to_accountant'
+    'processing', 'needs_review', 'approved', 'sent_to_accountant',
+    -- Valores históricamente agregados en migration 0006. Incluidos
+    -- desde el inicio para soportar Supabase SQL Editor en single tx.
+    'uploaded', 'extracted', 'rejected', 'failed'
   );
 exception when duplicate_object then null; end $$;
 
 do $$ begin
   create type approval_status as enum (
-    'pending', 'needs_review', 'approved', 'rejected'
+    'pending', 'needs_review', 'approved', 'rejected',
+    -- Valor históricamente agregado en migration 0004. Incluido desde
+    -- el inicio para soportar Supabase SQL Editor en single tx.
+    'failed'
   );
 exception when duplicate_object then null; end $$;
 
