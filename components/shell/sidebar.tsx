@@ -122,6 +122,14 @@ export function Sidebar({
               accent: "ai",
               systemAlwaysVisible: true,
             },
+            {
+              href: "/admin/debug",
+              label: "Debug conexión",
+              icon: ShieldAlert,
+              badge: "temp",
+              accent: "ai",
+              systemAlwaysVisible: true,
+            },
           ],
         },
       ]
