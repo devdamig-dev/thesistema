@@ -8,6 +8,7 @@ import { DeniedToast } from "@/components/shell/denied-toast";
 import { getCurrentUserContext } from "@/lib/data/auth";
 import { getRecentNotifications } from "@/lib/data/notifications";
 import { checkInternalAdmin } from "@/lib/admin/auth";
+import { isDatabaseMode } from "@/lib/env";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -26,14 +27,18 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Fetch del contexto en el layout para que todas las páginas tengan
-  // sidebar/topbar correctos. Si Supabase no está, todo cae a demo.
   const ctx = await getCurrentUserContext();
-  const notifications = await getRecentNotifications(10);
+
+  // En database mode una request anónima (por ejemplo /login) no debe tocar
+  // tablas protegidas por RLS. Además de ser innecesario, eso genera errores
+  // de permisos en funciones helper de las policies. Demo mode conserva sus
+  // notificaciones de ejemplo aunque su contexto no sea autenticado.
+  const notifications =
+    isDatabaseMode() && !ctx.isAuthenticated
+      ? []
+      : await getRecentNotifications(10);
   const unreadCount = notifications.filter((n) => !n.read).length;
-  // Sólo agrega el grupo "Interno · GastroPilot" del sidebar cuando el
-  // gate del módulo /admin pasa. Para clientes normales esto siempre
-  // es false → el módulo no se filtra ni aparece en la nav.
+
   const internalAdmin = await checkInternalAdmin();
   const showInternalAdmin = internalAdmin.allowed;
 
