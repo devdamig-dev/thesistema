@@ -6,7 +6,7 @@ import {
   getTelemetryMetrics,
   type TelemetryRange,
   type TelemetryEventsFilters,
-} from "@/lib/admin/telemetry";
+} from "@/lib/admin/telemetry-database";
 import TelemetriaClient from "./telemetria-client";
 
 const VALID_RANGES: TelemetryRange[] = ["24h", "7d", "30d"];
