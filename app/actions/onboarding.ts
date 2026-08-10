@@ -73,15 +73,20 @@ export async function saveBranchStep(payload: {
   if (!businessId) return { ok: false, persisted: false, error: "no_business" };
 
   for (const b of payload.branches) {
-    await db.from("branches").upsert(
+    const { error } = await db.from("branches").upsert(
       {
         business_id: businessId,
         name: b.name,
         address: b.address ?? null,
+        branch_type: b.type,
         is_main: b.isMain,
       },
       { onConflict: "business_id,name" },
     );
+    if (error) {
+      console.error("saveBranchStep failed", error);
+      return { ok: false, persisted: false, error: "branch_save_failed" };
+    }
   }
 
   await db.from("businesses").update({ onboarding_step: 2 }).eq("id", businessId);
@@ -124,7 +129,8 @@ export async function saveTeamStep(): Promise<Result> {
 }
 
 /* ============================================================================
-   STEP 5: WhatsApp — mock setup, mark step
+   STEP 5: WhatsApp — mark onboarding progress only.
+   Connection status remains false until a real Meta/WhatsApp integration succeeds.
    ============================================================================ */
 
 export async function saveWhatsappStep(): Promise<Result> {
@@ -157,7 +163,6 @@ export async function seedIngredientsAndProducts(
   const seed = SEEDS[industry];
   if (!seed) return { ok: false, persisted: false, error: "unknown_industry" };
 
-  // Ingredients upsert
   for (const ing of seed.ingredients) {
     await db.from("ingredients").upsert(
       { business_id: businessId, name: ing.name, unit: ing.unit, avg_unit_cost: ing.avg_unit_cost },
@@ -165,7 +170,6 @@ export async function seedIngredientsAndProducts(
     );
   }
 
-  // Products upsert
   for (const prod of seed.products) {
     await db.from("products").upsert(
       {
