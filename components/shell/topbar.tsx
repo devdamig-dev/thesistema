@@ -10,7 +10,6 @@ import {
   MessageSquareText,
   Search,
   Sparkles,
-  X,
 } from "lucide-react";
 import Link from "next/link";
 import { useState, useTransition, type ReactNode } from "react";
@@ -30,10 +29,14 @@ export function Topbar({
   onOpenNav,
   notifications,
   unreadCount,
+  databaseMode,
+  whatsappConnected,
 }: {
   onOpenNav: () => void;
   notifications: Notification[];
   unreadCount: number;
+  databaseMode: boolean;
+  whatsappConnected: boolean;
 }) {
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-bg/80 px-4 backdrop-blur-xl md:px-6">
@@ -61,10 +64,22 @@ export function Topbar({
       <div className="ml-auto flex items-center gap-2">
         <AskAIPill />
         <NotificationsBell notifications={notifications} unreadCount={unreadCount} />
-        <button className="hidden h-9 items-center gap-2 rounded-lg border border-success-500/30 bg-success-500/10 px-2.5 text-xs font-medium text-success-400 md:inline-flex">
+        <button
+          className={cn(
+            "hidden h-9 items-center gap-2 rounded-lg border px-2.5 text-xs font-medium md:inline-flex",
+            whatsappConnected
+              ? "border-success-500/30 bg-success-500/10 text-success-400"
+              : "border-line bg-bg-subtle text-ink-muted",
+          )}
+        >
           <MessageSquareText className="h-3.5 w-3.5" />
-          WhatsApp conectado
-          <span className="ml-1 h-1.5 w-1.5 rounded-full bg-success-500 animate-pulseDot" />
+          WhatsApp {databaseMode ? (whatsappConnected ? "conectado" : "pendiente") : "conectado"}
+          <span
+            className={cn(
+              "ml-1 h-1.5 w-1.5 rounded-full",
+              whatsappConnected || !databaseMode ? "bg-success-500 animate-pulseDot" : "bg-ink-subtle",
+            )}
+          />
         </button>
       </div>
     </header>
@@ -85,10 +100,6 @@ function AskAIPill() {
     </div>
   );
 }
-
-/* ============================================================================
-   NOTIFICATIONS BELL + DROPDOWN
-   ============================================================================ */
 
 const TONE_ICON: Record<Notification["tone"], ReactNode> = {
   info: <Info className="h-3.5 w-3.5 text-ai-400" />,
@@ -153,7 +164,6 @@ function NotificationsBell({
       <AnimatePresence>
         {open && (
           <>
-            {/* backdrop para cerrar al click fuera */}
             <button
               aria-hidden
               tabIndex={-1}
@@ -171,9 +181,7 @@ function NotificationsBell({
                 <div>
                   <div className="text-sm font-semibold text-ink">Notificaciones</div>
                   <div className="text-[11px] text-ink-subtle">
-                    {unreadCount > 0
-                      ? `${unreadCount} sin leer`
-                      : "Estás al día"}
+                    {unreadCount > 0 ? `${unreadCount} sin leer` : "Estás al día"}
                   </div>
                 </div>
                 {unreadCount > 0 && (
@@ -194,9 +202,7 @@ function NotificationsBell({
                       <Bell className="h-4 w-4" />
                     </div>
                     <p className="text-sm text-ink">Sin notificaciones</p>
-                    <p className="text-[11px] text-ink-muted">
-                      Te avisamos cuando algo necesite tu atención.
-                    </p>
+                    <p className="text-[11px] text-ink-muted">Te avisamos cuando algo necesite tu atención.</p>
                   </li>
                 )}
                 {notifications.map((n) => (
@@ -219,11 +225,7 @@ function NotificationsBell({
                           </p>
                           {!n.read && <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" />}
                         </div>
-                        {n.detail && (
-                          <p className="mt-0.5 text-[11px] leading-relaxed text-ink-muted">
-                            {n.detail}
-                          </p>
-                        )}
+                        {n.detail && <p className="mt-0.5 text-[11px] leading-relaxed text-ink-muted">{n.detail}</p>}
                         <div className="mt-2 flex items-center gap-2 text-[10px] text-ink-subtle">
                           <span>{relativeShort(n.createdAt)}</span>
                           {n.href && (
