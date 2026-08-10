@@ -22,10 +22,6 @@ async function getBusinessId(db: any): Promise<string | null> {
   return (res.data as { business_id: string } | null)?.business_id ?? null;
 }
 
-/* ============================================================================
-   STEP 1: Business basics
-   ============================================================================ */
-
 export async function saveBusinessStep(payload: {
   name: string;
   taxId?: string;
@@ -58,10 +54,6 @@ export async function saveBusinessStep(payload: {
   return { ok: true, persisted: true };
 }
 
-/* ============================================================================
-   STEP 2: Branches
-   ============================================================================ */
-
 export async function saveBranchStep(payload: {
   branches: { name: string; address?: string; type: string; isMain: boolean }[];
 }): Promise<Result> {
@@ -73,15 +65,20 @@ export async function saveBranchStep(payload: {
   if (!businessId) return { ok: false, persisted: false, error: "no_business" };
 
   for (const b of payload.branches) {
-    await db.from("branches").upsert(
+    const { error } = await db.from("branches").upsert(
       {
         business_id: businessId,
         name: b.name,
         address: b.address ?? null,
+        branch_type: b.type,
         is_main: b.isMain,
       },
       { onConflict: "business_id,name" },
     );
+    if (error) {
+      console.error("saveBranchStep failed", error);
+      return { ok: false, persisted: false, error: "branch_save_failed" };
+    }
   }
 
   await db.from("businesses").update({ onboarding_step: 2 }).eq("id", businessId);
@@ -89,11 +86,7 @@ export async function saveBranchStep(payload: {
   return { ok: true, persisted: true };
 }
 
-/* ============================================================================
-   STEP 3: Channels — just mark step, channels are toggles in /ajustes
-   ============================================================================ */
-
-export async function saveChannelsStep(): Promise<Result> {
+export async function saveChannelsStep(channels: string[] = []): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
   const supabase = createSupabaseServerClient();
   if (!supabase) return { ok: true, persisted: false };
@@ -101,14 +94,15 @@ export async function saveChannelsStep(): Promise<Result> {
   const businessId = await getBusinessId(db);
   if (!businessId) return { ok: false, persisted: false, error: "no_business" };
 
-  await db.from("businesses").update({ onboarding_step: 3 }).eq("id", businessId);
+  const { error } = await db
+    .from("businesses")
+    .update({ onboarding_step: 3, sales_channels: channels })
+    .eq("id", businessId);
+  if (error) return { ok: false, persisted: false, error: "channels_save_failed" };
+
   revalidatePath("/onboarding");
   return { ok: true, persisted: true };
 }
-
-/* ============================================================================
-   STEP 4: Team — invites handled by existing inviteUserAction
-   ============================================================================ */
 
 export async function saveTeamStep(): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
@@ -123,10 +117,6 @@ export async function saveTeamStep(): Promise<Result> {
   return { ok: true, persisted: true };
 }
 
-/* ============================================================================
-   STEP 5: WhatsApp — mock setup, mark step
-   ============================================================================ */
-
 export async function saveWhatsappStep(): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
   const supabase = createSupabaseServerClient();
@@ -139,10 +129,6 @@ export async function saveWhatsappStep(): Promise<Result> {
   revalidatePath("/onboarding");
   return { ok: true, persisted: true };
 }
-
-/* ============================================================================
-   STEP 6: Seed ingredientes + productos por rubro
-   ============================================================================ */
 
 export async function seedIngredientsAndProducts(
   industry: Industry,
@@ -157,7 +143,6 @@ export async function seedIngredientsAndProducts(
   const seed = SEEDS[industry];
   if (!seed) return { ok: false, persisted: false, error: "unknown_industry" };
 
-  // Ingredients upsert
   for (const ing of seed.ingredients) {
     await db.from("ingredients").upsert(
       { business_id: businessId, name: ing.name, unit: ing.unit, avg_unit_cost: ing.avg_unit_cost },
@@ -165,7 +150,6 @@ export async function seedIngredientsAndProducts(
     );
   }
 
-  // Products upsert
   for (const prod of seed.products) {
     await db.from("products").upsert(
       {
@@ -184,10 +168,6 @@ export async function seedIngredientsAndProducts(
   revalidatePath("/onboarding");
   return { ok: true, persisted: true };
 }
-
-/* ============================================================================
-   STEP 7: Mark onboarding as completed
-   ============================================================================ */
 
 export async function completeOnboarding(): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
