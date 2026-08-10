@@ -4,14 +4,19 @@
  * Flujo:
  *   1. Verifica firma/token (GET).
  *   2. Recibe POST con payload simplificado o Cloud API.
- *   3. Inserta el mensaje en `whatsapp_messages`.
- *   4. Llama a la IA (`extractFromMessage`) para extraer campos.
- *   5. Inserta el resultado en `ai_extractions` con estado pending /
+ *   3. Resuelve el negocio por el número receptor configurado.
+ *   4. Inserta el mensaje en `whatsapp_messages`.
+ *   5. Llama a la IA (`extractFromMessage`) para extraer campos.
+ *   6. Inserta el resultado en `ai_extractions` con estado pending /
  *      needs_review / failed según confidence y fuente.
- *   6. Devuelve 200 con `message_id` y `extraction_id`.
+ *   7. Devuelve 200 con `message_id` y `extraction_id`.
  *
  * En modo demo, devolvemos 200 sin persistir para que tests con curl
  * sigan funcionando.
+ *
+ * IMPORTANTE: en database mode nunca elegimos "el primer negocio".
+ * Un mensaje sólo se persiste si el número receptor coincide de forma
+ * unívoca con un business que tenga WhatsApp marcado como conectado.
  *
  * Variables de entorno:
  *   META_VERIFY_TOKEN    — token compartido para Meta (default: gastropilot-dev).
@@ -28,18 +33,15 @@ import { logActivity } from "@/lib/data/activity";
 import { rateLimit } from "@/lib/rate-limit";
 
 async function logSystemEvent(
+  businessId: string | null,
   action: string,
   summary: string,
   data?: Record<string, unknown>,
 ) {
-  if (!isDatabaseMode()) return;
+  if (!isDatabaseMode() || !businessId) return;
   try {
-    const db = createSupabaseAdminClient() as any;
-    const bizRes = await db.from("businesses").select("id").limit(1).maybeSingle();
-    const biz = bizRes.data as { id: string } | null;
-    if (!biz) return;
     await logActivity({
-      businessId: biz.id,
+      businessId,
       actorName: "Sistema",
       actorRole: "system",
       action,
@@ -48,11 +50,44 @@ async function logSystemEvent(
       data,
     });
   } catch {
-    // best-effort
+    // best-effort: nunca atribuir un evento a otro negocio sólo para loguearlo.
   }
 }
 
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN ?? "gastropilot-dev";
+
+function normalizePhone(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const digits = value.replace(/\D/g, "");
+  return digits.length >= 8 ? digits : null;
+}
+
+async function resolveBusinessByRecipient(
+  db: any,
+  recipientPhone: string | null,
+): Promise<
+  | { ok: true; businessId: string }
+  | { ok: false; reason: "recipient_not_identified" | "whatsapp_not_configured" | "ambiguous_recipient" }
+> {
+  const recipient = normalizePhone(recipientPhone);
+  if (!recipient) return { ok: false, reason: "recipient_not_identified" };
+
+  const res = await db
+    .from("businesses")
+    .select("id, whatsapp_phone")
+    .eq("whatsapp_connected", true)
+    .not("whatsapp_phone", "is", null);
+
+  if (res.error) throw res.error;
+
+  const matches = ((res.data ?? []) as { id: string; whatsapp_phone: string | null }[]).filter(
+    (business) => normalizePhone(business.whatsapp_phone) === recipient,
+  );
+
+  if (matches.length === 0) return { ok: false, reason: "whatsapp_not_configured" };
+  if (matches.length > 1) return { ok: false, reason: "ambiguous_recipient" };
+  return { ok: true, businessId: matches[0].id };
+}
 
 // ---------- GET — verificación inicial de Meta ----------
 export async function GET(request: NextRequest) {
@@ -69,15 +104,10 @@ export async function GET(request: NextRequest) {
 
 // ---------- POST — recibe mensajes ----------
 export async function POST(request: NextRequest) {
-  // Rate limit: 60 requests per minute per IP.
   const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
   const rl = rateLimit(`webhook:${ip}`, { windowMs: 60_000, max: 60 });
   if (!rl.ok) {
-    await logSystemEvent(
-      "rate_limit.triggered",
-      `Rate limit · webhook IP ${ip} · 60/min`,
-      { ip, remaining: rl.remaining },
-    );
+    // Antes de parsear el payload no conocemos el tenant. No inventamos uno.
     return NextResponse.json(
       { ok: false, reason: "rate_limited", remaining: rl.remaining },
       { status: 429 },
@@ -88,17 +118,13 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json();
   } catch {
-    await logSystemEvent("webhook.error", "Webhook WhatsApp falló · invalid_json", {
-      ip,
-      error: "invalid_json",
-    });
+    // Un JSON inválido tampoco permite atribuir el evento a un negocio de forma segura.
     return NextResponse.json({ ok: false, reason: "invalid_json" }, { status: 400 });
   }
 
+  const incoming = normalizeIncoming(body);
+
   if (!isDatabaseMode()) {
-    // Modo demo: corremos la extracción para que el caller pueda ver
-    // lo que la IA detectó, pero no persistimos.
-    const incoming = normalizeIncoming(body);
     const extraction = await extractFromMessage(incoming.raw, incoming.sender_name);
     return NextResponse.json({
       ok: true,
@@ -108,25 +134,23 @@ export async function POST(request: NextRequest) {
     });
   }
 
+  let businessId: string | null = null;
   try {
     const supabase = createSupabaseAdminClient();
     const db = supabase as any;
 
-    // En sprint próximo: mapear business_id por número receptor de Meta.
-    // Por ahora tomamos el primer business (mono-tenant inicial).
-    const bizRes = await db.from("businesses").select("id").limit(1).maybeSingle();
-    const biz = bizRes.data as { id: string } | null;
-    if (!biz) {
-      return NextResponse.json({ ok: false, reason: "no_business" }, { status: 404 });
+    const resolved = await resolveBusinessByRecipient(db, incoming.recipient_phone);
+    if (!resolved.ok) {
+      const status = resolved.reason === "ambiguous_recipient" ? 409 : 422;
+      return NextResponse.json({ ok: false, reason: resolved.reason }, { status });
     }
+    businessId = resolved.businessId;
 
-    const incoming = normalizeIncoming(body);
-
-    // 1) Persistir el mensaje
+    // 1) Persistir el mensaje en el tenant resuelto.
     const msgRes = await db
       .from("whatsapp_messages")
       .insert({
-        business_id: biz.id,
+        business_id: businessId,
         sender_name: incoming.sender_name,
         sender_role: incoming.sender_role,
         channel: incoming.channel,
@@ -138,16 +162,19 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
     const msg = msgRes.data as { id: string } | null;
     if (!msg) {
+      await logSystemEvent(businessId, "webhook.error", "No se pudo persistir el mensaje de WhatsApp", {
+        error: msgRes.error?.message ?? "insert_message_failed",
+      });
       return NextResponse.json(
         { ok: false, reason: msgRes.error?.message ?? "insert_message_failed" },
         { status: 500 },
       );
     }
 
-    // 2) Extraer con IA
+    // 2) Extraer con IA.
     const extraction = await extractFromMessage(incoming.raw, incoming.sender_name);
 
-    // 3) Estado inicial según confidence y fuente
+    // 3) Estado inicial según confidence y fuente.
     const status =
       extraction.source === "failed" || extraction.confidence < 0.4
         ? "failed"
@@ -155,12 +182,12 @@ export async function POST(request: NextRequest) {
           ? "needs_review"
           : "pending";
 
-    // 4) Persistir extracción
+    // 4) Persistir extracción en el mismo tenant.
     const extractionRes = await db
       .from("ai_extractions")
       .insert({
         message_id: msg.id,
-        business_id: biz.id,
+        business_id: businessId,
         type: extraction.movement_type,
         fields: extraction.detected_fields,
         missing: extraction.missing_fields,
@@ -174,9 +201,8 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
     const extractionRow = extractionRes.data as { id: string } | null;
 
-    // Crear notificación in-app para que el equipo vea que llegó algo.
     await createNotification({
-      businessId: biz.id,
+      businessId,
       tone:
         status === "failed"
           ? "danger"
@@ -204,6 +230,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: any) {
     await logSystemEvent(
+      businessId,
       "webhook.error",
       `Webhook WhatsApp falló · ${error?.message ?? "unknown_error"}`,
       { error: error?.message ?? "unknown_error" },
@@ -220,17 +247,21 @@ function normalizeIncoming(payload: any): {
   sender_role: string;
   channel: "text" | "audio" | "image" | "document";
   raw: string;
+  recipient_phone: string | null;
 } {
-  // Payload simplificado (para curl/test).
+  // Payload simplificado para curl/test. En database mode debe incluir `to`
+  // (o `recipient` / `business_phone`) para poder resolver el tenant.
   if (typeof payload?.text === "string") {
     return {
       sender_name: payload.from ?? "Sin nombre",
       sender_role: payload.role ?? "Equipo",
       channel: payload.channel ?? "text",
       raw: payload.text,
+      recipient_phone: payload.to ?? payload.recipient ?? payload.business_phone ?? null,
     };
   }
-  // Cloud API real (parseo parcial — completar en sprint próximo).
+
+  // Cloud API real: Meta incluye el número receptor en value.metadata.display_phone_number.
   const change = payload?.entry?.[0]?.changes?.[0]?.value;
   const message = change?.messages?.[0];
   const contact = change?.contacts?.[0];
@@ -239,5 +270,6 @@ function normalizeIncoming(payload: any): {
     sender_role: "Equipo",
     channel: (message?.type as any) ?? "text",
     raw: message?.text?.body ?? "[mensaje no textual]",
+    recipient_phone: change?.metadata?.display_phone_number ?? null,
   };
 }
