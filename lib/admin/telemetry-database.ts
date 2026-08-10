@@ -297,8 +297,8 @@ export async function getTelemetryDaily(range: TelemetryRange): Promise<Telemetr
 
     const errors = new Map<string, number>();
     for (const row of activityRows.filter((item) => isErrorAction(item.action))) {
-      const module = row.target_type ?? row.action.split(".")[0] ?? "system";
-      errors.set(module, (errors.get(module) ?? 0) + 1);
+      const moduleName = row.target_type ?? row.action.split(".")[0] ?? "system";
+      errors.set(moduleName, (errors.get(moduleName) ?? 0) + 1);
     }
 
     const usage = new Map<string, { role: string; count: number }>();
@@ -318,7 +318,7 @@ export async function getTelemetryDaily(range: TelemetryRange): Promise<Telemetr
         { name: "Rechazadas", value: rejected, tone: "danger" },
       ],
       errorsByModule: [...errors.entries()]
-        .map(([module, count]) => ({ module, count }))
+        .map(([moduleName, count]) => ({ module: moduleName, count }))
         .sort((a, b) => b.count - a.count),
       usageByUser: [...usage.entries()]
         .map(([user, value]) => ({ user, role: value.role, count: value.count }))
