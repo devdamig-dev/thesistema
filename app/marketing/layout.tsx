@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { Sparkles, Users } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { isDatabaseMode } from "@/lib/env";
 import { marketing } from "@/lib/data";
 import { SectionHeader } from "@/components/ui/section-header";
@@ -11,8 +11,7 @@ import { Button } from "@/components/ui/button";
 export default async function MarketingLayout({ children }: { children: ReactNode }) {
   if (!isDatabaseMode()) return children;
 
-  const [summary, campaigns, insights, audiences] = await Promise.all([
-    marketing.summary(),
+  const [campaigns, insights, audiences] = await Promise.all([
     marketing.campaigns(),
     marketing.insights(),
     marketing.audiences(),
@@ -26,11 +25,10 @@ export default async function MarketingLayout({ children }: { children: ReactNod
         description="No mostramos oportunidades, campañas, audiencias ni calendarios de ejemplo en database mode."
       />
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <KpiCard label="Campañas" value={String(campaigns.length)} tone="brand" />
         <KpiCard label="Audiencias" value={String(audiences.length)} />
         <KpiCard label="Insights" value={String(insights.length)} />
-        <KpiCard label="Clientes activos" value={String(summary.clientesActivos ?? 0)} icon={<Users />} />
       </div>
 
       <Card>
