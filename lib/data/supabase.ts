@@ -4,9 +4,8 @@
  * Cada función:
  *   1. Si no hay client (modo demo o env mal configurado) → delega al demo.
  *   2. Hace la query a Supabase con cliente server-side.
- *   3. Si la query falla o devuelve vacío → delega al demo como fallback.
- *      (Así la UI nunca queda en blanco en una demo recién seedeada o
- *       con tablas todavía vacías para algunos módulos.)
+ *   3. En database mode, una query vacía devuelve un estado vacío real.
+ *      Los datos demo sólo se usan cuando no existe un cliente Supabase.
  *   4. Mapea las filas a la estructura que la UI ya consume.
  *
  * En Sprint 1 cubrimos las entidades ya seedeadas:
@@ -42,6 +41,12 @@ import {
 
 type Tables = Database["public"]["Tables"];
 
+const EMPTY_DASHBOARD_KPIS = { ventasHoy: 0, ventasHoyDelta: 0, ventasMes: 0, ventasMesDelta: 0, margenEstimado: 0, margenDelta: 0, costosMes: 0, costosDelta: 0 };
+const EMPTY_TODAY_SNAPSHOT = { ventasHoy: 0, tickets: 0, ticketProm: 0, movimientosPendientes: 0, margenHoy: 0, costoHoyPct: 0 };
+const EMPTY_SPARKLINES = { ventasHoy: [], ventasMes: [], margen: [], costos: [] };
+const EMPTY_BALANCE = { ventasMes: 0, comprasMes: 0, gastosMes: 0, sueldosMes: 0, retirosMes: 0, deudasPendientes: 0, pagosDeudaMes: 0, stockValorizado: 0, cajaEstimada: 0, margenBrutoPct: 0, resultadoOperativo: 0, resultadoNeto: 0 };
+const EMPTY_GROWTH_SUMMARY = { clientesActivos: 0, clientesNuevos: 0, tasaRetorno: 0, ticketPromedio: 0 };
+
 // ---------- BUSINESS ----------
 export const business = {
   async getCurrent() {
@@ -55,7 +60,7 @@ export const business = {
       .limit(1)
       .maybeSingle();
     const member = memberRes.data as Pick<Tables["business_members"]["Row"], "business_id"> | null;
-    if (memberRes.error || !member) return demo.business.getCurrent();
+    if (memberRes.error || !member) return null;
 
     // 2) Detalles del business.
     const bizRes = await supabase
@@ -64,7 +69,7 @@ export const business = {
       .eq("id", member.business_id)
       .maybeSingle();
     const biz = bizRes.data as Pick<Tables["businesses"]["Row"], "name" | "organization_id"> | null;
-    if (bizRes.error || !biz) return demo.business.getCurrent();
+    if (bizRes.error || !biz) return null;
 
     // 3) Organization (para plan).
     const orgRes = await supabase
@@ -92,7 +97,7 @@ export const business = {
       .maybeSingle();
     const profile = profileRes.data as Pick<Tables["profiles"]["Row"], "full_name"> | null;
 
-    if (!org) return demo.business.getCurrent();
+    if (!org) return null;
 
     return mapBusiness(
       { name: org.name, plan: org.plan },
@@ -104,7 +109,17 @@ export const business = {
 };
 
 // ---------- DASHBOARD (todavía 100% mock) ----------
-export const dashboard = demo.dashboard;
+export const dashboard = {
+  async getKpis() { return EMPTY_DASHBOARD_KPIS; },
+  async getTodaySnapshot() { return EMPTY_TODAY_SNAPSHOT; },
+  async getKpiSparklines() { return EMPTY_SPARKLINES; },
+  async getInsights() { return []; },
+  async getAttentionItems() { return []; },
+  async getOperationalIntelligence() { return []; },
+  async getSalesByDay() { return []; },
+  async getExpensesByCategory() { return []; },
+  async getRecentActivity() { return []; },
+};
 
 // ---------- INBOX (Sprint 2 · real) ----------
 export const inbox = {
@@ -135,7 +150,7 @@ export const inbox = {
     }
     const msgRes = await msgQuery;
     const messages = (msgRes.data as Tables["whatsapp_messages"]["Row"][] | null) ?? [];
-    if (msgRes.error || messages.length === 0) return demo.inbox.list();
+    if (msgRes.error || messages.length === 0) return [];
 
     // 2) Extracciones asociadas (un join client-side simple)
     const messageIds = messages.map((m) => m.id);
@@ -153,7 +168,7 @@ export const inbox = {
     // Por ahora las conversaciones bidireccionales viven en mock-data.
     // Cuando integremos respuestas reales del copiloto en Sprint 3,
     // las leemos de una nueva tabla `whatsapp_conversation_turns`.
-    return demo.inbox.getConversation(messageId);
+    return createSupabaseServerClient() ? [] : demo.inbox.getConversation(messageId);
   },
 };
 
@@ -178,7 +193,7 @@ export const invoices = {
     }
     const res = await query;
     const rows = (res.data as Tables["invoices"]["Row"][] | null) ?? [];
-    if (res.error || rows.length === 0) return demo.invoices.list();
+    if (res.error || rows.length === 0) return [];
 
     // Joinear suppliers para nombre legible
     const supplierIds = [...new Set(rows.map((r) => r.supplier_id).filter(Boolean))] as string[];
@@ -213,7 +228,7 @@ export const closures = {
     }
     const res = await query;
     const rows = (res.data as Tables["daily_closures"]["Row"][] | null) ?? [];
-    if (res.error || rows.length === 0) return demo.closures.list();
+    if (res.error || rows.length === 0) return [];
     return rows.map(mapDailyClosure);
   },
 };
@@ -230,14 +245,14 @@ export const products = {
       .order("category")
       .order("name");
     const rows = res.data as Tables["products"]["Row"][] | null;
-    if (res.error || !rows?.length) return demo.products.list();
+    if (res.error || !rows?.length) return [];
     return rows.map(mapProduct);
   },
-  getRecipe: demo.products.getRecipe,
-  getCostHistory: demo.products.getCostHistory,
-  getRecommendations: demo.products.getRecommendations,
-  getCostingAlerts: demo.products.getCostingAlerts,
-  getIngredientCostHistory: demo.products.getIngredientCostHistory,
+  async getRecipe(name: string) { return createSupabaseServerClient() ? [] : demo.products.getRecipe(name); },
+  async getCostHistory(name: string) { return createSupabaseServerClient() ? undefined : demo.products.getCostHistory(name); },
+  async getRecommendations(name: string) { return createSupabaseServerClient() ? [] : demo.products.getRecommendations(name); },
+  async getCostingAlerts() { return createSupabaseServerClient() ? [] : demo.products.getCostingAlerts(); },
+  async getIngredientCostHistory() { return createSupabaseServerClient() ? [] : demo.products.getIngredientCostHistory(); },
 };
 
 // ---------- VENTAS · DB con branch filtering ----------
@@ -266,17 +281,17 @@ async function loadSalesRows(): Promise<Tables["sales"]["Row"][] | null> {
 export const sales = {
   async byChannel() {
     const rows = await loadSalesRows();
-    if (!rows || rows.length === 0) return demo.sales.byChannel();
+    if (!rows || rows.length === 0) return [];
     return aggregateSalesByChannel(rows);
   },
   async daily() {
     const rows = await loadSalesRows();
-    if (!rows || rows.length === 0) return demo.sales.daily();
+    if (!rows || rows.length === 0) return [];
     return aggregateDailySalesTable(rows).slice(0, 7);
   },
   async byDay() {
     const rows = await loadSalesRows();
-    if (!rows || rows.length === 0) return demo.sales.byDay();
+    if (!rows || rows.length === 0) return [];
     return aggregateSalesByDay(rows).slice(-11);
   },
 };
@@ -284,14 +299,14 @@ export const sales = {
 // ---------- COMPRAS ----------
 export const purchases = {
   async list() {
-    return demo.purchases.list();
+    return createSupabaseServerClient() ? [] : demo.purchases.list();
   },
   async topSuppliers() {
     const supabase = createSupabaseServerClient();
     if (!supabase) return demo.purchases.topSuppliers();
     const res = await supabase.from("suppliers").select("*").order("name");
     const rows = res.data as Tables["suppliers"]["Row"][] | null;
-    if (res.error || !rows?.length) return demo.purchases.topSuppliers();
+    if (res.error || !rows?.length) return [];
     return rows.map(mapSupplier);
   },
 };
@@ -306,10 +321,13 @@ export const expenses = {
       .select("*")
       .order("amount", { ascending: false });
     const rows = res.data as Tables["expenses"]["Row"][] | null;
-    if (res.error || !rows?.length) return demo.expenses.fixed();
+    if (res.error || !rows?.length) return [];
     return rows.map(mapExpense);
   },
-  breakEven: demo.expenses.breakEven,
+  async breakEven() {
+    if (!createSupabaseServerClient()) return demo.expenses.breakEven();
+    return { costosFijos: 0, margenContribucion: 0, puntoEquilibrio: 0, ventaActual: 0 };
+  },
 };
 
 // ---------- STOCK · DB con branch filtering ----------
@@ -328,7 +346,7 @@ export const stock = {
     }
     const res = await query;
     const rows = (res.data as Tables["stock_items"]["Row"][] | null) ?? [];
-    if (res.error || rows.length === 0) return demo.stock.list();
+    if (res.error || rows.length === 0) return [];
 
     // Joinear ingredients para nombre y unidad
     const ingIds = [...new Set(rows.map((r) => r.ingredient_id))];
@@ -363,13 +381,13 @@ export const employees = {
       .eq("active", true)
       .order("full_name");
     const rows = res.data as Tables["employees"]["Row"][] | null;
-    if (res.error || !rows?.length) return demo.employees.list();
+    if (res.error || !rows?.length) return [];
     return rows.map(mapEmployee);
   },
-  laborStats: demo.employees.laborStats,
-  weeklyShifts: demo.employees.weeklyShifts,
-  alerts: demo.employees.alerts,
-  laborByDay: demo.employees.laborByDay,
+  async laborStats() { return createSupabaseServerClient() ? [] : demo.employees.laborStats(); },
+  async weeklyShifts() { return createSupabaseServerClient() ? [] : demo.employees.weeklyShifts(); },
+  async alerts() { return createSupabaseServerClient() ? [] : demo.employees.alerts(); },
+  async laborByDay() { return createSupabaseServerClient() ? [] : demo.employees.laborByDay(); },
 };
 
 // ---------- CLIENTES ----------
@@ -382,13 +400,20 @@ export const customers = {
       .select("*")
       .order("total_spend", { ascending: false });
     const rows = res.data as Tables["customers"]["Row"][] | null;
-    if (res.error || !rows?.length) return demo.customers.list();
+    if (res.error || !rows?.length) return [];
     return rows.map(mapCustomer);
   },
 };
 
 // ---------- MARKETING (sprint próximo: tabla campaigns ya existe) ----------
-export const marketing = demo.marketing;
+export const marketing = {
+  async summary() { return createSupabaseServerClient() ? EMPTY_GROWTH_SUMMARY : demo.marketing.summary(); },
+  async insights() { return createSupabaseServerClient() ? [] : demo.marketing.insights(); },
+  async campaigns() { return createSupabaseServerClient() ? [] : demo.marketing.campaigns(); },
+  async audiences() { return createSupabaseServerClient() ? [] : demo.marketing.audiences(); },
+  async bestHours() { return createSupabaseServerClient() ? [] : demo.marketing.bestHours(); },
+  async copies() { return createSupabaseServerClient() ? [] : demo.marketing.copies(); },
+};
 
 // ---------- DEUDAS (Sprint 3 · real con fallback) ----------
 export const debts = {
@@ -402,7 +427,7 @@ export const debts = {
       .order("status")
       .order("due_date", { ascending: true, nullsFirst: false });
     const rows = dRes.data as Tables["debts"]["Row"][] | null;
-    if (dRes.error || !rows?.length) return demo.debts.list();
+    if (dRes.error || !rows?.length) return [];
 
     const payRes = await db
       .from("debt_payments")
@@ -433,7 +458,7 @@ export const debts = {
     const rows = res.data as
       | Pick<Tables["debts"]["Row"], "pending_amount" | "status" | "due_date" | "creditor">[]
       | null;
-    if (res.error || !rows?.length) return demo.debts.kpis();
+    if (res.error || !rows?.length) return { totalDeuda: 0, vencidas: 0, proximoVencimiento: "—", impactoMensual: 0 };
     const total = rows.reduce((s, r) => s + Number(r.pending_amount), 0);
     const overdue = rows
       .filter((r) => r.status === "overdue")
@@ -468,7 +493,7 @@ export const balances = {
       .eq("period_month", isoMonth)
       .maybeSingle();
     const row = res.data as Tables["balance_snapshots"]["Row"] | null;
-    if (!row) return demo.balances.snapshot();
+    if (!row) return EMPTY_BALANCE;
     return {
       ventasMes: Number(row.sales_total),
       comprasMes: Number(row.purchases_total),
@@ -484,14 +509,14 @@ export const balances = {
       resultadoNeto: row.net_result != null ? Number(row.net_result) : 0,
     };
   },
-  monthly: demo.balances.monthly,
-  recommendations: demo.balances.recommendations,
+  async monthly() { return createSupabaseServerClient() ? [] : demo.balances.monthly(); },
+  async recommendations() { return createSupabaseServerClient() ? [] : demo.balances.recommendations(); },
 };
 
 // ---------- REPORTES — recomendaciones IA reales si hay seed ----------
 export const reports = {
-  insights: demo.reports.insights,
-  suggestions: demo.reports.suggestions,
+  async insights() { return createSupabaseServerClient() ? [] : demo.reports.insights(); },
+  async suggestions() { return createSupabaseServerClient() ? [] : demo.reports.suggestions(); },
   async weeklyDecisions() {
     const supabase = createSupabaseServerClient();
     if (!supabase) return demo.reports.weeklyDecisions();
@@ -502,7 +527,7 @@ export const reports = {
       .order("priority")
       .order("estimated_impact", { ascending: false });
     const rows = res.data as Tables["ai_recommendations"]["Row"][] | null;
-    if (res.error || !rows?.length) return demo.reports.weeklyDecisions();
+    if (res.error || !rows?.length) return [];
     return rows.map(mapRecommendation);
   },
 };

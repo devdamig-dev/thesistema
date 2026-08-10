@@ -36,24 +36,22 @@ export async function saveBusinessStep(payload: {
   const supabase = createSupabaseServerClient();
   if (!supabase) return { ok: true, persisted: false };
   const db = supabase as any;
-  const businessId = await getBusinessId(db);
-  if (!businessId) return { ok: false, persisted: false, error: "no_business" };
+  const { data: authData, error: authError } = await db.auth.getUser();
+  if (authError || !authData.user) {
+    return { ok: false, persisted: false, error: "not_authenticated" };
+  }
 
-  await db.from("businesses").update({
-    name: payload.name,
-    tax_id: payload.taxId ?? null,
-    industry: payload.industry,
-    timezone: payload.timezone ?? "America/Argentina/Buenos_Aires",
-    onboarding_step: 1,
-  }).eq("id", businessId);
-
-  // Set modules by industry
   const suggestedModules = SUGGESTED_MODULES_BY_INDUSTRY[payload.industry] ?? [];
-  for (const mk of suggestedModules) {
-    await db.from("business_modules").upsert(
-      { business_id: businessId, module_key: mk, enabled: true, suggested: true },
-      { onConflict: "business_id,module_key" },
-    );
+  const { data: businessId, error } = await db.rpc("bootstrap_first_business", {
+    p_name: payload.name.trim(),
+    p_industry: payload.industry,
+    p_tax_id: payload.taxId?.trim() || null,
+    p_timezone: payload.timezone ?? "America/Argentina/Buenos_Aires",
+    p_modules: suggestedModules,
+  });
+  if (error || !businessId) {
+    console.error("bootstrap_first_business failed", error);
+    return { ok: false, persisted: false, error: "first_business_failed" };
   }
 
   revalidatePath("/onboarding");

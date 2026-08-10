@@ -53,6 +53,10 @@ const CARDS = [
 
 export default async function AjustesResumenPage() {
   const biz = await business.getCurrent();
+  const businessName = biz?.name ?? "Negocio sin configurar";
+  const businessLocation = biz?.location ?? "Completá el onboarding";
+  const businessPlan = biz?.plan ?? "—";
+  const businessOwner = biz?.owner ?? "—";
 
   return (
     <div className="space-y-6">
@@ -64,10 +68,10 @@ export default async function AjustesResumenPage() {
           <div>
             <div className="eyebrow mb-1">Negocio actual</div>
             <h2 className="text-xl font-semibold tracking-tight text-ink">
-              {biz.name}
+              {businessName}
             </h2>
             <p className="mt-0.5 text-xs text-ink-muted">
-              {biz.location} · plan {biz.plan} · titular {biz.owner}
+              {businessLocation} · plan {businessPlan} · titular {businessOwner}
             </p>
           </div>
           <div className="flex items-center gap-2">
