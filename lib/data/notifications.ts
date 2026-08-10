@@ -9,7 +9,8 @@
  *   - ai.recommendation.new
  *
  * En demo mode, devolvemos un set fijo plausible para que la UI tenga
- * algo que mostrar.
+ * algo que mostrar. En database mode nunca devolvemos esos fixtures:
+ * una sesión sin notificaciones (o una query fallida) se representa vacía.
  *
  * Lectura: getRecentNotifications + unread count.
  * Escritura: createNotification (server side, usa admin client).
@@ -164,8 +165,9 @@ export async function getRecentNotifications(limit = 12): Promise<Notification[]
   if (!isDatabaseMode()) {
     return DEMO_NOTIFICATIONS.filter((n) => !n.archived).slice(0, limit);
   }
+
   const supabase = createSupabaseServerClient();
-  if (!supabase) return DEMO_NOTIFICATIONS.filter((n) => !n.archived).slice(0, limit);
+  if (!supabase) return [];
   const db = supabase as any;
   try {
     const res = await db
@@ -176,11 +178,16 @@ export async function getRecentNotifications(limit = 12): Promise<Notification[]
       .is("archived_at", null)
       .order("created_at", { ascending: false })
       .limit(limit);
+
+    if (res.error) {
+      console.error("[notifications] read failed:", res.error);
+      return [];
+    }
     const rows = (res.data as any[]) ?? [];
-    if (rows.length === 0) return DEMO_NOTIFICATIONS.filter((n) => !n.archived).slice(0, limit);
     return rows.map(mapRow);
-  } catch {
-    return DEMO_NOTIFICATIONS.filter((n) => !n.archived).slice(0, limit);
+  } catch (error) {
+    console.error("[notifications] read failed:", error);
+    return [];
   }
 }
 
@@ -188,7 +195,7 @@ export async function listNotifications(
   filters: NotificationFilters = {},
   limit = 100,
 ): Promise<Notification[]> {
-  const fallback = DEMO_NOTIFICATIONS.filter((n) => {
+  const demoFiltered = DEMO_NOTIFICATIONS.filter((n) => {
     if (filters.includeArchived ? false : n.archived) return false;
     if (filters.unreadOnly && n.read) return false;
     if (filters.category && filters.category !== "all" && n.category !== filters.category)
@@ -204,9 +211,10 @@ export async function listNotifications(
     return true;
   });
 
-  if (!isDatabaseMode()) return fallback.slice(0, limit);
+  if (!isDatabaseMode()) return demoFiltered.slice(0, limit);
+
   const supabase = createSupabaseServerClient();
-  if (!supabase) return fallback.slice(0, limit);
+  if (!supabase) return [];
   const db = supabase as any;
   try {
     let query = db
@@ -229,11 +237,15 @@ export async function listNotifications(
       query = query.ilike("title", `%${filters.search}%`);
     }
     const res = await query;
+    if (res.error) {
+      console.error("[notifications] list failed:", res.error);
+      return [];
+    }
     const rows = (res.data as any[]) ?? [];
-    if (rows.length === 0) return fallback.slice(0, limit);
     return rows.map(mapRow);
-  } catch {
-    return fallback.slice(0, limit);
+  } catch (error) {
+    console.error("[notifications] list failed:", error);
+    return [];
   }
 }
 

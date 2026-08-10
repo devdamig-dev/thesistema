@@ -4,18 +4,17 @@
  * En modo "demo" no interfiere — la app sigue 100% abierta.
  *
  * En modo "database":
- *   1. Refresca la sesión de Supabase en cada request.
- *   2. Si el usuario no tiene sesión y va a una ruta privada,
+ *   1. Exige que Supabase esté configurado; nunca degrada a demo silenciosamente.
+ *   2. Refresca la sesión de Supabase en cada request.
+ *   3. Si el usuario no tiene sesión y va a una ruta privada,
  *      lo manda a /login.
- *   3. Resuelve el rol + módulos habilitados del usuario y, si la
+ *   4. Resuelve el rol + módulos habilitados del usuario y, si la
  *      ruta requiere un módulo que el rol no puede ver, redirige a
- *      `/?denied=<module>`.
+ *      /sin-permisos.
  *
- * Rutas públicas: /, /login, /ayuda, /notificaciones, /logout.
- *
- * Settings: hoy se permiten para cualquier usuario autenticado;
- * la granularidad por permiso (settings.team vs settings.business)
- * se chequea en las server actions.
+ * En database mode sólo /login, /logout y /ayuda son públicos para auth.
+ * El Dashboard, onboarding, notificaciones, ajustes y módulos operativos
+ * requieren sesión.
  */
 
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
@@ -32,14 +31,17 @@ const APP_MODE = (process.env.NEXT_PUBLIC_APP_MODE ?? "demo").toLowerCase();
 const SUPA_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPA_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
+function isAuthPublicPath(pathname: string): boolean {
+  return pathname === "/login" || pathname === "/logout" || pathname === "/ayuda";
+}
+
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
   // ---------- DEMO MODE GUARD ----------
-  // En demo no hay sesión, pero leemos `gp_demo_role` para que el QA
-  // del guard funcione igual que en database. Sólo aplicamos guard de
-  // módulos — sin redirección a /login.
-  if (APP_MODE !== "database" || !SUPA_URL || !SUPA_ANON) {
+  // Sólo el modo demo explícito puede funcionar sin Supabase. Si la app está
+  // declarada como database, una configuración incompleta debe fallar cerrada.
+  if (APP_MODE !== "database") {
     const demoRole = request.cookies.get("gp_demo_role")?.value as Role | undefined;
     if (demoRole && !isPublicPath(pathname) && !isSettingsPath(pathname)) {
       const requiredModule = moduleForPath(pathname);
@@ -53,6 +55,18 @@ export async function middleware(request: NextRequest) {
       }
     }
     return NextResponse.next();
+  }
+
+  // Database mode sin variables críticas: no abrir la aplicación como demo.
+  // Dejamos accesible /login para mostrar la aplicación, pero bloqueamos el
+  // resto hasta que la configuración del deployment sea corregida.
+  if (!SUPA_URL || !SUPA_ANON) {
+    if (pathname === "/login") return NextResponse.next();
+    const redirect = request.nextUrl.clone();
+    redirect.pathname = "/login";
+    redirect.search = "";
+    redirect.searchParams.set("error", "database_config");
+    return NextResponse.redirect(redirect);
   }
 
   let response = NextResponse.next({ request: { headers: request.headers } });
@@ -74,20 +88,24 @@ export async function middleware(request: NextRequest) {
   });
 
   const isPublic = isPublicPath(pathname);
+  const authPublic = isAuthPublicPath(pathname);
 
   const { data: { user } } = await supabase.auth.getUser();
 
-  if (!user && !isPublic) {
+  // Importante: PUBLIC_PATHS también se usa para el guard de módulos y contiene
+  // rutas como / y /notificaciones. Eso NO significa que sean públicas para
+  // autenticación en database mode.
+  if (!user && !authPublic) {
     const redirect = request.nextUrl.clone();
     redirect.pathname = "/login";
+    redirect.search = "";
     redirect.searchParams.set("next", pathname);
     return NextResponse.redirect(redirect);
   }
 
   // Check onboarding: si el business no completó el setup, redirigir.
-  // No aplica a rutas de sistema (/onboarding, /login, /logout, /ayuda, etc)
-  // ni al módulo interno /admin/* — el gate de admin no depende del
-  // estado de onboarding del business.
+  // No aplica a rutas de sistema ni al módulo interno /admin/* — el gate de
+  // admin no depende del estado de onboarding del business.
   const onboardingExempt =
     pathname === "/onboarding" ||
     pathname.startsWith("/onboarding/") ||
@@ -109,7 +127,8 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(redirect);
       }
     } catch {
-      // Best-effort — si falla la query, no bloqueamos.
+      // Best-effort — si falla la query, no bloqueamos navegación de una sesión
+      // válida; RLS y las server actions siguen siendo la frontera de datos.
     }
   }
 
@@ -117,11 +136,9 @@ export async function middleware(request: NextRequest) {
   if (user) {
     const requiredModule = moduleForPath(pathname);
     if (requiredModule) {
-      // Resolver rol + módulos habilitados del business actual.
       const role = await resolveRoleFromDb(supabase, user.id);
       const enabledModules = await resolveEnabledModulesFromDb(supabase, user.id);
       if (!canSeeModule(role, requiredModule, enabledModules)) {
-        // Log permission denied (best-effort, no rompe el redirect si falla).
         try {
           const businessId = await resolveBusinessIdFromDb(supabase, user.id);
           if (businessId) {
@@ -144,10 +161,6 @@ export async function middleware(request: NextRequest) {
         redirect.searchParams.set("from", pathname);
         return NextResponse.redirect(redirect);
       }
-    }
-    // Settings: dejamos pasar siempre (granularidad en actions).
-    if (isSettingsPath(pathname)) {
-      // noop
     }
   }
 
@@ -179,7 +192,6 @@ async function resolveEnabledModulesFromDb(
   supabase: any,
   userId: string,
 ): Promise<ModuleKey[] | null> {
-  // Resolver business del usuario
   const memberRes = await supabase
     .from("business_members")
     .select("business_id")

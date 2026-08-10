@@ -57,6 +57,23 @@ const DEMO_CONTEXT: UserContext = {
   assignedBranchIds: null,
 };
 
+/**
+ * Contexto seguro para database mode cuando no hay sesión o el cliente de
+ * Supabase no está disponible. Nunca debemos caer al owner ficticio de demo:
+ * además de mostrar datos engañosos, ese fallback puede hacer que componentes
+ * server-side interpreten una request anónima como un usuario con privilegios.
+ */
+const DATABASE_UNAUTHENTICATED_CONTEXT: UserContext = {
+  isAuthenticated: false,
+  userId: null,
+  businessId: null,
+  fullName: "Usuario",
+  email: null,
+  role: "viewer",
+  enabledModules: [],
+  assignedBranchIds: [],
+};
+
 /** Roles "sin restricción" — ven TODAS las sucursales. */
 const UNRESTRICTED_ROLES: Role[] = ["owner", "admin", "manager", "accountant"];
 
@@ -81,13 +98,14 @@ export async function getCurrentUserContext(): Promise<UserContext> {
     }
     return DEMO_CONTEXT;
   }
+
   const supabase = createSupabaseServerClient();
-  if (!supabase) return DEMO_CONTEXT;
+  if (!supabase) return DATABASE_UNAUTHENTICATED_CONTEXT;
   const db = supabase as any;
 
   const userRes = await supabase.auth.getUser();
   const user = userRes.data?.user;
-  if (!user) return DEMO_CONTEXT;
+  if (!user) return DATABASE_UNAUTHENTICATED_CONTEXT;
 
   const profileRes = await db
     .from("profiles")

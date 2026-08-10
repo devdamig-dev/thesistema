@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowRight, Mail, Sparkles, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isDemoMode } from "@/lib/env";
 import { useToast } from "@/components/ui/toast";
@@ -23,6 +22,7 @@ function LoginPageInner() {
   const params = useSearchParams();
   const next = params.get("next") ?? "/";
   const inviteToken = params.get("invite_token");
+  const demoMode = isDemoMode();
   const { toast } = useToast();
   const [email, setEmail] = useState("");
   const [sending, setSending] = useState(false);
@@ -68,12 +68,20 @@ function LoginPageInner() {
     try {
       const supabase = createSupabaseBrowserClient();
       if (!supabase) {
-        toast({
-          tone: "ai",
-          title: "Modo demo activo",
-          description: "Login real disponible cuando se conecte Supabase.",
-        });
-        router.push(next);
+        if (demoMode) {
+          toast({
+            tone: "ai",
+            title: "Modo demo activo",
+            description: "No hace falta iniciar sesión para recorrer la demo.",
+          });
+          router.push(next);
+        } else {
+          toast({
+            tone: "warn",
+            title: "Login no disponible",
+            description: "Falta la configuración de Supabase en este deployment.",
+          });
+        }
         return;
       }
       const { error } = await supabase.auth.signInWithOtp({
@@ -209,7 +217,7 @@ function LoginPageInner() {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="mateo@labirra.com"
+                  placeholder="tu@email.com"
                   className="h-7 flex-1 bg-transparent text-sm text-ink placeholder:text-ink-subtle focus:outline-none"
                 />
               </div>
@@ -226,33 +234,35 @@ function LoginPageInner() {
             </Button>
           </form>
 
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-line" />
-            </div>
-            <div className="relative flex justify-center text-[10px] uppercase tracking-widest">
-              <span className="bg-bg px-2 text-ink-subtle">o</span>
-            </div>
-          </div>
-
-          <Link href={next}>
-            <Button variant="ghost" size="lg" className="w-full">
-              <Zap className="h-4 w-4 text-ai-400" />
-              Entrar como demo
-            </Button>
-          </Link>
-
-          {isDemoMode() && (
-            <div className="rounded-xl border border-ai-400/25 bg-ai-500/[0.06] p-3 text-xs text-ai-400">
-              <div className="flex items-center gap-1.5 font-semibold">
-                <Sparkles className="h-3 w-3" />
-                Modo demo activo
+          {demoMode && (
+            <>
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-line" />
+                </div>
+                <div className="relative flex justify-center text-[10px] uppercase tracking-widest">
+                  <span className="bg-bg px-2 text-ink-subtle">o</span>
+                </div>
               </div>
-              <p className="mt-1 text-ink-muted">
-                La app está corriendo con datos de ejemplo. Para activar Supabase
-                cambiá <code className="rounded bg-bg-elevated px-1 py-0.5 text-[10px]">NEXT_PUBLIC_APP_MODE=database</code>.
-              </p>
-            </div>
+
+              <Link href={next}>
+                <Button variant="ghost" size="lg" className="w-full">
+                  <Zap className="h-4 w-4 text-ai-400" />
+                  Entrar como demo
+                </Button>
+              </Link>
+
+              <div className="rounded-xl border border-ai-400/25 bg-ai-500/[0.06] p-3 text-xs text-ai-400">
+                <div className="flex items-center gap-1.5 font-semibold">
+                  <Sparkles className="h-3 w-3" />
+                  Modo demo activo
+                </div>
+                <p className="mt-1 text-ink-muted">
+                  La app está corriendo con datos de ejemplo. Para activar Supabase
+                  cambiá <code className="rounded bg-bg-elevated px-1 py-0.5 text-[10px]">NEXT_PUBLIC_APP_MODE=database</code>.
+                </p>
+              </div>
+            </>
           )}
 
           <p className="text-center text-[11px] text-ink-subtle">
