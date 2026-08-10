@@ -22,10 +22,6 @@ async function getBusinessId(db: any): Promise<string | null> {
   return (res.data as { business_id: string } | null)?.business_id ?? null;
 }
 
-/* ============================================================================
-   STEP 1: Business basics
-   ============================================================================ */
-
 export async function saveBusinessStep(payload: {
   name: string;
   taxId?: string;
@@ -57,10 +53,6 @@ export async function saveBusinessStep(payload: {
   revalidatePath("/onboarding");
   return { ok: true, persisted: true };
 }
-
-/* ============================================================================
-   STEP 2: Branches
-   ============================================================================ */
 
 export async function saveBranchStep(payload: {
   branches: { name: string; address?: string; type: string; isMain: boolean }[];
@@ -94,11 +86,7 @@ export async function saveBranchStep(payload: {
   return { ok: true, persisted: true };
 }
 
-/* ============================================================================
-   STEP 3: Channels — just mark step, channels are toggles in /ajustes
-   ============================================================================ */
-
-export async function saveChannelsStep(): Promise<Result> {
+export async function saveChannelsStep(channels: string[] = []): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
   const supabase = createSupabaseServerClient();
   if (!supabase) return { ok: true, persisted: false };
@@ -106,14 +94,15 @@ export async function saveChannelsStep(): Promise<Result> {
   const businessId = await getBusinessId(db);
   if (!businessId) return { ok: false, persisted: false, error: "no_business" };
 
-  await db.from("businesses").update({ onboarding_step: 3 }).eq("id", businessId);
+  const { error } = await db
+    .from("businesses")
+    .update({ onboarding_step: 3, sales_channels: channels })
+    .eq("id", businessId);
+  if (error) return { ok: false, persisted: false, error: "channels_save_failed" };
+
   revalidatePath("/onboarding");
   return { ok: true, persisted: true };
 }
-
-/* ============================================================================
-   STEP 4: Team — invites handled by existing inviteUserAction
-   ============================================================================ */
 
 export async function saveTeamStep(): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
@@ -128,11 +117,6 @@ export async function saveTeamStep(): Promise<Result> {
   return { ok: true, persisted: true };
 }
 
-/* ============================================================================
-   STEP 5: WhatsApp — mark onboarding progress only.
-   Connection status remains false until a real Meta/WhatsApp integration succeeds.
-   ============================================================================ */
-
 export async function saveWhatsappStep(): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
   const supabase = createSupabaseServerClient();
@@ -145,10 +129,6 @@ export async function saveWhatsappStep(): Promise<Result> {
   revalidatePath("/onboarding");
   return { ok: true, persisted: true };
 }
-
-/* ============================================================================
-   STEP 6: Seed ingredientes + productos por rubro
-   ============================================================================ */
 
 export async function seedIngredientsAndProducts(
   industry: Industry,
@@ -188,10 +168,6 @@ export async function seedIngredientsAndProducts(
   revalidatePath("/onboarding");
   return { ok: true, persisted: true };
 }
-
-/* ============================================================================
-   STEP 7: Mark onboarding as completed
-   ============================================================================ */
 
 export async function completeOnboarding(): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
