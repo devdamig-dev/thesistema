@@ -13,13 +13,46 @@ type Result =
   | { ok: true; persisted: boolean }
   | { ok: false; persisted: false; error: string };
 
-async function getBusinessId(db: any): Promise<string | null> {
-  const res = await db
+async function getOnboardingBusinessId(db: any): Promise<string | null> {
+  const { data: authData, error: authError } = await db.auth.getUser();
+  const userId = authData?.user?.id as string | undefined;
+  if (authError || !userId) return null;
+
+  const membershipsRes = await db
     .from("business_members")
     .select("business_id")
-    .limit(1)
-    .maybeSingle();
-  return (res.data as { business_id: string } | null)?.business_id ?? null;
+    .eq("user_id", userId);
+  if (membershipsRes.error) return null;
+
+  const businessIds = [
+    ...new Set(
+      ((membershipsRes.data ?? []) as { business_id: string }[])
+        .map((row) => row.business_id)
+        .filter(Boolean),
+    ),
+  ];
+  if (businessIds.length === 0) return null;
+
+  const businessesRes = await db
+    .from("businesses")
+    .select("id, onboarding_completed")
+    .in("id", businessIds);
+  if (businessesRes.error) return null;
+
+  const businesses = (businessesRes.data ?? []) as {
+    id: string;
+    onboarding_completed: boolean | null;
+  }[];
+  const incomplete = businesses.filter((business) => !business.onboarding_completed);
+
+  // Never pick an arbitrary tenant. The onboarding flow must resolve to one
+  // unambiguous incomplete business owned/visible by the authenticated user.
+  if (incomplete.length === 1) return incomplete[0].id;
+  if (incomplete.length > 1) return null;
+
+  // Defensive fallback for legacy accounts where the flag was already set but
+  // the wizard is still being resumed. It is safe only when membership is unique.
+  return businesses.length === 1 ? businesses[0].id : null;
 }
 
 export async function saveBusinessStep(payload: {
@@ -30,7 +63,7 @@ export async function saveBusinessStep(payload: {
 }): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
   const supabase = createSupabaseServerClient();
-  if (!supabase) return { ok: true, persisted: false };
+  if (!supabase) return { ok: false, persisted: false, error: "database_unavailable" };
   const db = supabase as any;
   const { data: authData, error: authError } = await db.auth.getUser();
   if (authError || !authData.user) {
@@ -59,10 +92,10 @@ export async function saveBranchStep(payload: {
 }): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
   const supabase = createSupabaseServerClient();
-  if (!supabase) return { ok: true, persisted: false };
+  if (!supabase) return { ok: false, persisted: false, error: "database_unavailable" };
   const db = supabase as any;
-  const businessId = await getBusinessId(db);
-  if (!businessId) return { ok: false, persisted: false, error: "no_business" };
+  const businessId = await getOnboardingBusinessId(db);
+  if (!businessId) return { ok: false, persisted: false, error: "no_unambiguous_business" };
 
   for (const b of payload.branches) {
     const { error } = await db.from("branches").upsert(
@@ -81,7 +114,12 @@ export async function saveBranchStep(payload: {
     }
   }
 
-  await db.from("businesses").update({ onboarding_step: 2 }).eq("id", businessId);
+  const { error: progressError } = await db
+    .from("businesses")
+    .update({ onboarding_step: 2 })
+    .eq("id", businessId);
+  if (progressError) return { ok: false, persisted: false, error: "onboarding_progress_failed" };
+
   revalidatePath("/onboarding");
   return { ok: true, persisted: true };
 }
@@ -89,10 +127,10 @@ export async function saveBranchStep(payload: {
 export async function saveChannelsStep(channels: string[] = []): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
   const supabase = createSupabaseServerClient();
-  if (!supabase) return { ok: true, persisted: false };
+  if (!supabase) return { ok: false, persisted: false, error: "database_unavailable" };
   const db = supabase as any;
-  const businessId = await getBusinessId(db);
-  if (!businessId) return { ok: false, persisted: false, error: "no_business" };
+  const businessId = await getOnboardingBusinessId(db);
+  if (!businessId) return { ok: false, persisted: false, error: "no_unambiguous_business" };
 
   const { error } = await db
     .from("businesses")
@@ -107,12 +145,14 @@ export async function saveChannelsStep(channels: string[] = []): Promise<Result>
 export async function saveTeamStep(): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
   const supabase = createSupabaseServerClient();
-  if (!supabase) return { ok: true, persisted: false };
+  if (!supabase) return { ok: false, persisted: false, error: "database_unavailable" };
   const db = supabase as any;
-  const businessId = await getBusinessId(db);
-  if (!businessId) return { ok: false, persisted: false, error: "no_business" };
+  const businessId = await getOnboardingBusinessId(db);
+  if (!businessId) return { ok: false, persisted: false, error: "no_unambiguous_business" };
 
-  await db.from("businesses").update({ onboarding_step: 4 }).eq("id", businessId);
+  const { error } = await db.from("businesses").update({ onboarding_step: 4 }).eq("id", businessId);
+  if (error) return { ok: false, persisted: false, error: "team_step_save_failed" };
+
   revalidatePath("/onboarding");
   return { ok: true, persisted: true };
 }
@@ -120,12 +160,14 @@ export async function saveTeamStep(): Promise<Result> {
 export async function saveWhatsappStep(): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
   const supabase = createSupabaseServerClient();
-  if (!supabase) return { ok: true, persisted: false };
+  if (!supabase) return { ok: false, persisted: false, error: "database_unavailable" };
   const db = supabase as any;
-  const businessId = await getBusinessId(db);
-  if (!businessId) return { ok: false, persisted: false, error: "no_business" };
+  const businessId = await getOnboardingBusinessId(db);
+  if (!businessId) return { ok: false, persisted: false, error: "no_unambiguous_business" };
 
-  await db.from("businesses").update({ onboarding_step: 5 }).eq("id", businessId);
+  const { error } = await db.from("businesses").update({ onboarding_step: 5 }).eq("id", businessId);
+  if (error) return { ok: false, persisted: false, error: "whatsapp_step_save_failed" };
+
   revalidatePath("/onboarding");
   return { ok: true, persisted: true };
 }
@@ -135,23 +177,24 @@ export async function seedIngredientsAndProducts(
 ): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
   const supabase = createSupabaseServerClient();
-  if (!supabase) return { ok: true, persisted: false };
+  if (!supabase) return { ok: false, persisted: false, error: "database_unavailable" };
   const db = supabase as any;
-  const businessId = await getBusinessId(db);
-  if (!businessId) return { ok: false, persisted: false, error: "no_business" };
+  const businessId = await getOnboardingBusinessId(db);
+  if (!businessId) return { ok: false, persisted: false, error: "no_unambiguous_business" };
 
   const seed = SEEDS[industry];
   if (!seed) return { ok: false, persisted: false, error: "unknown_industry" };
 
   for (const ing of seed.ingredients) {
-    await db.from("ingredients").upsert(
+    const { error } = await db.from("ingredients").upsert(
       { business_id: businessId, name: ing.name, unit: ing.unit, avg_unit_cost: ing.avg_unit_cost },
       { onConflict: "business_id,name" },
     );
+    if (error) return { ok: false, persisted: false, error: "ingredient_seed_failed" };
   }
 
   for (const prod of seed.products) {
-    await db.from("products").upsert(
+    const { error } = await db.from("products").upsert(
       {
         business_id: businessId,
         name: prod.name,
@@ -162,9 +205,15 @@ export async function seedIngredientsAndProducts(
       },
       { onConflict: "business_id,name" },
     );
+    if (error) return { ok: false, persisted: false, error: "product_seed_failed" };
   }
 
-  await db.from("businesses").update({ onboarding_step: 6 }).eq("id", businessId);
+  const { error: progressError } = await db
+    .from("businesses")
+    .update({ onboarding_step: 6 })
+    .eq("id", businessId);
+  if (progressError) return { ok: false, persisted: false, error: "onboarding_progress_failed" };
+
   revalidatePath("/onboarding");
   return { ok: true, persisted: true };
 }
@@ -172,16 +221,17 @@ export async function seedIngredientsAndProducts(
 export async function completeOnboarding(): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
   const supabase = createSupabaseServerClient();
-  if (!supabase) return { ok: true, persisted: false };
+  if (!supabase) return { ok: false, persisted: false, error: "database_unavailable" };
   const db = supabase as any;
-  const businessId = await getBusinessId(db);
-  if (!businessId) return { ok: false, persisted: false, error: "no_business" };
+  const businessId = await getOnboardingBusinessId(db);
+  if (!businessId) return { ok: false, persisted: false, error: "no_unambiguous_business" };
 
-  await db.from("businesses").update({
+  const { error } = await db.from("businesses").update({
     onboarding_completed: true,
     onboarding_step: 7,
     onboarding_completed_at: new Date().toISOString(),
   }).eq("id", businessId);
+  if (error) return { ok: false, persisted: false, error: "complete_onboarding_failed" };
 
   revalidatePath("/");
   revalidatePath("/onboarding");
