@@ -88,16 +88,25 @@ export async function middleware(request: NextRequest) {
   // No aplica a rutas de sistema (/onboarding, /login, /logout, /ayuda, etc)
   // ni al módulo interno /admin/* — el gate de admin no depende del
   // estado de onboarding del business.
-  if (user && !isPublic && !isSettingsPath(pathname) && !pathname.startsWith("/admin")) {
+  const onboardingExempt =
+    pathname === "/onboarding" ||
+    pathname.startsWith("/onboarding/") ||
+    pathname === "/login" ||
+    pathname === "/logout" ||
+    pathname.startsWith("/admin") ||
+    (isPublic && pathname !== "/");
+
+  if (user && !onboardingExempt) {
     try {
       const businessId = await resolveBusinessIdFromDb(supabase, user.id);
-      if (businessId) {
-        const onboarding = await checkOnboardingCompleted(supabase, businessId);
-        if (onboarding === false) {
-          const redirect = request.nextUrl.clone();
-          redirect.pathname = "/onboarding";
-          return NextResponse.redirect(redirect);
-        }
+      const onboarding = businessId
+        ? await checkOnboardingCompleted(supabase, businessId)
+        : false;
+      if (onboarding === false) {
+        const redirect = request.nextUrl.clone();
+        redirect.pathname = "/onboarding";
+        redirect.search = "";
+        return NextResponse.redirect(redirect);
       }
     } catch {
       // Best-effort — si falla la query, no bloqueamos.

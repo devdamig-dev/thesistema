@@ -28,14 +28,14 @@ import { InsightCard } from "@/components/common/insight-card";
 import { ActivityFeed } from "@/components/common/activity-feed";
 import { AttentionItem } from "@/components/common/attention-item";
 import {
-  attentionItems,
-  dashboardKpis,
-  expensesByCategory,
-  insights,
-  kpiSparklines,
-  operationalIntelligence,
-  salesByDay,
-  todaySnapshot,
+  attentionItems as demoAttentionItems,
+  dashboardKpis as demoDashboardKpis,
+  expensesByCategory as demoExpensesByCategory,
+  insights as demoInsights,
+  kpiSparklines as demoKpiSparklines,
+  operationalIntelligence as demoOperationalIntelligence,
+  salesByDay as demoSalesByDay,
+  todaySnapshot as demoTodaySnapshot,
 } from "@/lib/mock-data";
 import {
   Activity,
@@ -45,6 +45,21 @@ import {
   Radio,
 } from "lucide-react";
 import { formatARS, formatPercent } from "@/lib/format";
+
+
+const IS_DATABASE = process.env.NEXT_PUBLIC_APP_MODE === "database";
+const dashboardKpis = IS_DATABASE
+  ? { ventasHoy: 0, ventasHoyDelta: 0, ventasMes: 0, ventasMesDelta: 0, margenEstimado: 0, margenDelta: 0, costosMes: 0, costosDelta: 0 }
+  : demoDashboardKpis;
+const todaySnapshot = IS_DATABASE
+  ? { ventasHoy: 0, tickets: 0, ticketProm: 0, movimientosPendientes: 0, margenHoy: 0, costoHoyPct: 0 }
+  : demoTodaySnapshot;
+const kpiSparklines = IS_DATABASE ? { ventasHoy: [], ventasMes: [], margen: [], costos: [] } : demoKpiSparklines;
+const attentionItems = IS_DATABASE ? [] : demoAttentionItems;
+const salesByDay = IS_DATABASE ? [] : demoSalesByDay;
+const expensesByCategory = IS_DATABASE ? [] : demoExpensesByCategory;
+const insights = IS_DATABASE ? [] : demoInsights;
+const operationalIntelligence = IS_DATABASE ? [] : demoOperationalIntelligence;
 
 export default function DashboardClient({
   activitySlot,
@@ -62,8 +77,8 @@ export default function DashboardClient({
       />
       <SectionHeader
         eyebrow="Cabina de control"
-        title="Buen día, Mateo 👋"
-        description="Lo que está pasando en La Birra Burger, en tiempo real. Datos cargados por WhatsApp y ordenados por la IA."
+        title={IS_DATABASE ? "Buen día 👋" : "Buen día, Mateo 👋"}
+        description={IS_DATABASE ? "Tu operación en tiempo real. Los módulos sin movimientos muestran su estado vacío real." : "Lo que está pasando en La Birra Burger, en tiempo real. Datos cargados por WhatsApp y ordenados por la IA."}
         actions={
           <>
             <Button
@@ -84,7 +99,7 @@ export default function DashboardClient({
             </Button>
             <Link href="/inbox">
               <Button size="sm" variant="ai">
-                <Sparkles className="h-4 w-4" />3 por aprobar
+                <Sparkles className="h-4 w-4" />{IS_DATABASE ? "Inbox" : "3 por aprobar"}
               </Button>
             </Link>
           </>

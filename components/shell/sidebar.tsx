@@ -26,8 +26,12 @@ import {
   LifeBuoy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { businessInfo } from "@/lib/mock-data";
+import { businessInfo as demoBusinessInfo } from "@/lib/mock-data";
 import { canSeeModule, getRoleLabel, type ModuleKey, type Role } from "@/lib/permissions";
+
+const businessInfo = process.env.NEXT_PUBLIC_APP_MODE === "database"
+  ? { name: "Mi negocio", plan: "Free", owner: "Usuario", location: "Sucursal principal" }
+  : demoBusinessInfo;
 
 type NavItem = {
   href: string;
