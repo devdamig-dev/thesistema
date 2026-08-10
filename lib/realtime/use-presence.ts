@@ -20,14 +20,16 @@ export function usePresence(
   me: { id: string; name: string } | null,
 ): PresenceUser[] {
   const [users, setUsers] = useState<PresenceUser[]>([]);
+  const meId = me?.id ?? null;
+  const meName = me?.name ?? null;
 
   useEffect(() => {
-    if (!me) return;
+    if (!meId || !meName) return;
     const supabase = createSupabaseBrowserClient();
     if (!supabase) return;
 
     const channel = supabase.channel(`presence:${room}`, {
-      config: { presence: { key: me.id } },
+      config: { presence: { key: meId } },
     });
 
     channel
@@ -53,8 +55,8 @@ export function usePresence(
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
           await channel.track({
-            id: me.id,
-            name: me.name,
+            id: meId,
+            name: meName,
             joinedAt: Date.now(),
           });
         }
@@ -63,7 +65,7 @@ export function usePresence(
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [room, me?.id, me?.name]);
+  }, [room, meId, meName]);
 
   return users;
 }
