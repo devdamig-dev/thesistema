@@ -18,6 +18,13 @@ export type AppShellProps = {
   notifications: Notification[];
   unreadCount: number;
   showInternalAdmin?: boolean;
+  databaseMode: boolean;
+  isAuthenticated: boolean;
+  userName: string;
+  userEmail: string | null;
+  businessName: string | null;
+  branchName: string | null;
+  whatsappConnected: boolean;
 };
 
 export function AppShell({
@@ -27,25 +34,40 @@ export function AppShell({
   notifications,
   unreadCount,
   showInternalAdmin = false,
+  databaseMode,
+  isAuthenticated,
+  userName,
+  userEmail,
+  businessName,
+  branchName,
+  whatsappConnected,
 }: AppShellProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const pathname = usePathname();
 
-  // Rutas sin sidebar/topbar (login, etc.)
+  // Rutas sin sidebar/topbar (login, onboarding, etc.)
   if (BARE_ROUTES.some((r) => pathname === r || pathname.startsWith(r + "/"))) {
     return <div className="min-h-screen">{children}</div>;
   }
+
+  const sidebarProps = {
+    role,
+    enabledModules,
+    unreadCount,
+    showInternalAdmin,
+    databaseMode,
+    isAuthenticated,
+    userName,
+    userEmail,
+    businessName,
+    branchName,
+  };
 
   return (
     <div className="relative flex min-h-screen">
       <div className="hidden w-64 shrink-0 md:block lg:w-72">
         <div className="sticky top-0 h-screen">
-          <Sidebar
-            role={role}
-            enabledModules={enabledModules}
-            unreadCount={unreadCount}
-            showInternalAdmin={showInternalAdmin}
-          />
+          <Sidebar {...sidebarProps} />
         </div>
       </div>
 
@@ -66,13 +88,7 @@ export function AppShell({
               transition={{ type: "spring", damping: 28, stiffness: 260 }}
               className="fixed inset-y-0 left-0 z-50 w-72 md:hidden"
             >
-              <Sidebar
-                onNavigate={() => setMobileOpen(false)}
-                role={role}
-                enabledModules={enabledModules}
-                unreadCount={unreadCount}
-                showInternalAdmin={showInternalAdmin}
-              />
+              <Sidebar {...sidebarProps} onNavigate={() => setMobileOpen(false)} />
               <button
                 onClick={() => setMobileOpen(false)}
                 className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-md border border-line bg-bg-subtle text-ink-muted"
@@ -90,6 +106,8 @@ export function AppShell({
           onOpenNav={() => setMobileOpen(true)}
           notifications={notifications}
           unreadCount={unreadCount}
+          databaseMode={databaseMode}
+          whatsappConnected={whatsappConnected}
         />
         <main className="flex-1">
           <div className="mx-auto w-full max-w-[1400px] px-4 py-6 md:px-8 md:py-8">
