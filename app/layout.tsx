@@ -9,6 +9,7 @@ import { getCurrentUserContext } from "@/lib/data/auth";
 import { getRecentNotifications } from "@/lib/data/notifications";
 import { checkInternalAdmin } from "@/lib/admin/auth";
 import { isDatabaseMode } from "@/lib/env";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -28,19 +29,51 @@ export default async function RootLayout({
   children: React.ReactNode;
 }) {
   const ctx = await getCurrentUserContext();
+  const databaseMode = isDatabaseMode();
 
   // En database mode una request anónima (por ejemplo /login) no debe tocar
-  // tablas protegidas por RLS. Además de ser innecesario, eso genera errores
-  // de permisos en funciones helper de las policies. Demo mode conserva sus
-  // notificaciones de ejemplo aunque su contexto no sea autenticado.
+  // tablas protegidas por RLS. Demo mode conserva sus notificaciones de ejemplo.
   const notifications =
-    isDatabaseMode() && !ctx.isAuthenticated
+    databaseMode && !ctx.isAuthenticated
       ? []
       : await getRecentNotifications(10);
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   const internalAdmin = await checkInternalAdmin();
   const showInternalAdmin = internalAdmin.allowed;
+
+  let businessName: string | null = null;
+  let branchName: string | null = null;
+  let whatsappConnected = false;
+
+  if (databaseMode && ctx.isAuthenticated && ctx.businessId) {
+    const supabase = createSupabaseServerClient();
+    const db = supabase as any;
+
+    if (db) {
+      const [businessRes, branchRes] = await Promise.all([
+        db
+          .from("businesses")
+          .select("name, whatsapp_connected")
+          .eq("id", ctx.businessId)
+          .maybeSingle(),
+        db
+          .from("branches")
+          .select("name")
+          .eq("business_id", ctx.businessId)
+          .eq("is_main", true)
+          .maybeSingle(),
+      ]);
+
+      if (!businessRes.error) {
+        businessName = businessRes.data?.name ?? null;
+        whatsappConnected = Boolean(businessRes.data?.whatsapp_connected);
+      }
+      if (!branchRes.error) {
+        branchName = branchRes.data?.name ?? null;
+      }
+    }
+  }
 
   return (
     <html lang="es" className={`${inter.variable} dark`}>
@@ -55,6 +88,13 @@ export default async function RootLayout({
             notifications={notifications}
             unreadCount={unreadCount}
             showInternalAdmin={showInternalAdmin}
+            databaseMode={databaseMode}
+            isAuthenticated={ctx.isAuthenticated}
+            userName={ctx.fullName}
+            userEmail={ctx.email}
+            businessName={businessName}
+            branchName={branchName}
+            whatsappConnected={whatsappConnected}
           >
             {children}
           </AppShell>

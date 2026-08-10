@@ -13,6 +13,7 @@ import {
   HandCoins,
   Inbox,
   LayoutDashboard,
+  LogOut,
   LucideIcon,
   Megaphone,
   PieChart,
@@ -29,18 +30,14 @@ import { cn } from "@/lib/utils";
 import { businessInfo as demoBusinessInfo } from "@/lib/mock-data";
 import { canSeeModule, getRoleLabel, type ModuleKey, type Role } from "@/lib/permissions";
 
-const businessInfo = process.env.NEXT_PUBLIC_APP_MODE === "database"
-  ? { name: "Mi negocio", plan: "Free", owner: "Usuario", location: "Sucursal principal" }
-  : demoBusinessInfo;
-
 type NavItem = {
   href: string;
   label: string;
   icon: LucideIcon;
   badge?: string;
   accent?: "ai" | "brand";
-  module?: ModuleKey;            // si tiene, se filtra por permiso
-  systemAlwaysVisible?: boolean; // ayuda + ajustes
+  module?: ModuleKey;
+  systemAlwaysVisible?: boolean;
 };
 
 type NavGroup = { label: string; items: NavItem[] };
@@ -98,19 +95,30 @@ export function Sidebar({
   enabledModules,
   unreadCount,
   showInternalAdmin = false,
+  databaseMode,
+  isAuthenticated,
+  userName,
+  userEmail,
+  businessName,
+  branchName,
 }: {
   onNavigate?: () => void;
   role?: Role;
   enabledModules?: ModuleKey[] | null;
   unreadCount?: number;
-  /**
-   * Si true, muestra el grupo "Interno" con `/admin/telemetria`. Sólo
-   * el server layout lo activa cuando `ENABLE_INTERNAL_ADMIN=true`.
-   */
   showInternalAdmin?: boolean;
+  databaseMode: boolean;
+  isAuthenticated: boolean;
+  userName: string;
+  userEmail: string | null;
+  businessName: string | null;
+  branchName: string | null;
 }) {
   const pathname = usePathname();
-  const effectiveRole: Role = role ?? "owner";
+  const effectiveRole: Role = role ?? "viewer";
+  const displayBusinessName = databaseMode ? businessName ?? "Tu negocio" : demoBusinessInfo.name;
+  const displayUser = databaseMode ? userName || userEmail || "Usuario" : demoBusinessInfo.owner;
+  const displayLocation = databaseMode ? branchName ?? "Sin sucursal configurada" : demoBusinessInfo.location;
 
   const navWithAdmin: NavGroup[] = showInternalAdmin
     ? [
@@ -139,7 +147,6 @@ export function Sidebar({
       ]
     : NAV;
 
-  // Filtrar items según permisos del rol + módulos habilitados.
   const filteredNav = navWithAdmin.map((group) => ({
     ...group,
     items: group.items
@@ -149,7 +156,6 @@ export function Sidebar({
         return canSeeModule(effectiveRole, item.module, enabledModules ?? null);
       })
       .map((item) => {
-        // Inject dynamic unread badge en la entrada de Notificaciones
         if (item.href === "/notificaciones" && (unreadCount ?? 0) > 0) {
           return {
             ...item,
@@ -157,6 +163,12 @@ export function Sidebar({
             accent: "brand" as const,
           };
         }
+
+        // Los contadores 3/2 son fixtures de la demo, no estados reales.
+        if (databaseMode && (item.href === "/inbox" || item.href === "/cierres")) {
+          return { ...item, badge: undefined };
+        }
+
         return item;
       }),
   })).filter((g) => g.items.length > 0);
@@ -164,7 +176,7 @@ export function Sidebar({
   return (
     <aside className="relative flex h-full w-full flex-col border-r border-line bg-bg-subtle/70 backdrop-blur-xl">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-line-strong to-transparent" />
-      <Brand />
+      <Brand businessName={displayBusinessName} />
       <nav className="flex-1 overflow-y-auto px-3 py-3 scrollbar-thin">
         {filteredNav.map((group) => (
           <div key={group.label} className="mb-4">
@@ -224,12 +236,19 @@ export function Sidebar({
           </div>
         ))}
       </nav>
-      <Footer role={effectiveRole} />
+      <Footer
+        role={effectiveRole}
+        databaseMode={databaseMode}
+        isAuthenticated={isAuthenticated}
+        userName={displayUser}
+        userEmail={userEmail}
+        location={displayLocation}
+      />
     </aside>
   );
 }
 
-function Brand() {
+function Brand({ businessName }: { businessName: string }) {
   return (
     <div className="border-b border-line px-4 py-4">
       <Link href="/" className="flex items-center gap-2.5">
@@ -237,53 +256,92 @@ function Brand() {
           <span className="text-base font-black text-white">G</span>
           <span className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/20 to-transparent" />
         </div>
-        <div className="leading-tight">
+        <div className="min-w-0 leading-tight">
           <div className="flex items-center gap-1.5 text-sm font-semibold tracking-tight text-ink">
             GastroPilot
-            <span className="rounded-md bg-ai-500/15 px-1.5 py-0.5 text-[10px] font-bold text-ai-400">
-              AI
-            </span>
+            <span className="rounded-md bg-ai-500/15 px-1.5 py-0.5 text-[10px] font-bold text-ai-400">AI</span>
           </div>
-          <div className="text-[11px] text-ink-subtle">{businessInfo.name}</div>
+          <div className="truncate text-[11px] text-ink-subtle">{businessName}</div>
         </div>
       </Link>
     </div>
   );
 }
 
-function Footer({ role }: { role: Role }) {
+function Footer({
+  role,
+  databaseMode,
+  isAuthenticated,
+  userName,
+  userEmail,
+  location,
+}: {
+  role: Role;
+  databaseMode: boolean;
+  isAuthenticated: boolean;
+  userName: string;
+  userEmail: string | null;
+  location: string;
+}) {
+  const initials = userName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "U";
+
   return (
-    <div className="space-y-3 border-t border-line px-3 py-3">
-      <Link
-        href="/ajustes/ia"
-        className="group block rounded-xl border border-ai-400/25 bg-gradient-to-br from-ai-500/[0.08] via-bg-elevated/40 to-bg-elevated/40 p-3 transition-colors hover:border-ai-400/50"
-      >
-        <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-ai-400">
-          <span className="h-1.5 w-1.5 animate-pulseDot rounded-full bg-ai-400" />
-          Plan {businessInfo.plan}
-        </div>
-        <p className="text-xs leading-relaxed text-ink">
-          Estás usando 64% de los créditos IA del mes.
-        </p>
-        <div className="mt-2 h-1 overflow-hidden rounded-full bg-bg-subtle">
-          <div className="h-full w-[64%] rounded-full bg-gradient-to-r from-ai-400 to-ai-600" />
-        </div>
-      </Link>
+    <div className="space-y-2 border-t border-line px-3 py-3">
+      {!databaseMode && (
+        <Link
+          href="/ajustes/ia"
+          className="group block rounded-xl border border-ai-400/25 bg-gradient-to-br from-ai-500/[0.08] via-bg-elevated/40 to-bg-elevated/40 p-3 transition-colors hover:border-ai-400/50"
+        >
+          <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-ai-400">
+            <span className="h-1.5 w-1.5 animate-pulseDot rounded-full bg-ai-400" />
+            Plan {demoBusinessInfo.plan}
+          </div>
+          <p className="text-xs leading-relaxed text-ink">Estás usando 64% de los créditos IA del mes.</p>
+          <div className="mt-2 h-1 overflow-hidden rounded-full bg-bg-subtle">
+            <div className="h-full w-[64%] rounded-full bg-gradient-to-r from-ai-400 to-ai-600" />
+          </div>
+        </Link>
+      )}
 
       <Link
         href="/ajustes"
         className="flex items-center gap-3 rounded-lg border border-line bg-bg-elevated/60 p-2.5 transition-colors hover:border-line-strong"
       >
         <div className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-xs font-semibold text-white">
-          MI
+          {initials}
         </div>
         <div className="min-w-0 flex-1 leading-tight">
-          <div className="truncate text-xs font-medium text-ink">{businessInfo.owner}</div>
-          <div className="truncate text-[10px] text-ink-subtle">
-            {getRoleLabel(role)} · {businessInfo.location}
-          </div>
+          <div className="truncate text-xs font-medium text-ink">{userName}</div>
+          {databaseMode && userEmail ? (
+            <div className="truncate text-[10px] text-ink-subtle">{userEmail}</div>
+          ) : (
+            <div className="truncate text-[10px] text-ink-subtle">{getRoleLabel(role)} · {location}</div>
+          )}
         </div>
       </Link>
+
+      {databaseMode && isAuthenticated && (
+        <div className="flex items-center justify-between gap-2 px-1">
+          <span className="min-w-0 truncate text-[10px] text-ink-subtle">
+            {getRoleLabel(role)} · {location}
+          </span>
+          <form action="/logout" method="post">
+            <button
+              type="submit"
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-ink-muted transition-colors hover:bg-bg-elevated hover:text-ink"
+              aria-label="Cerrar sesión"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Salir
+            </button>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
