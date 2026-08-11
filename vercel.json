@@ -1,5 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "env": {
+    "NEXT_PUBLIC_APP_MODE": "demo"
+  },
   "crons": [
     {
       "path": "/api/cron/checks",
