@@ -49,17 +49,39 @@ const TEAM_ROLES: { role: Role; label: string }[] = [
   { role: "employee", label: "Empleado" },
 ];
 
-export default function OnboardingClient() {
+export type OnboardingInitialState = {
+  currentStep: number;
+  businessName: string;
+  industry: Industry;
+  branchName: string;
+  branchType: BranchType;
+  selectedChannels: string[];
+};
+
+export const DEFAULT_ONBOARDING_STATE: OnboardingInitialState = {
+  currentStep: 0,
+  businessName: "",
+  industry: "hamburgueseria",
+  branchName: "Local principal",
+  branchType: "local",
+  selectedChannels: ["salon", "whatsapp"],
+};
+
+export default function OnboardingClient({
+  initialState = DEFAULT_ONBOARDING_STATE,
+}: {
+  initialState?: OnboardingInitialState;
+}) {
   const router = useRouter();
   const { toast } = useToast();
   const [pending, startTransition] = useTransition();
-  const [currentStep, setCurrentStep] = useState(0);
+  const [currentStep, setCurrentStep] = useState(initialState.currentStep);
 
-  const [businessName, setBusinessName] = useState("");
-  const [industry, setIndustry] = useState<Industry>("hamburgueseria");
-  const [branchName, setBranchName] = useState("Local principal");
-  const [branchType, setBranchType] = useState<BranchType>("local");
-  const [selectedChannels, setSelectedChannels] = useState<string[]>(["salon", "whatsapp"]);
+  const [businessName, setBusinessName] = useState(initialState.businessName);
+  const [industry, setIndustry] = useState<Industry>(initialState.industry);
+  const [branchName, setBranchName] = useState(initialState.branchName);
+  const [branchType, setBranchType] = useState<BranchType>(initialState.branchType);
+  const [selectedChannels, setSelectedChannels] = useState<string[]>(initialState.selectedChannels);
   const [inviteRole, setInviteRole] = useState<Role>("manager");
   const [inviteEmail, setInviteEmail] = useState("");
   const [invitePending, setInvitePending] = useState(false);
@@ -103,12 +125,18 @@ export default function OnboardingClient() {
     startTransition(async () => {
       let result: any;
       switch (step.key) {
-        case "business":
+        case "business": {
+          const name = businessName.trim();
+          if (!name) {
+            toast({ tone: "warn", title: "Ingresá el nombre del negocio" });
+            return;
+          }
           result = await saveBusinessStep({
-            name: businessName || "Mi Negocio",
+            name,
             industry,
           });
           break;
+        }
         case "branches":
           result = await saveBranchStep({
             branches: [{
