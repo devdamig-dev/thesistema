@@ -21,6 +21,7 @@ function LoginPageInner() {
   const router = useRouter();
   const params = useSearchParams();
   const next = params.get("next") ?? "/";
+  const inviteToken = params.get("invite_token");
   const authCode = params.get("code");
   const demoMode = isDemoMode();
   const { toast } = useToast();
@@ -29,8 +30,44 @@ function LoginPageInner() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [sending, setSending] = useState(false);
+  const [acceptingInvite, setAcceptingInvite] = useState(false);
   const [completingLogin, setCompletingLogin] = useState(Boolean(authCode));
   const exchangedCodeRef = useRef<string | null>(null);
+
+  async function acceptPendingInvite(): Promise<boolean> {
+    if (!inviteToken) return true;
+    setAcceptingInvite(true);
+    try {
+      const { acceptInvitationAction } = await import("@/app/actions/invitations");
+      const result = await acceptInvitationAction(inviteToken);
+      if (result.ok) {
+        toast({
+          tone: "success",
+          title: "¡Bienvenido al equipo!",
+          description: result.persisted ? "Tu acceso está activo." : "Modo demo · invitación simulada.",
+        });
+        return true;
+      }
+
+      const messages: Record<string, string> = {
+        requires_auth: "Iniciá sesión primero y volvé a intentar.",
+        invitation_not_found: "Ese link de invitación no es válido.",
+        invitation_expired: "La invitación expiró. Pedí una nueva.",
+        invitation_accepted: "Esta invitación ya fue aceptada.",
+        invitation_revoked: "La invitación fue revocada.",
+        invitation_email_mismatch: "Ingresaste con un email distinto al que recibió la invitación.",
+        already_member: "Esta cuenta ya pertenece al negocio.",
+      };
+      toast({
+        tone: "warn",
+        title: "No pudimos aceptar la invitación",
+        description: messages[result.error] ?? result.error,
+      });
+      return false;
+    } finally {
+      setAcceptingInvite(false);
+    }
+  }
 
   useEffect(() => {
     if (!authCode || exchangedCodeRef.current === authCode) return;
@@ -54,6 +91,15 @@ function LoginPageInner() {
         });
         return;
       }
+
+      if (inviteToken) {
+        const accepted = await acceptPendingInvite();
+        if (!accepted || cancelled) {
+          setCompletingLogin(false);
+          return;
+        }
+      }
+
       router.replace(next);
       router.refresh();
     }
@@ -62,7 +108,7 @@ function LoginPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [authCode, next, router, toast]);
+  }, [authCode, inviteToken, next, router, toast]);
 
   async function handlePasswordLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -82,6 +128,12 @@ function LoginPageInner() {
         });
         return;
       }
+
+      if (inviteToken) {
+        const accepted = await acceptPendingInvite();
+        if (!accepted) return;
+      }
+
       router.replace(next);
       router.refresh();
     } finally {
@@ -99,12 +151,16 @@ function LoginPageInner() {
         else toast({ tone: "warn", title: "Login no disponible", description: "Supabase no está configurado." });
         return;
       }
+
+      const redirectParams = new URLSearchParams({ next });
+      if (inviteToken) redirectParams.set("invite_token", inviteToken);
+
       const { error } = await supabase.auth.signInWithOtp({
         email,
         options: {
           emailRedirectTo:
             typeof window !== "undefined"
-              ? `${window.location.origin}/login?next=${encodeURIComponent(next)}`
+              ? `${window.location.origin}/login?${redirectParams.toString()}`
               : undefined,
         },
       });
@@ -122,6 +178,14 @@ function LoginPageInner() {
       }
     } finally {
       setSending(false);
+    }
+  }
+
+  async function handleAcceptInvite() {
+    const accepted = await acceptPendingInvite();
+    if (accepted) {
+      router.replace(next);
+      router.refresh();
     }
   }
 
@@ -158,16 +222,28 @@ function LoginPageInner() {
         <div className="w-full max-w-sm space-y-6">
           <div>
             <h2 className="text-2xl font-semibold tracking-tight text-ink">
-              {completingLogin ? "Completando tu acceso…" : "Entrá a GastroPilot"}
+              {completingLogin ? "Completando tu acceso…" : inviteToken ? "Te invitaron a un negocio" : "Entrá a GastroPilot"}
             </h2>
             <p className="mt-1 text-sm text-ink-muted">
               {completingLogin
-                ? "Estamos validando el link y creando tu sesión segura."
-                : mode === "password"
-                  ? "Ingresá con tu email y contraseña."
-                  : "Te mandamos un link mágico a tu correo."}
+                ? "Estamos validando el acceso y la invitación."
+                : inviteToken
+                  ? "Ingresá con el mismo correo que recibió la invitación."
+                  : mode === "password"
+                    ? "Ingresá con tu email y contraseña."
+                    : "Te mandamos un link mágico a tu correo."}
             </p>
           </div>
+
+          {!completingLogin && inviteToken && (
+            <div className="rounded-xl border border-ai-400/30 bg-ai-500/[0.06] p-3">
+              <div className="text-[10px] uppercase tracking-wider text-ai-400">Invitación pendiente</div>
+              <p className="mt-1 text-xs text-ink">Si ya tenés una sesión iniciada, podés aceptarla directamente.</p>
+              <Button size="sm" variant="ai" className="mt-2 w-full" onClick={handleAcceptInvite} disabled={acceptingInvite}>
+                {acceptingInvite ? "Aceptando…" : "Aceptar invitación"}
+              </Button>
+            </div>
+          )}
 
           {!completingLogin && (
             <div className="grid grid-cols-2 gap-2 rounded-xl border border-line bg-bg-subtle p-1">
@@ -222,7 +298,7 @@ function LoginPageInner() {
                 </div>
               )}
 
-              <Button type="submit" variant="primary" size="lg" className="w-full" disabled={sending || !email || (mode === "password" && !password)}>
+              <Button type="submit" variant="primary" size="lg" className="w-full" disabled={sending || acceptingInvite || !email || (mode === "password" && !password)}>
                 {sending ? "Procesando…" : mode === "password" ? "Ingresar" : "Enviar link mágico"}
                 <ArrowRight className="h-4 w-4" />
               </Button>
