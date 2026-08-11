@@ -14,15 +14,11 @@ type AcceptResult =
 /**
  * Acepta una invitación con su token.
  *
- * Flujo:
- *   1. Lookup de invitation por token (admin client, sin RLS).
- *   2. Validar status pending + no expirada.
- *   3. Buscar usuario logueado.
- *   4. Crear/actualizar business_member.
- *   5. Marcar invitation como accepted.
- *
- * Si el usuario no está logueado, devuelve `requires_auth` y la
- * página /login le pide signup/signin antes de re-disparar.
+ * Frontera de seguridad:
+ *   - la sesión debe pertenecer al mismo email invitado;
+ *   - una invitación nunca cambia el rol de una membership existente;
+ *   - la invitación sólo se marca accepted después de persistir la membership;
+ *   - cualquier error de escritura falla cerrado.
  */
 export async function acceptInvitationAction(token: string): Promise<AcceptResult> {
   if (!isDatabaseMode()) {
@@ -33,9 +29,9 @@ export async function acceptInvitationAction(token: string): Promise<AcceptResul
   const supabase = createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "no_client" };
 
-  const { data: userData } = await supabase.auth.getUser();
+  const { data: userData, error: userError } = await supabase.auth.getUser();
   const user = userData?.user;
-  if (!user) {
+  if (userError || !user) {
     return { ok: false, persisted: false, error: "requires_auth" };
   }
 
@@ -45,6 +41,12 @@ export async function acceptInvitationAction(token: string): Promise<AcceptResul
     .select("id, business_id, email, role, status, expires_at")
     .eq("token", token)
     .maybeSingle();
+
+  if (invRes.error) {
+    console.error("[invite] lookup failed:", invRes.error.message);
+    return { ok: false, persisted: false, error: "invitation_lookup_failed" };
+  }
+
   const inv = invRes.data as
     | {
         id: string;
@@ -60,43 +62,84 @@ export async function acceptInvitationAction(token: string): Promise<AcceptResul
   if (inv.status !== "pending") {
     return { ok: false, persisted: false, error: `invitation_${inv.status}` };
   }
+
   if (new Date(inv.expires_at) < new Date()) {
-    await admin
+    const expireRes = await admin
       .from("user_invitations")
       .update({ status: "expired" })
-      .eq("id", inv.id);
+      .eq("id", inv.id)
+      .eq("status", "pending");
+    if (expireRes.error) {
+      console.error("[invite] could not mark expired:", expireRes.error.message);
+    }
     return { ok: false, persisted: false, error: "invitation_expired" };
   }
-  if (
-    inv.email.toLowerCase() !== (user.email ?? "").toLowerCase() &&
-    inv.email
-  ) {
-    // No bloqueamos por mismatch — el invitado puede aceptar con
-    // otra cuenta. Sólo logueamos.
+
+  const invitedEmail = inv.email.trim().toLowerCase();
+  const authenticatedEmail = (user.email ?? "").trim().toLowerCase();
+  if (!invitedEmail || !authenticatedEmail || invitedEmail !== authenticatedEmail) {
     console.warn(
-      `[invite] email mismatch: invited ${inv.email} vs logged ${user.email}`,
+      `[invite] blocked email mismatch: invited ${invitedEmail || "<empty>"} vs logged ${authenticatedEmail || "<empty>"}`,
     );
+    return { ok: false, persisted: false, error: "invitation_email_mismatch" };
   }
 
-  // Crear membership (upsert)
+  // No usar upsert: aceptar una invitación no debe poder subir, bajar ni
+  // reemplazar el rol de una membership que ya existe.
+  const existingRes = await admin
+    .from("business_members")
+    .select("id, role")
+    .eq("business_id", inv.business_id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (existingRes.error) {
+    console.error("[invite] membership lookup failed:", existingRes.error.message);
+    return { ok: false, persisted: false, error: "membership_lookup_failed" };
+  }
+
+  if (existingRes.data) {
+    return { ok: false, persisted: false, error: "already_member" };
+  }
+
   const memberRes = await admin
     .from("business_members")
-    .upsert(
-      {
-        business_id: inv.business_id,
-        user_id: user.id,
-        role: inv.role,
-      },
-      { onConflict: "business_id,user_id" },
-    )
+    .insert({
+      business_id: inv.business_id,
+      user_id: user.id,
+      role: inv.role,
+    })
     .select("id")
     .maybeSingle();
 
-  // Marcar invitation accepted
-  await admin
+  if (memberRes.error || !memberRes.data) {
+    console.error("[invite] membership create failed:", memberRes.error?.message ?? "missing row");
+    return { ok: false, persisted: false, error: "membership_create_failed" };
+  }
+
+  const acceptedAt = new Date().toISOString();
+  const acceptRes = await admin
     .from("user_invitations")
-    .update({ status: "accepted", accepted_at: new Date().toISOString() })
-    .eq("id", inv.id);
+    .update({ status: "accepted", accepted_at: acceptedAt })
+    .eq("id", inv.id)
+    .eq("status", "pending")
+    .select("id")
+    .maybeSingle();
+
+  if (acceptRes.error || !acceptRes.data) {
+    console.error("[invite] invitation state update failed:", acceptRes.error?.message ?? "missing row");
+    // Compensación: no dejar una membership activa si no pudimos consumir el token.
+    const rollbackRes = await admin
+      .from("business_members")
+      .delete()
+      .eq("id", memberRes.data.id)
+      .eq("user_id", user.id)
+      .eq("business_id", inv.business_id);
+    if (rollbackRes.error) {
+      console.error("[invite] membership compensation failed:", rollbackRes.error.message);
+    }
+    return { ok: false, persisted: false, error: "invitation_accept_failed" };
+  }
 
   await logActivity({
     businessId: inv.business_id,
