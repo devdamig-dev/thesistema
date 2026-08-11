@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowRight, KeyRound, Mail, Sparkles, Zap } from "lucide-react";
@@ -34,7 +34,7 @@ function LoginPageInner() {
   const [completingLogin, setCompletingLogin] = useState(Boolean(authCode));
   const exchangedCodeRef = useRef<string | null>(null);
 
-  async function acceptPendingInvite(): Promise<boolean> {
+  const acceptPendingInvite = useCallback(async (): Promise<boolean> => {
     if (!inviteToken) return true;
     setAcceptingInvite(true);
     try {
@@ -67,7 +67,7 @@ function LoginPageInner() {
     } finally {
       setAcceptingInvite(false);
     }
-  }
+  }, [inviteToken, toast]);
 
   useEffect(() => {
     if (!authCode || exchangedCodeRef.current === authCode) return;
@@ -108,7 +108,7 @@ function LoginPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [authCode, inviteToken, next, router, toast]);
+  }, [acceptPendingInvite, authCode, inviteToken, next, router, toast]);
 
   async function handlePasswordLogin(e: React.FormEvent) {
     e.preventDefault();
