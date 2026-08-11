@@ -45,8 +45,11 @@ export default async function DatabaseDashboard() {
   let pendingCount = 0;
   let approvedToday = 0;
   let whatsappConnected = false;
+  let loadError: string | null = null;
 
-  if (db && ctx.businessId) {
+  if (!db || !ctx.businessId) {
+    loadError = "No pudimos resolver la conexión o el negocio activo de esta sesión.";
+  } else {
     const [bizRes, todayRes, monthRes, purchasesRes, pendingRes, approvedRes] = await Promise.all([
       db.from("businesses").select("name, whatsapp_connected").eq("id", ctx.businessId).maybeSingle(),
       db.from("sales").select("amount").eq("business_id", ctx.businessId).gte("occurred_at", todayStart),
@@ -56,13 +59,56 @@ export default async function DatabaseDashboard() {
       db.from("ai_extractions").select("id", { count: "exact", head: true }).eq("business_id", ctx.businessId).eq("status", "approved").gte("approved_at", todayStart),
     ]);
 
-    businessName = bizRes.data?.name ?? businessName;
-    whatsappConnected = Boolean(bizRes.data?.whatsapp_connected);
-    salesToday = todayRes.data ?? [];
-    salesMonth = monthRes.data ?? [];
-    purchasesMonth = purchasesRes.data ?? [];
-    pendingCount = pendingRes.count ?? 0;
-    approvedToday = approvedRes.count ?? 0;
+    const failedQueries = [
+      ["business", bizRes],
+      ["sales_today", todayRes],
+      ["sales_month", monthRes],
+      ["purchases_month", purchasesRes],
+      ["pending_extractions", pendingRes],
+      ["approved_extractions", approvedRes],
+    ].filter(([, result]) => Boolean((result as any)?.error));
+
+    if (failedQueries.length > 0) {
+      const diagnostics = failedQueries.map(([label, result]) => ({
+        query: label,
+        code: (result as any)?.error?.code ?? null,
+        message: (result as any)?.error?.message ?? "unknown_error",
+      }));
+      console.error("[database-dashboard] Supabase query failure", diagnostics);
+      loadError = "Una o más consultas a Supabase fallaron. Para no mostrar ceros como si fueran datos reales, ocultamos los indicadores hasta recuperar la conexión.";
+    } else {
+      businessName = bizRes.data?.name ?? businessName;
+      whatsappConnected = Boolean(bizRes.data?.whatsapp_connected);
+      salesToday = todayRes.data ?? [];
+      salesMonth = monthRes.data ?? [];
+      purchasesMonth = purchasesRes.data ?? [];
+      pendingCount = pendingRes.count ?? 0;
+      approvedToday = approvedRes.count ?? 0;
+    }
+  }
+
+  if (loadError) {
+    return (
+      <div className="space-y-6">
+        <header className="border-b border-line pb-6">
+          <div className="eyebrow mb-1">Cabina de control</div>
+          <h1 className="text-3xl font-semibold tracking-tight text-ink">No pudimos cargar el estado real</h1>
+          <p className="mt-2 max-w-2xl text-sm text-ink-muted">{loadError}</p>
+        </header>
+        <section className="rounded-2xl border border-warn-500/30 bg-warn-500/[0.06] p-6">
+          <div className="flex items-start gap-3">
+            <Sparkles className="mt-0.5 h-5 w-5 text-warn-400" />
+            <div>
+              <h2 className="text-sm font-semibold text-ink">Los indicadores no están en cero: están temporalmente indisponibles</h2>
+              <p className="mt-1 text-xs text-ink-muted">
+                Reintentá en unos segundos. Si persiste, revisá la conexión de Supabase o los permisos de esta cuenta.
+              </p>
+              <Link href="/" className="mt-4 inline-block"><Button size="sm" variant="ghost">Reintentar</Button></Link>
+            </div>
+          </div>
+        </section>
+      </div>
+    );
   }
 
   const ventasHoy = sumAmounts(salesToday);
