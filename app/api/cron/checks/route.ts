@@ -5,11 +5,10 @@
  * (o uno específico vía ?business=...). Devuelve resumen.
  *
  * Protección:
- *   - En production conviene pedir `Authorization: Bearer ${CRON_TOKEN}`.
- *   - Sin token, en demo mode siempre devuelve OK noop.
- *
- * Programación sugerida en Supabase / Vercel cron:
- *   cada 15-30 minutos.
+ *   - En database mode exige Authorization: Bearer <secret>.
+ *   - Usa CRON_SECRET (Vercel Cron) y mantiene CRON_TOKEN como fallback legacy.
+ *   - Si no hay ningún secret configurado, falla cerrado y no ejecuta queries admin.
+ *   - En demo mode devuelve OK noop sin tocar datos.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -24,26 +23,36 @@ import {
   checkTaxDebtsForBusiness,
 } from "@/lib/data/notification-checks";
 
-export async function GET(request: NextRequest) {
-  // Protección por token (opcional)
-  const cronToken = process.env.CRON_TOKEN;
-  if (cronToken) {
-    const auth = request.headers.get("authorization") ?? "";
-    const provided = auth.replace(/^Bearer\s+/i, "");
-    if (provided !== cronToken) {
-      return NextResponse.json({ ok: false, reason: "unauthorized" }, { status: 401 });
-    }
+function authorizeCron(request: NextRequest): NextResponse | null {
+  const cronSecret = process.env.CRON_SECRET || process.env.CRON_TOKEN;
+  if (!cronSecret) {
+    return NextResponse.json(
+      { ok: false, reason: "cron_secret_not_configured" },
+      { status: 503 },
+    );
   }
 
+  const auth = request.headers.get("authorization") ?? "";
+  const provided = auth.replace(/^Bearer\s+/i, "");
+  if (provided !== cronSecret) {
+    return NextResponse.json({ ok: false, reason: "unauthorized" }, { status: 401 });
+  }
+
+  return null;
+}
+
+export async function GET(request: NextRequest) {
   if (!isDatabaseMode()) {
     return NextResponse.json({ ok: true, mode: "demo", noop: true });
   }
+
+  const authError = authorizeCron(request);
+  if (authError) return authError;
 
   try {
     const db = createSupabaseAdminClient() as any;
     const requested = request.nextUrl.searchParams.get("business");
 
-    // Si se pide uno específico, sólo ese; si no, todos.
     const businessesRes = requested
       ? { data: [{ id: requested }] }
       : await db.from("businesses").select("id");
