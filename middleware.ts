@@ -8,13 +8,9 @@
  *   2. Refresca la sesión de Supabase en cada request.
  *   3. Si el usuario no tiene sesión y va a una ruta privada,
  *      lo manda a /login.
- *   4. Resuelve el rol + módulos habilitados del usuario y, si la
- *      ruta requiere un módulo que el rol no puede ver, redirige a
- *      /sin-permisos.
- *
- * En database mode sólo /login, /logout y /ayuda son públicos para auth.
- * El Dashboard, onboarding, notificaciones, ajustes y módulos operativos
- * requieren sesión.
+ *   4. Resuelve un único negocio activo. Si hay más de una membership y no
+ *      existe selector de tenant, falla cerrado en vez de elegir uno arbitrario.
+ *   5. Resuelve rol + módulos dentro de ese mismo negocio.
  */
 
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
@@ -31,6 +27,11 @@ const APP_MODE = (process.env.NEXT_PUBLIC_APP_MODE ?? "demo").toLowerCase();
 const SUPA_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPA_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
+type BusinessResolution = {
+  businessId: string | null;
+  ambiguous: boolean;
+};
+
 function isAuthPublicPath(pathname: string): boolean {
   return pathname === "/login" || pathname === "/logout" || pathname === "/ayuda";
 }
@@ -38,9 +39,6 @@ function isAuthPublicPath(pathname: string): boolean {
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
-  // ---------- DEMO MODE GUARD ----------
-  // Sólo el modo demo explícito puede funcionar sin Supabase. Si la app está
-  // declarada como database, una configuración incompleta debe fallar cerrada.
   if (APP_MODE !== "database") {
     const demoRole = request.cookies.get("gp_demo_role")?.value as Role | undefined;
     if (demoRole && !isPublicPath(pathname) && !isSettingsPath(pathname)) {
@@ -57,9 +55,6 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Database mode sin variables críticas: no abrir la aplicación como demo.
-  // Dejamos accesible /login para mostrar la aplicación, pero bloqueamos el
-  // resto hasta que la configuración del deployment sea corregida.
   if (!SUPA_URL || !SUPA_ANON) {
     if (pathname === "/login") return NextResponse.next();
     const redirect = request.nextUrl.clone();
@@ -89,12 +84,8 @@ export async function middleware(request: NextRequest) {
 
   const isPublic = isPublicPath(pathname);
   const authPublic = isAuthPublicPath(pathname);
-
   const { data: { user } } = await supabase.auth.getUser();
 
-  // Importante: PUBLIC_PATHS también se usa para el guard de módulos y contiene
-  // rutas como / y /notificaciones. Eso NO significa que sean públicas para
-  // autenticación en database mode.
   if (!user && !authPublic) {
     const redirect = request.nextUrl.clone();
     redirect.pathname = "/login";
@@ -103,22 +94,33 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(redirect);
   }
 
-  // Check onboarding: si el business no completó el setup, redirigir.
-  // No aplica a rutas de sistema ni al módulo interno /admin/* — el gate de
-  // admin no depende del estado de onboarding del business.
+  let business: BusinessResolution = { businessId: null, ambiguous: false };
+  if (user) {
+    business = await resolveBusinessFromDb(supabase, user.id);
+
+    if (business.ambiguous && pathname !== "/sin-permisos" && pathname !== "/logout") {
+      const redirect = request.nextUrl.clone();
+      redirect.pathname = "/sin-permisos";
+      redirect.search = "";
+      redirect.searchParams.set("reason", "multiple_businesses");
+      redirect.searchParams.set("from", pathname);
+      return NextResponse.redirect(redirect);
+    }
+  }
+
   const onboardingExempt =
     pathname === "/onboarding" ||
     pathname.startsWith("/onboarding/") ||
     pathname === "/login" ||
     pathname === "/logout" ||
     pathname.startsWith("/admin") ||
+    pathname === "/sin-permisos" ||
     (isPublic && pathname !== "/");
 
   if (user && !onboardingExempt) {
     try {
-      const businessId = await resolveBusinessIdFromDb(supabase, user.id);
-      const onboarding = businessId
-        ? await checkOnboardingCompleted(supabase, businessId)
+      const onboarding = business.businessId
+        ? await checkOnboardingCompleted(supabase, business.businessId)
         : false;
       if (onboarding === false) {
         const redirect = request.nextUrl.clone();
@@ -127,23 +129,26 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(redirect);
       }
     } catch {
-      // Best-effort — si falla la query, no bloqueamos navegación de una sesión
-      // válida; RLS y las server actions siguen siendo la frontera de datos.
+      // Best-effort para errores transitorios de lectura. Las server actions y
+      // RLS siguen siendo la frontera de escritura/datos.
     }
   }
 
-  // Página requiere módulo específico → chequear permiso.
   if (user) {
     const requiredModule = moduleForPath(pathname);
     if (requiredModule) {
-      const role = await resolveRoleFromDb(supabase, user.id);
-      const enabledModules = await resolveEnabledModulesFromDb(supabase, user.id);
+      const role = business.businessId
+        ? await resolveRoleFromDb(supabase, user.id, business.businessId)
+        : "viewer";
+      const enabledModules = business.businessId
+        ? await resolveEnabledModulesFromDb(supabase, business.businessId)
+        : [];
+
       if (!canSeeModule(role, requiredModule, enabledModules)) {
         try {
-          const businessId = await resolveBusinessIdFromDb(supabase, user.id);
-          if (businessId) {
+          if (business.businessId) {
             await logPermissionDenied({
-              businessId,
+              businessId: business.businessId,
               actorId: user.id,
               actorName: user.email ?? null,
               actorRole: role,
@@ -152,7 +157,7 @@ export async function middleware(request: NextRequest) {
             });
           }
         } catch {
-          // ignore — logging es best-effort
+          // logging best-effort
         }
         const redirect = request.nextUrl.clone();
         redirect.pathname = "/sin-permisos";
@@ -167,40 +172,39 @@ export async function middleware(request: NextRequest) {
   return response;
 }
 
-async function resolveRoleFromDb(supabase: any, userId: string): Promise<Role> {
+async function resolveBusinessFromDb(supabase: any, userId: string): Promise<BusinessResolution> {
+  const res = await supabase
+    .from("business_members")
+    .select("business_id")
+    .eq("user_id", userId)
+    .limit(2);
+
+  if (res.error) return { businessId: null, ambiguous: false };
+
+  const rows = (res.data as { business_id: string }[] | null) ?? [];
+  if (rows.length > 1) return { businessId: null, ambiguous: true };
+  return { businessId: rows[0]?.business_id ?? null, ambiguous: false };
+}
+
+async function resolveRoleFromDb(
+  supabase: any,
+  userId: string,
+  businessId: string,
+): Promise<Role> {
   const res = await supabase
     .from("business_members")
     .select("role")
     .eq("user_id", userId)
-    .limit(1)
+    .eq("business_id", businessId)
     .maybeSingle();
   const data = res.data as { role: Role } | null;
   return data?.role ?? "viewer";
 }
 
-async function resolveBusinessIdFromDb(supabase: any, userId: string): Promise<string | null> {
-  const res = await supabase
-    .from("business_members")
-    .select("business_id")
-    .eq("user_id", userId)
-    .limit(1)
-    .maybeSingle();
-  return (res.data as { business_id: string } | null)?.business_id ?? null;
-}
-
 async function resolveEnabledModulesFromDb(
   supabase: any,
-  userId: string,
+  businessId: string,
 ): Promise<ModuleKey[] | null> {
-  const memberRes = await supabase
-    .from("business_members")
-    .select("business_id")
-    .eq("user_id", userId)
-    .limit(1)
-    .maybeSingle();
-  const businessId = (memberRes.data as { business_id: string } | null)?.business_id;
-  if (!businessId) return null;
-
   const modsRes = await supabase
     .from("business_modules")
     .select("module_key")
