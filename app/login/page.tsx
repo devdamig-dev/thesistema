@@ -43,7 +43,7 @@ function LoginPageInner() {
         if (!cancelled) setCompletingLogin(false);
         return;
       }
-      const { error } = await supabase.auth.exchangeCodeForSession(authCode);
+      const { error } = await supabase.auth.exchangeCodeForSession(authCode!);
       if (cancelled) return;
       if (error) {
         setCompletingLogin(false);
