@@ -26,11 +26,12 @@ const MODULE_LABEL: Record<string, string> = {
 export default async function SinPermisosPage({
   searchParams,
 }: {
-  searchParams: { m?: string; from?: string };
+  searchParams: { m?: string; from?: string; reason?: string };
 }) {
   const ctx = await getCurrentUserContext();
   const moduleKey = searchParams.m ?? "";
   const fromPath = searchParams.from ?? "/";
+  const multipleBusinesses = searchParams.reason === "multiple_businesses";
   const moduleLabel = MODULE_LABEL[moduleKey] ?? moduleKey ?? "esa sección";
 
   return (
@@ -45,19 +46,22 @@ export default async function SinPermisosPage({
           </div>
 
           <Badge tone="danger" className="mt-4">
-            Acceso denegado
+            {multipleBusinesses ? "Contexto de negocio requerido" : "Acceso denegado"}
           </Badge>
 
           <h1 className="mt-3 text-balance text-2xl font-semibold tracking-tight text-ink">
-            No podés acceder a {moduleLabel}
+            {multipleBusinesses
+              ? "Tu cuenta pertenece a más de un negocio"
+              : `No podés acceder a ${moduleLabel}`}
           </h1>
 
           <p className="mt-2 text-sm text-ink-muted">
-            Tu rol actual ({getRoleLabel(ctx.role)}) no incluye permiso para
-            ver este módulo.
+            {multipleBusinesses
+              ? "GastroPilot todavía no tiene selector de negocio activo. Para proteger el aislamiento entre tenants, no elegimos uno automáticamente."
+              : `Tu rol actual (${getRoleLabel(ctx.role)}) no incluye permiso para ver este módulo.`}
           </p>
 
-          {moduleKey && (
+          {!multipleBusinesses && moduleKey && (
             <div className="mt-4 rounded-lg border border-line bg-bg-subtle/60 p-3 text-left text-xs">
               <div className="text-[10px] uppercase tracking-wider text-ink-subtle">
                 Detalle técnico
@@ -77,15 +81,24 @@ export default async function SinPermisosPage({
             </div>
           )}
 
+          {multipleBusinesses && fromPath !== "/" && (
+            <div className="mt-4 rounded-lg border border-line bg-bg-subtle/60 p-3 text-left text-xs text-ink-muted">
+              <span>Ruta bloqueada: </span>
+              <code className="text-ink">{fromPath}</code>
+            </div>
+          )}
+
           <div className="mt-6 flex flex-col gap-2">
-            <Link href="/">
-              <Button variant="primary" size="lg" className="w-full">
-                <ArrowLeft className="h-4 w-4" />
-                Volver al inicio
-              </Button>
-            </Link>
+            {!multipleBusinesses && (
+              <Link href="/">
+                <Button variant="primary" size="lg" className="w-full">
+                  <ArrowLeft className="h-4 w-4" />
+                  Volver al inicio
+                </Button>
+              </Link>
+            )}
             <Link href="/ayuda">
-              <Button variant="ghost" size="md" className="w-full">
+              <Button variant={multipleBusinesses ? "primary" : "ghost"} size="md" className="w-full">
                 <LifeBuoy className="h-4 w-4" />
                 Pedir ayuda al equipo
               </Button>
@@ -93,8 +106,9 @@ export default async function SinPermisosPage({
           </div>
 
           <p className="mt-4 text-[11px] text-ink-subtle">
-            Si pensás que esto es un error, contactá al socio o administrador
-            del negocio.
+            {multipleBusinesses
+              ? "Hasta incorporar selección explícita de tenant, este bloqueo es intencional."
+              : "Si pensás que esto es un error, contactá al socio o administrador del negocio."}
           </p>
         </div>
       </div>
