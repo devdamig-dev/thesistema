@@ -19,27 +19,15 @@ import type { UserContext } from "@/lib/data/auth";
 /**
  * Devuelve los branch_ids efectivos del usuario.
  * Si el rol está sin restricción, devuelve null.
- * Si está restringido pero no tiene asignaciones, asigna por default
- * la sucursal principal del business (better-than-nothing).
+ * Si está restringido y no tiene asignaciones explícitas, devuelve []
+ * y falla cerrado: nunca se concede acceso implícito a la sucursal principal.
  */
 export async function getEffectiveBranchIds(
-  db: any,
+  _db: any,
   ctx: UserContext,
 ): Promise<string[] | null> {
   if (ctx.assignedBranchIds === null) return null;
-  if (ctx.assignedBranchIds.length > 0) return ctx.assignedBranchIds;
-
-  // Sin asignaciones explícitas — fallback a sucursal principal.
-  if (!ctx.businessId) return [];
-  const res = await db
-    .from("branches")
-    .select("id")
-    .eq("business_id", ctx.businessId)
-    .eq("is_main", true)
-    .limit(1)
-    .maybeSingle();
-  const main = (res.data as { id: string } | null)?.id;
-  return main ? [main] : [];
+  return ctx.assignedBranchIds;
 }
 
 /**
