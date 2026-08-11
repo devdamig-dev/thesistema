@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import OnboardingClient, { type OnboardingInitialState } from "./onboarding-client";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isDatabaseMode } from "@/lib/env";
@@ -31,12 +32,19 @@ async function getInitialState(): Promise<OnboardingInitialState> {
     .eq("user_id", userId);
   if (membershipsRes.error) return DEFAULT_INITIAL_STATE;
 
-  const ownerBusinessIds = ((membershipsRes.data ?? []) as { business_id: string; role: string }[])
+  const memberships = (membershipsRes.data ?? []) as { business_id: string; role: string }[];
+  const ownerBusinessIds = memberships
     .filter((row) => row.role === "owner")
     .map((row) => row.business_id)
     .filter(Boolean);
 
-  if (ownerBusinessIds.length === 0) return DEFAULT_INITIAL_STATE;
+  // A genuinely new user (zero memberships) is the only case that should start
+  // a fresh wizard. Assigned non-owners already belong to a tenant and should
+  // never be offered the owner/bootstrap flow.
+  if (ownerBusinessIds.length === 0) {
+    if (memberships.length > 0) redirect("/");
+    return DEFAULT_INITIAL_STATE;
+  }
 
   const businessesRes = await db
     .from("businesses")
@@ -53,8 +61,10 @@ async function getInitialState(): Promise<OnboardingInitialState> {
     sales_channels: string[] | null;
   }[]).filter((business) => !business.onboarding_completed);
 
-  // Igual que las server actions: nunca elegir un tenant arbitrariamente.
-  if (incomplete.length !== 1) return DEFAULT_INITIAL_STATE;
+  // Completed owners should use the application, not reopen setup. Multiple
+  // incomplete owner tenants remain ambiguous until an explicit selector exists.
+  if (incomplete.length === 0) redirect("/");
+  if (incomplete.length > 1) redirect("/sin-permisos?reason=multiple_businesses&from=/onboarding");
 
   const business = incomplete[0];
   const branchRes = await db
