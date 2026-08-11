@@ -152,6 +152,7 @@ export async function getCurrentUserContext(): Promise<UserContext> {
     .select("module_key, enabled")
     .eq("business_id", member.business_id)
     .eq("enabled", true);
+  if (modsRes.error) return safeAuthenticatedContext;
   const mods = (modsRes.data as { module_key: ModuleKey; enabled: boolean }[] | null) ?? [];
 
   // Branch assignments — sólo aplican a roles restringidos.
@@ -172,7 +173,7 @@ export async function getCurrentUserContext(): Promise<UserContext> {
     fullName: profile?.full_name ?? user.email ?? "Usuario",
     email: profile?.email ?? user.email ?? null,
     role: member.role,
-    enabledModules: mods.length ? mods.map((m) => m.module_key) : null,
+    enabledModules: mods.map((m) => m.module_key),
     assignedBranchIds,
   };
 }
