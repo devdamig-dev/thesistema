@@ -20,39 +20,35 @@ async function getOnboardingBusinessId(db: any): Promise<string | null> {
 
   const membershipsRes = await db
     .from("business_members")
-    .select("business_id")
-    .eq("user_id", userId);
+    .select("business_id, role")
+    .eq("user_id", userId)
+    .eq("role", "owner");
   if (membershipsRes.error) return null;
 
-  const businessIds = [
+  const ownerBusinessIds = [
     ...new Set(
-      ((membershipsRes.data ?? []) as { business_id: string }[])
+      ((membershipsRes.data ?? []) as { business_id: string; role: string }[])
         .map((row) => row.business_id)
         .filter(Boolean),
     ),
   ];
-  if (businessIds.length === 0) return null;
+  if (ownerBusinessIds.length === 0) return null;
 
   const businessesRes = await db
     .from("businesses")
     .select("id, onboarding_completed")
-    .in("id", businessIds);
+    .in("id", ownerBusinessIds);
   if (businessesRes.error) return null;
 
-  const businesses = (businessesRes.data ?? []) as {
+  const incomplete = ((businessesRes.data ?? []) as {
     id: string;
     onboarding_completed: boolean | null;
-  }[];
-  const incomplete = businesses.filter((business) => !business.onboarding_completed);
+  }[]).filter((business) => !business.onboarding_completed);
 
-  // Never pick an arbitrary tenant. The onboarding flow must resolve to one
-  // unambiguous incomplete business owned/visible by the authenticated user.
-  if (incomplete.length === 1) return incomplete[0].id;
-  if (incomplete.length > 1) return null;
-
-  // Defensive fallback for legacy accounts where the flag was already set but
-  // the wizard is still being resumed. It is safe only when membership is unique.
-  return businesses.length === 1 ? businesses[0].id : null;
+  // Onboarding actions are a privileged setup boundary: only the owner of one
+  // unambiguous, still-incomplete business may mutate setup state or seed data.
+  // Never fall back to a completed tenant, and never accept non-owner members.
+  return incomplete.length === 1 ? incomplete[0].id : null;
 }
 
 export async function saveBusinessStep(payload: {
