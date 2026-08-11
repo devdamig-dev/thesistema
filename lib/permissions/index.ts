@@ -26,8 +26,10 @@ export function canSeeModule(
   const effective = role ?? DEMO_ROLE;
   const allowedByRole = modulesFor(effective).includes(module);
   if (!allowedByRole) return false;
-  // Si el negocio definió módulos activos, intersectamos.
-  if (enabledModules && enabledModules.length > 0) {
+  // null/undefined significa "sin filtro de módulos" (demo/legacy explícito).
+  // Un array — incluso vacío — representa la configuración persistida real
+  // del negocio y debe intersectar estrictamente con el rol.
+  if (enabledModules !== null && enabledModules !== undefined) {
     return enabledModules.includes(module);
   }
   return true;
