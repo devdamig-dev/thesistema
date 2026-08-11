@@ -116,27 +116,36 @@ export async function getCurrentUserContext(): Promise<UserContext> {
     | { full_name: string; email: string | null; organization_id: string | null }
     | null;
 
+  const safeAuthenticatedContext: UserContext = {
+    isAuthenticated: true,
+    userId: user.id,
+    businessId: null,
+    fullName: profile?.full_name ?? user.email ?? "Usuario",
+    email: profile?.email ?? user.email ?? null,
+    role: "viewer",
+    enabledModules: [],
+    assignedBranchIds: [],
+  };
+
+  // No elegir nunca una membership arbitraria. El middleware ya falla cerrado
+  // para navegación multi-business, pero este helper también se usa desde
+  // Server Components, Server Actions y rutas que pueden no pasar por ese guard.
+  // Por eso el propio contexto debe ser seguro por construcción.
   const memberRes = await db
     .from("business_members")
     .select("id, business_id, role")
     .eq("user_id", user.id)
-    .limit(1)
-    .maybeSingle();
-  const member = memberRes.data as
-    | { id: string; business_id: string; role: Role }
-    | null;
-  if (!member) {
-    return {
-      isAuthenticated: true,
-      userId: user.id,
-      businessId: null,
-      fullName: profile?.full_name ?? user.email ?? "Usuario",
-      email: profile?.email ?? user.email ?? null,
-      role: "viewer",
-      enabledModules: null,
-      assignedBranchIds: [],
-    };
-  }
+    .limit(2);
+
+  if (memberRes.error) return safeAuthenticatedContext;
+
+  const members = (memberRes.data as
+    | { id: string; business_id: string; role: Role }[]
+    | null) ?? [];
+
+  if (members.length !== 1) return safeAuthenticatedContext;
+
+  const member = members[0];
 
   const modsRes = await db
     .from("business_modules")
