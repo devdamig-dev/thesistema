@@ -140,7 +140,9 @@ export async function listActivityWithFilters(
 ): Promise<ActivityRow[]> {
   const limit = filters.limit ?? 200;
 
-  // Demo fallback: filtramos en memoria
+  // Los datos plausibles existen únicamente para el modo demo explícito.
+  // En database mode, ausencia de tenant, cero filas o errores deben reflejar
+  // el estado real y nunca degradar silenciosamente a actividad ficticia.
   const filterDemo = () => {
     return DEMO_ACTIVITY.filter((r) => {
       if (filters.action && !r.action.startsWith(filters.action)) return false;
@@ -161,7 +163,8 @@ export async function listActivityWithFilters(
     });
   };
 
-  if (!isDatabaseMode() || !businessId) return filterDemo().slice(0, limit);
+  if (!isDatabaseMode()) return filterDemo().slice(0, limit);
+  if (!businessId) return [];
 
   try {
     const db = createSupabaseAdminClient() as any;
@@ -188,11 +191,9 @@ export async function listActivityWithFilters(
     if (filters.to) query = query.lte("created_at", filters.to);
 
     const res = await query;
-    const rows = (res.data as ActivityRow[]) ?? [];
-    if (rows.length === 0) return filterDemo().slice(0, limit);
-    return rows;
+    return (res.data as ActivityRow[]) ?? [];
   } catch {
-    return filterDemo().slice(0, limit);
+    return [];
   }
 }
 
