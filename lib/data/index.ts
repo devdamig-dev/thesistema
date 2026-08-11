@@ -12,10 +12,13 @@
 import { env } from "@/lib/env";
 import * as demoAdapter from "./demo";
 import * as supabaseAdapter from "./supabase";
+import { databaseBusiness } from "./business-database";
 
 const adapter = env.appMode === "database" ? supabaseAdapter : demoAdapter;
 
-export const business = adapter.business;
+// Business identity is security-sensitive: in database mode resolve it from the
+// same fail-closed authenticated tenant context used by middleware/server auth.
+export const business = env.appMode === "database" ? databaseBusiness : demoAdapter.business;
 export const dashboard = adapter.dashboard;
 export const inbox = adapter.inbox;
 export const invoices = adapter.invoices;
