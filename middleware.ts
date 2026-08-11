@@ -204,15 +204,14 @@ async function resolveRoleFromDb(
 async function resolveEnabledModulesFromDb(
   supabase: any,
   businessId: string,
-): Promise<ModuleKey[] | null> {
+): Promise<ModuleKey[]> {
   const modsRes = await supabase
     .from("business_modules")
     .select("module_key")
     .eq("business_id", businessId)
     .eq("enabled", true);
-  const mods =
-    (modsRes.data as { module_key: ModuleKey }[] | null)?.map((m) => m.module_key) ?? [];
-  return mods.length ? mods : null;
+  if (modsRes.error) return [];
+  return (modsRes.data as { module_key: ModuleKey }[] | null)?.map((m) => m.module_key) ?? [];
 }
 
 async function checkOnboardingCompleted(
