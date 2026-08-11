@@ -1,17 +1,18 @@
 /**
  * Dev endpoint para validar el pipeline OCR end-to-end.
  *
- * Uso:
+ * Uso local/demo:
  *   curl "http://localhost:3000/api/dev/ocr-pipeline?file=carne.pdf"
  *
- * Devuelve OCR text + extracción IA + matching con ingredients demo.
- * Sin Supabase ni auth. Útil para desarrollo y QA.
+ * Nunca debe ejecutar OCR/IA en database mode ni en production porque el
+ * endpoint no tiene auth y puede consumir proveedores externos/costos.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { extractTextFromInvoice } from "@/lib/ocr";
 import { extractInvoiceFromText } from "@/lib/ai/invoice-extract";
 import { matchAllItems } from "@/lib/ingredients/matching";
+import { isDatabaseMode } from "@/lib/env";
 
 const DEMO_INGREDIENTS = [
   { id: "ing-carne", name: "Carne premium 180g" },
@@ -22,6 +23,10 @@ const DEMO_INGREDIENTS = [
 ];
 
 export async function GET(request: NextRequest) {
+  if (isDatabaseMode() || process.env.VERCEL_ENV === "production") {
+    return NextResponse.json({ ok: false, reason: "not_found" }, { status: 404 });
+  }
+
   const file = request.nextUrl.searchParams.get("file") ?? "demo.pdf";
 
   const ocr = await extractTextFromInvoice({
