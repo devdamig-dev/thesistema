@@ -33,11 +33,36 @@ type BusinessResolution = {
 };
 
 function isAuthPublicPath(pathname: string): boolean {
-  return pathname === "/login" || pathname === "/logout" || pathname === "/ayuda";
+  return (
+    pathname === "/login" ||
+    pathname === "/logout" ||
+    pathname === "/ayuda" ||
+    pathname === "/restablecer-contrasena"
+  );
 }
 
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+
+  // Supabase Password Recovery vuelve a /login?recovery=1&code=... en PKCE.
+  // Interceptamos el código antes de que el browser client pueda consumirlo y
+  // lo enviamos a un Route Handler server-side que crea la sesión en cookies.
+  if (
+    APP_MODE === "database" &&
+    pathname === "/login" &&
+    request.nextUrl.searchParams.get("recovery") === "1"
+  ) {
+    const code = request.nextUrl.searchParams.get("code");
+    if (code) {
+      const callback = request.nextUrl.clone();
+      callback.pathname = "/api/auth/callback";
+      callback.search = "";
+      callback.searchParams.set("code", code);
+      callback.searchParams.set("flow", "recovery");
+      callback.searchParams.set("next", "/restablecer-contrasena");
+      return NextResponse.redirect(callback);
+    }
+  }
 
   if (APP_MODE !== "database") {
     const demoRole = request.cookies.get("gp_demo_role")?.value as Role | undefined;
@@ -113,6 +138,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/onboarding/") ||
     pathname === "/login" ||
     pathname === "/logout" ||
+    pathname === "/restablecer-contrasena" ||
     pathname.startsWith("/admin") ||
     pathname === "/sin-permisos" ||
     (isPublic && pathname !== "/");
