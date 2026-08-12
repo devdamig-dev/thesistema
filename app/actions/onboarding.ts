@@ -3,7 +3,6 @@
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isDatabaseMode } from "@/lib/env";
-import { SEEDS } from "@/lib/onboarding/seeds";
 import {
   SUGGESTED_MODULES_BY_INDUSTRY,
 } from "@/lib/industries";
@@ -46,7 +45,7 @@ async function getOnboardingBusinessId(db: any): Promise<string | null> {
   }[]).filter((business) => !business.onboarding_completed);
 
   // Onboarding actions are a privileged setup boundary: only the owner of one
-  // unambiguous, still-incomplete business may mutate setup state or seed data.
+  // unambiguous, still-incomplete business may mutate setup state.
   // Never fall back to a completed tenant, and never accept non-owner members.
   return incomplete.length === 1 ? incomplete[0].id : null;
 }
@@ -169,7 +168,7 @@ export async function saveWhatsappStep(): Promise<Result> {
 }
 
 export async function seedIngredientsAndProducts(
-  industry: Industry,
+  _industry: Industry,
 ): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
   const supabase = createSupabaseServerClient();
@@ -178,37 +177,14 @@ export async function seedIngredientsAndProducts(
   const businessId = await getOnboardingBusinessId(db);
   if (!businessId) return { ok: false, persisted: false, error: "no_unambiguous_business" };
 
-  const seed = SEEDS[industry];
-  if (!seed) return { ok: false, persisted: false, error: "unknown_industry" };
-
-  for (const ing of seed.ingredients) {
-    const { error } = await db.from("ingredients").upsert(
-      { business_id: businessId, name: ing.name, unit: ing.unit, avg_unit_cost: ing.avg_unit_cost },
-      { onConflict: "business_id,name" },
-    );
-    if (error) return { ok: false, persisted: false, error: "ingredient_seed_failed" };
-  }
-
-  for (const prod of seed.products) {
-    const { error } = await db.from("products").upsert(
-      {
-        business_id: businessId,
-        name: prod.name,
-        category: prod.category,
-        price: prod.price,
-        cost: prod.cost,
-        active: true,
-      },
-      { onConflict: "business_id,name" },
-    );
-    if (error) return { ok: false, persisted: false, error: "product_seed_failed" };
-  }
-
-  const { error: progressError } = await db
+  // Product/ingredient suggestions are intentionally deferred until the business
+  // has loaded its real products and recipes. Onboarding must never inject
+  // estimated costs or demo-like catalog data into a real tenant.
+  const { error } = await db
     .from("businesses")
     .update({ onboarding_step: 6 })
     .eq("id", businessId);
-  if (progressError) return { ok: false, persisted: false, error: "onboarding_progress_failed" };
+  if (error) return { ok: false, persisted: false, error: "onboarding_progress_failed" };
 
   revalidatePath("/onboarding");
   return { ok: true, persisted: true };
