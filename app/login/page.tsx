@@ -23,14 +23,17 @@ function LoginPageInner() {
   const next = params.get("next") ?? "/";
   const inviteToken = params.get("invite_token");
   const authCode = params.get("code");
+  const recovery = params.get("recovery") === "1";
   const demoMode = isDemoMode();
   const { toast } = useToast();
 
-  const [mode, setMode] = useState<"password" | "magic">("password");
+  const [mode, setMode] = useState<"password" | "magic" | "recover">(recovery ? "recover" : "password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
   const [sending, setSending] = useState(false);
   const [acceptingInvite, setAcceptingInvite] = useState(false);
+  const [recoveryReady, setRecoveryReady] = useState(false);
   const [completingLogin, setCompletingLogin] = useState(Boolean(authCode));
   const exchangedCodeRef = useRef<string | null>(null);
 
@@ -48,7 +51,6 @@ function LoginPageInner() {
         });
         return true;
       }
-
       const messages: Record<string, string> = {
         requires_auth: "Iniciá sesión primero y volvé a intentar.",
         invitation_not_found: "Ese link de invitación no es válido.",
@@ -58,11 +60,7 @@ function LoginPageInner() {
         invitation_email_mismatch: "Ingresaste con un email distinto al que recibió la invitación.",
         already_member: "Esta cuenta ya pertenece al negocio.",
       };
-      toast({
-        tone: "warn",
-        title: "No pudimos aceptar la invitación",
-        description: messages[result.error] ?? result.error,
-      });
+      toast({ tone: "warn", title: "No pudimos aceptar la invitación", description: messages[result.error] ?? result.error });
       return false;
     } finally {
       setAcceptingInvite(false);
@@ -74,7 +72,7 @@ function LoginPageInner() {
     exchangedCodeRef.current = authCode;
     let cancelled = false;
 
-    async function completeMagicLink() {
+    async function completeCodeExchange() {
       const supabase = createSupabaseBrowserClient();
       if (!supabase) {
         if (!cancelled) setCompletingLogin(false);
@@ -86,9 +84,18 @@ function LoginPageInner() {
         setCompletingLogin(false);
         toast({
           tone: "warn",
-          title: "El link no pudo iniciar la sesión",
-          description: "Ese link ya no es válido. Probá con tu contraseña o pedí uno nuevo.",
+          title: recovery ? "El enlace de recuperación no es válido" : "El link no pudo iniciar la sesión",
+          description: recovery
+            ? "Pedí un nuevo enlace para restablecer tu contraseña."
+            : "Ese link ya no es válido. Probá con tu contraseña o pedí uno nuevo.",
         });
+        return;
+      }
+
+      if (recovery) {
+        setRecoveryReady(true);
+        setMode("recover");
+        setCompletingLogin(false);
         return;
       }
 
@@ -104,11 +111,9 @@ function LoginPageInner() {
       router.refresh();
     }
 
-    void completeMagicLink();
-    return () => {
-      cancelled = true;
-    };
-  }, [acceptPendingInvite, authCode, inviteToken, next, router, toast]);
+    void completeCodeExchange();
+    return () => { cancelled = true; };
+  }, [acceptPendingInvite, authCode, inviteToken, next, recovery, router, toast]);
 
   async function handlePasswordLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -121,19 +126,13 @@ function LoginPageInner() {
       }
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) {
-        toast({
-          tone: "warn",
-          title: "No pudimos iniciar sesión",
-          description: "Revisá el email y la contraseña e intentá nuevamente.",
-        });
+        toast({ tone: "warn", title: "No pudimos iniciar sesión", description: "Revisá el email y la contraseña e intentá nuevamente." });
         return;
       }
-
       if (inviteToken) {
         const accepted = await acceptPendingInvite();
         if (!accepted) return;
       }
-
       router.replace(next);
       router.refresh();
     } finally {
@@ -151,31 +150,66 @@ function LoginPageInner() {
         else toast({ tone: "warn", title: "Login no disponible", description: "Supabase no está configurado." });
         return;
       }
-
       const redirectParams = new URLSearchParams({ next });
       if (inviteToken) redirectParams.set("invite_token", inviteToken);
-
       const { error } = await supabase.auth.signInWithOtp({
         email,
-        options: {
-          emailRedirectTo:
-            typeof window !== "undefined"
-              ? `${window.location.origin}/login?${redirectParams.toString()}`
-              : undefined,
-        },
+        options: { emailRedirectTo: typeof window !== "undefined" ? `${window.location.origin}/login?${redirectParams.toString()}` : undefined },
       });
       if (error) {
-        const description = error.message.includes("after")
-          ? "Esperá unos segundos antes de pedir otro link."
-          : error.message;
+        const description = error.message.includes("after") ? "Esperá unos segundos antes de pedir otro link." : error.message;
         toast({ tone: "warn", title: "No pudimos enviar el link", description });
       } else {
-        toast({
-          tone: "success",
-          title: "Te mandamos un link a tu mail",
-          description: "Usá siempre el correo más reciente: los links anteriores dejan de ser válidos.",
-        });
+        toast({ tone: "success", title: "Te mandamos un link a tu mail", description: "Usá siempre el correo más reciente: los links anteriores dejan de ser válidos." });
       }
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function handleRecoveryRequest(e: React.FormEvent) {
+    e.preventDefault();
+    setSending(true);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      if (!supabase) {
+        toast({ tone: "warn", title: "Recuperación no disponible", description: "Supabase no está configurado." });
+        return;
+      }
+      const redirectTo = typeof window !== "undefined" ? `${window.location.origin}/login?recovery=1` : undefined;
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+      if (error) {
+        toast({ tone: "warn", title: "No pudimos enviar el enlace", description: error.message });
+      } else {
+        toast({ tone: "success", title: "Revisá tu correo", description: "Te enviamos un enlace para elegir una contraseña nueva. Usá siempre el correo más reciente." });
+      }
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function handleSetNewPassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (password.length < 8) {
+      toast({ tone: "warn", title: "Contraseña demasiado corta", description: "Usá al menos 8 caracteres." });
+      return;
+    }
+    if (password !== passwordConfirm) {
+      toast({ tone: "warn", title: "Las contraseñas no coinciden", description: "Volvé a escribir la misma contraseña en ambos campos." });
+      return;
+    }
+    setSending(true);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      if (!supabase) return;
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) {
+        toast({ tone: "warn", title: "No pudimos guardar la contraseña", description: error.message });
+        return;
+      }
+      toast({ tone: "success", title: "Contraseña actualizada", description: "Ya podés usarla para ingresar a GastroPilot." });
+      router.replace("/");
+      router.refresh();
     } finally {
       setSending(false);
     }
@@ -189,6 +223,19 @@ function LoginPageInner() {
     }
   }
 
+  const title = completingLogin
+    ? recovery ? "Validando recuperación…" : "Completando tu acceso…"
+    : recoveryReady ? "Elegí una contraseña nueva"
+    : mode === "recover" ? "Restablecé tu contraseña"
+    : inviteToken ? "Te invitaron a un negocio" : "Entrá a GastroPilot";
+
+  const subtitle = completingLogin
+    ? "Estamos validando el enlace seguro."
+    : recoveryReady ? "Guardala en un lugar seguro. Vas a poder ingresar con email y contraseña."
+    : mode === "recover" ? "Te vamos a enviar un enlace seguro a tu correo."
+    : inviteToken ? "Ingresá con el mismo correo que recibió la invitación."
+    : mode === "password" ? "Ingresá con tu email y contraseña." : "Te mandamos un link mágico a tu correo.";
+
   return (
     <main className="relative grid min-h-screen grid-cols-1 lg:grid-cols-2">
       <div className="relative hidden overflow-hidden border-r border-line bg-bg-subtle/60 p-12 lg:flex lg:flex-col lg:justify-between">
@@ -196,19 +243,12 @@ function LoginPageInner() {
         <div className="absolute -left-32 -top-32 h-80 w-80 rounded-full bg-brand-500/20 blur-3xl" />
         <div className="absolute -right-24 -bottom-32 h-80 w-80 rounded-full bg-ai-500/15 blur-3xl" />
         <div className="relative flex items-center gap-2.5">
-          <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 shadow-soft">
-            <span className="text-lg font-black text-white">G</span>
-          </div>
-          <div className="flex items-center gap-1.5 text-lg font-semibold tracking-tight text-ink">
-            GastroPilot
-            <span className="rounded-md bg-ai-500/15 px-1.5 py-0.5 text-[10px] font-bold text-ai-400">AI</span>
-          </div>
+          <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 shadow-soft"><span className="text-lg font-black text-white">G</span></div>
+          <div className="flex items-center gap-1.5 text-lg font-semibold tracking-tight text-ink">GastroPilot<span className="rounded-md bg-ai-500/15 px-1.5 py-0.5 text-[10px] font-bold text-ai-400">AI</span></div>
         </div>
         <div className="relative">
           <h1 className="text-balance text-3xl font-semibold tracking-tight text-ink">Tu negocio, ordenado desde WhatsApp.</h1>
-          <p className="mt-3 max-w-md text-sm leading-relaxed text-ink-muted">
-            Cada mensaje, foto o audio se convierte en un registro útil. La IA entiende tus ventas, compras, gastos, stock y empleados.
-          </p>
+          <p className="mt-3 max-w-md text-sm leading-relaxed text-ink-muted">Cada mensaje, foto o audio se convierte en un registro útil. La IA entiende tus ventas, compras, gastos, stock y empleados.</p>
           <ul className="mt-6 space-y-2 text-sm text-ink-muted">
             <li className="flex items-center gap-2"><Sparkles className="h-3.5 w-3.5 text-ai-400" />Inbox IA · WhatsApp como fuente</li>
             <li className="flex items-center gap-2"><Sparkles className="h-3.5 w-3.5 text-ai-400" />OCR de facturas y cierres diarios</li>
@@ -220,104 +260,67 @@ function LoginPageInner() {
 
       <div className="flex items-center justify-center p-6 md:p-12">
         <div className="w-full max-w-sm space-y-6">
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-ink">
-              {completingLogin ? "Completando tu acceso…" : inviteToken ? "Te invitaron a un negocio" : "Entrá a GastroPilot"}
-            </h2>
-            <p className="mt-1 text-sm text-ink-muted">
-              {completingLogin
-                ? "Estamos validando el acceso y la invitación."
-                : inviteToken
-                  ? "Ingresá con el mismo correo que recibió la invitación."
-                  : mode === "password"
-                    ? "Ingresá con tu email y contraseña."
-                    : "Te mandamos un link mágico a tu correo."}
-            </p>
-          </div>
+          <div><h2 className="text-2xl font-semibold tracking-tight text-ink">{title}</h2><p className="mt-1 text-sm text-ink-muted">{subtitle}</p></div>
 
-          {!completingLogin && inviteToken && (
+          {!completingLogin && !recoveryReady && mode !== "recover" && inviteToken && (
             <div className="rounded-xl border border-ai-400/30 bg-ai-500/[0.06] p-3">
               <div className="text-[10px] uppercase tracking-wider text-ai-400">Invitación pendiente</div>
               <p className="mt-1 text-xs text-ink">Si ya tenés una sesión iniciada, podés aceptarla directamente.</p>
-              <Button size="sm" variant="ai" className="mt-2 w-full" onClick={handleAcceptInvite} disabled={acceptingInvite}>
-                {acceptingInvite ? "Aceptando…" : "Aceptar invitación"}
-              </Button>
+              <Button size="sm" variant="ai" className="mt-2 w-full" onClick={handleAcceptInvite} disabled={acceptingInvite}>{acceptingInvite ? "Aceptando…" : "Aceptar invitación"}</Button>
             </div>
           )}
 
-          {!completingLogin && (
+          {!completingLogin && !recoveryReady && mode !== "recover" && (
             <div className="grid grid-cols-2 gap-2 rounded-xl border border-line bg-bg-subtle p-1">
-              <button
-                type="button"
-                onClick={() => setMode("password")}
-                className={`rounded-lg px-3 py-2 text-xs font-medium transition ${mode === "password" ? "bg-bg-elevated text-ink shadow-sm" : "text-ink-muted"}`}
-              >
-                Contraseña
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode("magic")}
-                className={`rounded-lg px-3 py-2 text-xs font-medium transition ${mode === "magic" ? "bg-bg-elevated text-ink shadow-sm" : "text-ink-muted"}`}
-              >
-                Link mágico
-              </button>
+              <button type="button" onClick={() => setMode("password")} className={`rounded-lg px-3 py-2 text-xs font-medium transition ${mode === "password" ? "bg-bg-elevated text-ink shadow-sm" : "text-ink-muted"}`}>Contraseña</button>
+              <button type="button" onClick={() => setMode("magic")} className={`rounded-lg px-3 py-2 text-xs font-medium transition ${mode === "magic" ? "bg-bg-elevated text-ink shadow-sm" : "text-ink-muted"}`}>Link mágico</button>
             </div>
           )}
 
-          {!completingLogin && (
+          {!completingLogin && !recoveryReady && mode !== "recover" && (
             <form onSubmit={mode === "password" ? handlePasswordLogin : handleMagicLink} className="space-y-3">
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-ink-muted">Email</label>
-                <div className="flex items-center gap-2 rounded-lg border border-line bg-bg-subtle px-3 py-2 focus-within:border-line-strong focus-within:ring-2 focus-within:ring-brand-500/20">
-                  <Mail className="h-4 w-4 text-ink-subtle" />
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="tu@email.com"
-                    className="h-7 flex-1 bg-transparent text-sm text-ink placeholder:text-ink-subtle focus:outline-none"
-                  />
-                </div>
-              </div>
-
+              <EmailField email={email} setEmail={setEmail} />
               {mode === "password" && (
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-ink-muted">Contraseña</label>
-                  <div className="flex items-center gap-2 rounded-lg border border-line bg-bg-subtle px-3 py-2 focus-within:border-line-strong focus-within:ring-2 focus-within:ring-brand-500/20">
-                    <KeyRound className="h-4 w-4 text-ink-subtle" />
-                    <input
-                      type="password"
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Tu contraseña"
-                      className="h-7 flex-1 bg-transparent text-sm text-ink placeholder:text-ink-subtle focus:outline-none"
-                    />
-                  </div>
-                </div>
+                <>
+                  <PasswordField label="Contraseña" value={password} setValue={setPassword} placeholder="Tu contraseña" />
+                  <div className="text-right"><button type="button" onClick={() => { setMode("recover"); setPassword(""); }} className="text-xs text-brand-300 hover:text-brand-200">¿Olvidaste tu contraseña?</button></div>
+                </>
               )}
-
-              <Button type="submit" variant="primary" size="lg" className="w-full" disabled={sending || acceptingInvite || !email || (mode === "password" && !password)}>
-                {sending ? "Procesando…" : mode === "password" ? "Ingresar" : "Enviar link mágico"}
-                <ArrowRight className="h-4 w-4" />
-              </Button>
+              <Button type="submit" variant="primary" size="lg" className="w-full" disabled={sending || acceptingInvite || !email || (mode === "password" && !password)}>{sending ? "Procesando…" : mode === "password" ? "Ingresar" : "Enviar link mágico"}<ArrowRight className="h-4 w-4" /></Button>
             </form>
           )}
 
-          {!completingLogin && demoMode && (
-            <Link href={next}>
-              <Button variant="ghost" size="lg" className="w-full"><Zap className="h-4 w-4 text-ai-400" />Entrar como demo</Button>
-            </Link>
+          {!completingLogin && !recoveryReady && mode === "recover" && (
+            <form onSubmit={handleRecoveryRequest} className="space-y-3">
+              <EmailField email={email} setEmail={setEmail} />
+              <Button type="submit" variant="primary" size="lg" className="w-full" disabled={sending || !email}>{sending ? "Enviando…" : "Enviar enlace de recuperación"}<ArrowRight className="h-4 w-4" /></Button>
+              <button type="button" onClick={() => setMode("password")} className="w-full text-center text-xs text-brand-300 hover:text-brand-200">Volver al ingreso</button>
+            </form>
           )}
 
-          {!completingLogin && (
-            <p className="text-center text-[11px] text-ink-subtle">
-              ¿Necesitás ayuda? <Link href="/ayuda" className="text-brand-300 hover:text-brand-200">Centro de ayuda</Link>
-            </p>
+          {!completingLogin && recoveryReady && (
+            <form onSubmit={handleSetNewPassword} className="space-y-3">
+              <PasswordField label="Nueva contraseña" value={password} setValue={setPassword} placeholder="Mínimo 8 caracteres" />
+              <PasswordField label="Repetir contraseña" value={passwordConfirm} setValue={setPasswordConfirm} placeholder="Repetí la contraseña" />
+              <Button type="submit" variant="primary" size="lg" className="w-full" disabled={sending || !password || !passwordConfirm}>{sending ? "Guardando…" : "Guardar nueva contraseña"}<ArrowRight className="h-4 w-4" /></Button>
+            </form>
           )}
+
+          {!completingLogin && !recoveryReady && mode !== "recover" && demoMode && (
+            <Link href={next}><Button variant="ghost" size="lg" className="w-full"><Zap className="h-4 w-4 text-ai-400" />Entrar como demo</Button></Link>
+          )}
+
+          {!completingLogin && <p className="text-center text-[11px] text-ink-subtle">¿Necesitás ayuda? <Link href="/ayuda" className="text-brand-300 hover:text-brand-200">Centro de ayuda</Link></p>}
         </div>
       </div>
     </main>
   );
+}
+
+function EmailField({ email, setEmail }: { email: string; setEmail: (value: string) => void }) {
+  return <div><label className="mb-1.5 block text-xs font-medium text-ink-muted">Email</label><div className="flex items-center gap-2 rounded-lg border border-line bg-bg-subtle px-3 py-2 focus-within:border-line-strong focus-within:ring-2 focus-within:ring-brand-500/20"><Mail className="h-4 w-4 text-ink-subtle" /><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tu@email.com" className="h-7 flex-1 bg-transparent text-sm text-ink placeholder:text-ink-subtle focus:outline-none" /></div></div>;
+}
+
+function PasswordField({ label, value, setValue, placeholder }: { label: string; value: string; setValue: (value: string) => void; placeholder: string }) {
+  return <div><label className="mb-1.5 block text-xs font-medium text-ink-muted">{label}</label><div className="flex items-center gap-2 rounded-lg border border-line bg-bg-subtle px-3 py-2 focus-within:border-line-strong focus-within:ring-2 focus-within:ring-brand-500/20"><KeyRound className="h-4 w-4 text-ink-subtle" /><input type="password" required value={value} onChange={(e) => setValue(e.target.value)} placeholder={placeholder} className="h-7 flex-1 bg-transparent text-sm text-ink placeholder:text-ink-subtle focus:outline-none" /></div></div>;
 }
