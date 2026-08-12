@@ -13,7 +13,7 @@ export const STEPS: { key: OnboardingStep; label: string; description: string }[
   { key: "channels", label: "Canales de venta", description: "Cómo vendés: salón, delivery, apps" },
   { key: "team", label: "Equipo", description: "Invitá socios, encargados y contador" },
   { key: "whatsapp", label: "WhatsApp", description: "Conectá el número del negocio" },
-  { key: "recipes", label: "Ingredientes", description: "Los insumos base según tu rubro" },
+  { key: "recipes", label: "Productos y recetas", description: "Los cargás después con tus datos reales" },
   { key: "finish", label: "¡Listo!", description: "Todo configurado para arrancar" },
 ];
 
