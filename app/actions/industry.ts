@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isDatabaseMode } from "@/lib/env";
 import { assertPermission } from "@/lib/permissions/server-action";
+import { getCurrentUserContext } from "@/lib/data/auth";
 import {
   SUGGESTED_MODULES_BY_INDUSTRY,
   type IndustryKey,
@@ -11,8 +12,7 @@ import {
 
 /**
  * Cambia el rubro del business del usuario actual y recalcula
- * `business_modules.suggested`. En modo demo no persiste nada, sólo
- * deja el client mostrar el toast — la UI sigue funcional para venta.
+ * `business_modules.suggested`.
  */
 export async function setIndustryAction(industry: IndustryKey) {
   const guard = await assertPermission("settings.industry");
@@ -21,39 +21,27 @@ export async function setIndustryAction(industry: IndustryKey) {
     return { ok: true as const, persisted: false };
   }
 
-  const supabase = createSupabaseServerClient();
-  if (!supabase) return { ok: true as const, persisted: false };
-
-  // Resolver business del usuario
-  const memberRes = await supabase
-    .from("business_members")
-    .select("business_id")
-    .limit(1)
-    .maybeSingle();
-  const member = memberRes.data as { business_id: string } | null;
-  if (!member) {
+  const ctx = await getCurrentUserContext();
+  if (!ctx.isAuthenticated || !ctx.businessId) {
     return { ok: false as const, persisted: false, error: "Sin business asignado" };
   }
-  const businessId = member.business_id;
 
-  const db = supabase as any;
-
-  // 1) Actualizar industry
-  const { error: bizErr } = await db
-    .from("businesses")
-    .update({ industry })
-    .eq("id", businessId);
-  if (bizErr) {
-    return { ok: false as const, persisted: false, error: bizErr.message };
+  const supabase = createSupabaseServerClient();
+  if (!supabase) {
+    return { ok: false as const, persisted: false, error: "Supabase no disponible" };
   }
 
-  // 2) Resetear suggested = false en todo el set actual
-  await db
+  const businessId = ctx.businessId;
+  const db = supabase as any;
+
+  const { error: resetErr } = await db
     .from("business_modules")
     .update({ suggested: false })
     .eq("business_id", businessId);
+  if (resetErr) {
+    return { ok: false as const, persisted: false, error: `No pudimos actualizar módulos: ${resetErr.message}` };
+  }
 
-  // 3) Marcar suggested = true a los del nuevo rubro
   const suggestedModules = SUGGESTED_MODULES_BY_INDUSTRY[industry];
   if (suggestedModules.length > 0) {
     const rows = suggestedModules.map((module_key) => ({
@@ -62,9 +50,20 @@ export async function setIndustryAction(industry: IndustryKey) {
       enabled: true,
       suggested: true,
     }));
-    await db
+    const { error: modulesErr } = await db
       .from("business_modules")
       .upsert(rows, { onConflict: "business_id,module_key" });
+    if (modulesErr) {
+      return { ok: false as const, persisted: false, error: `No pudimos aplicar módulos sugeridos: ${modulesErr.message}` };
+    }
+  }
+
+  const { error: bizErr } = await db
+    .from("businesses")
+    .update({ industry })
+    .eq("id", businessId);
+  if (bizErr) {
+    return { ok: false as const, persisted: false, error: `No pudimos guardar el rubro: ${bizErr.message}` };
   }
 
   revalidatePath("/ajustes");
