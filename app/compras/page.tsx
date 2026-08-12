@@ -54,7 +54,9 @@ export default function ComprasPage() {
   const recentPurchases = IS_DATABASE ? databaseData?.recentPurchases ?? [] : demoRecentPurchases;
   const topSuppliers = IS_DATABASE ? databaseData?.topSuppliers ?? [] : demoTopSuppliers;
   const supplierCount = IS_DATABASE ? databaseData?.supplierCount ?? 0 : topSuppliers.length;
-  const totalMes = useMemo(() => topSuppliers.reduce((s, p) => s + p.totalMes, 0), [topSuppliers]);
+  const demoTotalMes = useMemo(() => demoTopSuppliers.reduce((s, p) => s + p.totalMes, 0), []);
+  const totalMes = IS_DATABASE ? databaseData?.totalMonth ?? 0 : demoTotalMes;
+  const orderCount = IS_DATABASE ? databaseData?.orderCount ?? 0 : recentPurchases.length;
 
   function handleExport() {
     startExport(async () => {
@@ -111,7 +113,7 @@ export default function ComprasPage() {
         <>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <KpiCard label="Compras del mes" value={formatARS(totalMes, { compact: true })} delta={IS_DATABASE ? undefined : 14.1} tone="brand" />
-            <KpiCard label="Órdenes" value={String(recentPurchases.length)} delta={IS_DATABASE ? undefined : 5} />
+            <KpiCard label="Órdenes" value={String(orderCount)} delta={IS_DATABASE ? undefined : 5} />
             <KpiCard label="Proveedores activos" value={String(supplierCount)} />
             <KpiCard label="Insumo más caro" value={IS_DATABASE ? "—" : "Carne premium"} hint={IS_DATABASE ? "Se habilita con historial comparable" : "$10.260/kg"} />
           </div>
