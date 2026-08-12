@@ -24,6 +24,8 @@ export type PurchasesPageData = {
   recentPurchases: PurchasesPageRow[];
   topSuppliers: SupplierSummaryRow[];
   supplierCount: number;
+  orderCount: number;
+  totalMonth: number;
 };
 
 export async function getPurchasesPageDataAction(): Promise<
@@ -39,7 +41,7 @@ export async function getPurchasesPageDataAction(): Promise<
     timeZone: "America/Argentina/Buenos_Aires",
   }).slice(0, 7) + "-01";
 
-  const [purchasesRes, suppliersRes] = await Promise.all([
+  const [recentRes, monthRes, suppliersRes] = await Promise.all([
     supabase
       .from("purchases")
       .select("id, supplier_id, purchased_at, total")
@@ -47,25 +49,37 @@ export async function getPurchasesPageDataAction(): Promise<
       .order("purchased_at", { ascending: false })
       .limit(50),
     supabase
+      .from("purchases")
+      .select("id, supplier_id, purchased_at, total")
+      .eq("business_id", ctx.businessId)
+      .gte("purchased_at", monthStart)
+      .order("purchased_at", { ascending: false }),
+    supabase
       .from("suppliers")
       .select("id, name, category")
       .eq("business_id", ctx.businessId)
       .order("name"),
   ]);
 
-  if (purchasesRes.error) {
-    return { ok: false, error: `No se pudieron leer las compras (${purchasesRes.error.code ?? "query_error"}).` };
+  if (recentRes.error) {
+    return { ok: false, error: `No se pudieron leer las compras recientes (${recentRes.error.code ?? "query_error"}).` };
+  }
+  if (monthRes.error) {
+    return { ok: false, error: `No se pudieron leer las compras del mes (${monthRes.error.code ?? "query_error"}).` };
   }
   if (suppliersRes.error) {
     return { ok: false, error: `No se pudieron leer los proveedores (${suppliersRes.error.code ?? "query_error"}).` };
   }
 
-  const purchases = (purchasesRes.data ?? []) as Array<{
+  type PurchaseDbRow = {
     id: string;
     supplier_id: string | null;
     purchased_at: string;
     total: number | string | null;
-  }>;
+  };
+
+  const purchases = (recentRes.data ?? []) as PurchaseDbRow[];
+  const monthPurchases = (monthRes.data ?? []) as PurchaseDbRow[];
   const suppliers = (suppliersRes.data ?? []) as Array<{
     id: string;
     name: string;
@@ -114,7 +128,6 @@ export async function getPurchasesPageDataAction(): Promise<
     };
   });
 
-  const monthPurchases = purchases.filter((p) => p.purchased_at >= monthStart);
   const supplierAgg = new Map<string, SupplierSummaryRow>();
   for (const purchase of monthPurchases) {
     const supplier = purchase.supplier_id ? supplierMap.get(purchase.supplier_id) : undefined;
@@ -141,6 +154,8 @@ export async function getPurchasesPageDataAction(): Promise<
       recentPurchases,
       topSuppliers,
       supplierCount: suppliers.length,
+      orderCount: monthPurchases.length,
+      totalMonth: monthPurchases.reduce((sum, purchase) => sum + Number(purchase.total ?? 0), 0),
     },
   };
 }
