@@ -217,7 +217,7 @@ function ClosureDetail({ closure }: { closure: UiClosure }) {
           <div className="mb-2 flex items-center gap-2 text-xs text-success-400"><MessageSquareText className="h-3.5 w-3.5" /> Mensaje original</div>
           <div className="rounded-xl border border-line bg-bg-subtle p-4">
             <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-ink">{closure.raw || "Sin texto original guardado."}</pre>
-            <div className="mt-2 text-[10px] text-ink-subtle">{relativeTime(closure.receivedAt)}</div>
+            <div className="mt-2 text-[10px] text-ink-subtle">{relativeTime(new Date(closure.receivedAt))}</div>
           </div>
         </div>
 
