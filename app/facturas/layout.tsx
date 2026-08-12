@@ -36,7 +36,7 @@ export default async function FacturasLayout({ children }: { children: ReactNode
                   <div className="mt-1 text-xs text-ink-muted">Factura {invoice.tipo} · {invoice.numero} · {invoice.fecha}</div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <Badge tone={invoice.status === "aprobado" ? "success" : "neutral"}>{invoice.status}</Badge>
+                  <Badge tone={invoice.status === "aprobado" ? "success" : "default"}>{invoice.status}</Badge>
                   <div className="font-semibold tabular-nums text-ink">{formatARS(invoice.total)}</div>
                 </div>
               </CardContent>
