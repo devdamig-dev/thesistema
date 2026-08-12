@@ -398,15 +398,15 @@ export default function OnboardingClient({
             {step.key === "recipes" && (
               <div className="space-y-4">
                 <p className="text-sm text-ink-muted">
-                  Según el rubro <span className="font-medium text-ink">{INDUSTRIES.find((i) => i.key === industry)?.label ?? industry}</span>, te sugerimos ingredientes y productos iniciales. Podés modificarlos después.
+                  No vamos a inventar productos, ingredientes ni costos para tu negocio. Primero cargá tus productos y recetas reales; después la IA puede ayudarte a analizarlos y sugerir mejoras sobre esa información.
                 </p>
                 <div className="rounded-xl border border-ai-400/25 bg-ai-500/[0.06] p-4">
                   <div className="mb-1 flex items-center gap-2 text-ai-400">
                     <Sparkles className="h-3.5 w-3.5" />
-                    <span className="text-xs font-semibold uppercase tracking-wider">Seed IA por rubro</span>
+                    <span className="text-xs font-semibold uppercase tracking-wider">Sugerencias con datos reales</span>
                   </div>
                   <p className="text-xs text-ink-muted">
-                    Se cargan ingredientes con costos estimados y productos base para que los ajustes a tus valores reales.
+                    Podés continuar ahora. La carga de productos, recetas e ingredientes se hace después con los valores reales de tu negocio.
                   </p>
                 </div>
               </div>
@@ -426,7 +426,7 @@ export default function OnboardingClient({
                     <Check className="h-3 w-3 text-success-400" /> Negocio configurado
                   </div>
                   <div className="flex items-center gap-2 rounded-lg border border-success-500/20 bg-success-500/[0.04] px-3 py-2 text-xs text-ink">
-                    <Check className="h-3 w-3 text-success-400" /> Ingredientes y productos base cargados
+                    <Check className="h-3 w-3 text-success-400" /> Productos y recetas listos para cargar con datos reales
                   </div>
                   <div className="flex items-center gap-2 rounded-lg border border-warn-500/20 bg-warn-500/[0.04] px-3 py-2 text-xs text-ink">
                     <MessageSquareText className="h-3 w-3 text-warn-400" /> WhatsApp pendiente de conexión
