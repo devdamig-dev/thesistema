@@ -133,7 +133,7 @@ export default function ResetPasswordPage() {
               El enlace no generó una sesión válida o ya venció. Pedí uno nuevo desde el ingreso.
             </div>
             <Link href="/login?recovery=1" className="block">
-              <Button variant="secondary" size="lg" className="w-full">
+              <Button variant="ghost" size="lg" className="w-full">
                 Pedir otro enlace
               </Button>
             </Link>
