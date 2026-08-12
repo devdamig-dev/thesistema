@@ -64,7 +64,7 @@ function normalizeDemo(row: (typeof demoClosures)[number]): UiClosure {
     net: row.parsed.neto,
     status: row.status,
     inconsistencies: row.inconsistencias,
-    receivedAt: row.recibida,
+    receivedAt: row.recibida instanceof Date ? row.recibida.toISOString() : String(row.recibida),
     parsed: row.parsed as unknown as Record<string, unknown>,
   };
 }
