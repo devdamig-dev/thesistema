@@ -11,6 +11,8 @@ import {
 } from "@/components/ajustes/setting-row";
 import { cn } from "@/lib/utils";
 
+const IS_DATABASE = process.env.NEXT_PUBLIC_APP_MODE === "database";
+
 const TONES = [
   { value: "cercano", label: "Cercano", desc: "Coloquial, charlado." },
   { value: "premium", label: "Premium", desc: "Cuidado y elegante." },
@@ -28,10 +30,38 @@ const MODULES = [
 ];
 
 export default function AjustesIAPage() {
+  if (IS_DATABASE) return <DatabaseAiSettings />;
+  return <DemoAiSettings />;
+}
+
+function DatabaseAiSettings() {
+  return (
+    <div className="space-y-6">
+      <SettingsCard
+        title="Configuración de IA"
+        description="Este apartado todavía no tiene un modelo persistido de planes, créditos, tono, automatizaciones ni módulos por negocio."
+      >
+        <div className="rounded-xl border border-warn-500/30 bg-warn-500/[0.06] p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+            <Sparkles className="h-4 w-4 text-warn-400" />
+            Configuración pendiente de conectar
+          </div>
+          <p className="mt-2 text-sm leading-relaxed text-ink-muted">
+            En producción no mostramos un plan Pro, créditos consumidos, fecha de renovación, tono de marca ni automatizaciones como si fueran datos reales cuando todavía no están persistidos.
+          </p>
+          <p className="mt-2 text-xs leading-relaxed text-ink-subtle">
+            Cuando estas preferencias tengan tablas y acciones reales, esta pantalla podrá habilitar edición y guardado. Hasta entonces permanece sólo informativa para evitar estados engañosos.
+          </p>
+        </div>
+      </SettingsCard>
+    </div>
+  );
+}
+
+function DemoAiSettings() {
   const { toast } = useToast();
   return (
     <div className="space-y-6">
-      {/* Plan & créditos */}
       <SettingsCard
         title="Plan y créditos IA"
         description="Cada plan incluye una cuota mensual de procesamiento."
@@ -62,7 +92,6 @@ export default function AjustesIAPage() {
         </div>
       </SettingsCard>
 
-      {/* Tono */}
       <SettingsCard
         title="Tono y voz de marca"
         description="Cómo te responde la IA cuando habla con tu equipo y tus clientes."
@@ -83,7 +112,6 @@ export default function AjustesIAPage() {
         </div>
       </SettingsCard>
 
-      {/* Automatizaciones */}
       <SettingsCard
         title="Automatizaciones"
         description="Lo que la IA hace sin pedirte permiso."
@@ -123,7 +151,6 @@ export default function AjustesIAPage() {
         </SettingRow>
       </SettingsCard>
 
-      {/* Módulos activos */}
       <SettingsCard
         title="Módulos activos"
         description="Cuáles capacidades de la IA están encendidas para tu negocio."
@@ -196,7 +223,7 @@ function ToneOption({
         <Sparkles className="h-3.5 w-3.5 text-ai-400" />
         <span className="text-sm font-semibold text-ink">{label}</span>
       </div>
-      <p className="mt-1 text-[11px] text-ink-muted leading-relaxed">{desc}</p>
+      <p className="mt-1 text-[11px] leading-relaxed text-ink-muted">{desc}</p>
     </label>
   );
 }
