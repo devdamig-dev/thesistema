@@ -93,18 +93,35 @@ export async function saveBranchStep(payload: {
   if (!businessId) return { ok: false, persisted: false, error: "no_unambiguous_business" };
 
   for (const b of payload.branches) {
-    const { error } = await db.from("branches").upsert(
-      {
-        business_id: businessId,
-        name: b.name,
-        address: b.address ?? null,
-        branch_type: b.type,
-        is_main: b.isMain,
-      },
-      { onConflict: "business_id,name" },
-    );
-    if (error) {
-      console.error("saveBranchStep failed", error);
+    const branchName = b.name.trim();
+    if (!branchName) continue;
+
+    const { data: existingBranch, error: lookupError } = await db
+      .from("branches")
+      .select("id")
+      .eq("business_id", businessId)
+      .eq("name", branchName)
+      .maybeSingle();
+
+    if (lookupError) {
+      console.error("saveBranchStep lookup failed", lookupError);
+      return { ok: false, persisted: false, error: "branch_save_failed" };
+    }
+
+    const branchPayload = {
+      business_id: businessId,
+      name: branchName,
+      address: b.address?.trim() || null,
+      branch_type: b.type,
+      is_main: b.isMain,
+    };
+
+    const writeResult = existingBranch?.id
+      ? await db.from("branches").update(branchPayload).eq("id", existingBranch.id)
+      : await db.from("branches").insert(branchPayload);
+
+    if (writeResult.error) {
+      console.error("saveBranchStep failed", writeResult.error);
       return { ok: false, persisted: false, error: "branch_save_failed" };
     }
   }
