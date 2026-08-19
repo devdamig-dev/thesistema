@@ -121,7 +121,7 @@ export default function StockPage() {
     if (!ingredientId || !branchId) return;
     const parsedQuantity = Number(quantity.replace(",", "."));
     if (!Number.isFinite(parsedQuantity) || parsedQuantity < 0 || (operation !== "set" && parsedQuantity <= 0)) {
-      toast({ tone: "danger", title: "Revisá la cantidad", description: "Ingresá una cantidad válida para continuar." });
+      toast({ tone: "warn", title: "Revisá la cantidad", description: "Ingresá una cantidad válida para continuar." });
       return;
     }
 
@@ -134,7 +134,7 @@ export default function StockPage() {
         quantity: parsedQuantity,
       });
       if (!result.ok) {
-        toast({ tone: "danger", title: "No pudimos registrar el movimiento", description: result.error });
+        toast({ tone: "warn", title: "No pudimos registrar el movimiento", description: result.error });
         return;
       }
       toast({
@@ -146,7 +146,7 @@ export default function StockPage() {
       setQuantity("");
       await loadStock();
     } catch {
-      toast({ tone: "danger", title: "No pudimos registrar el movimiento", description: "Intentá nuevamente." });
+      toast({ tone: "warn", title: "No pudimos registrar el movimiento", description: "Intentá nuevamente." });
     } finally {
       setSaving(false);
     }
