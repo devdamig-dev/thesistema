@@ -3,6 +3,8 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentUserContext } from "@/lib/data/auth";
 
+export type SalesPeriod = "current_month" | "previous_month" | "last_30_days";
+
 export type SalesChannelRow = {
   canal: string;
   total: number;
@@ -31,25 +33,60 @@ const channelLabel: Record<string, string> = {
   mp_qr: "Mercado Pago QR",
 };
 
-export async function getSalesPageDataAction(): Promise<
-  { ok: true; data: SalesPageData } | { ok: false; error: string }
-> {
+function localDateParts() {
+  const today = new Date().toLocaleDateString("en-CA", {
+    timeZone: "America/Argentina/Buenos_Aires",
+  });
+  const [year, month, day] = today.split("-").map(Number);
+  return { today, year, month, day };
+}
+
+function formatUtcDate(year: number, monthIndex: number, day: number) {
+  return new Date(Date.UTC(year, monthIndex, day)).toISOString().slice(0, 10);
+}
+
+function getPeriodRange(period: SalesPeriod): { start: string; end?: string } {
+  const { today, year, month } = localDateParts();
+
+  if (period === "previous_month") {
+    const currentMonthStart = formatUtcDate(year, month - 1, 1);
+    const previousMonthStart = formatUtcDate(year, month - 2, 1);
+    return {
+      start: `${previousMonthStart}T00:00:00-03:00`,
+      end: `${currentMonthStart}T00:00:00-03:00`,
+    };
+  }
+
+  if (period === "last_30_days") {
+    const [todayYear, todayMonth, todayDay] = today.split("-").map(Number);
+    const startDate = formatUtcDate(todayYear, todayMonth - 1, todayDay - 29);
+    return { start: `${startDate}T00:00:00-03:00` };
+  }
+
+  return { start: `${today.slice(0, 7)}-01T00:00:00-03:00` };
+}
+
+export async function getSalesPageDataAction(
+  period: SalesPeriod = "current_month",
+): Promise<{ ok: true; data: SalesPageData } | { ok: false; error: string }> {
   const supabase = createSupabaseServerClient() as any;
-  if (!supabase) return { ok: false, error: "Supabase no está disponible." };
+  if (!supabase) return { ok: false, error: "No pudimos conectar con los datos de ventas." };
 
   const ctx = await getCurrentUserContext();
   if (!ctx.businessId) return { ok: false, error: "No se pudo resolver el negocio activo." };
 
-  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
-  const monthStart = `${today.slice(0, 7)}-01T00:00:00-03:00`;
-
-  const res = await supabase
+  const range = getPeriodRange(period);
+  let query = supabase
     .from("sales")
     .select("occurred_at, channel, amount")
     .eq("business_id", ctx.businessId)
-    .gte("occurred_at", monthStart)
+    .gte("occurred_at", range.start)
     .order("occurred_at", { ascending: true })
     .limit(5000);
+
+  if (range.end) query = query.lt("occurred_at", range.end);
+
+  const res = await query;
 
   if (res.error) {
     return { ok: false, error: `No se pudieron leer las ventas (${res.error.code ?? "query_error"}).` };
