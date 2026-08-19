@@ -13,7 +13,7 @@ const EMPTY_KPIS = { totalDeuda: 0, vencidas: 0, proximoVencimiento: "—", impa
 export default async function DeudasPage() {
   if (isDatabaseMode()) {
     const supabase = createSupabaseServerClient() as any;
-    if (!supabase) return <DebtsUnavailable message="Supabase no está configurado. No mostramos deudas demo como fallback." />;
+    if (!supabase) return <DebtsUnavailable message="No pudimos conectar con la información financiera del negocio." />;
 
     const debtsRes = await supabase
       .from("debts")
@@ -22,7 +22,7 @@ export default async function DeudasPage() {
       .order("due_date", { ascending: true, nullsFirst: false });
 
     if (debtsRes.error) {
-      return <DebtsUnavailable message={`No pudimos leer las deudas reales (${debtsRes.error.code ?? "query_error"}).`} />;
+      return <DebtsUnavailable message="No pudimos cargar las deudas en este momento." />;
     }
 
     const rows = (debtsRes.data ?? []) as any[];
@@ -34,7 +34,7 @@ export default async function DeudasPage() {
         .in("debt_id", rows.map((row) => row.id))
         .order("paid_at", { ascending: false });
       if (paymentsRes.error) {
-        return <DebtsUnavailable message={`No pudimos leer los pagos de deuda (${paymentsRes.error.code ?? "query_error"}).`} />;
+        return <DebtsUnavailable message="No pudimos cargar el historial de pagos en este momento." />;
       }
       payments = paymentsRes.data ?? [];
     }
@@ -72,7 +72,7 @@ function DebtsUnavailable({ message }: { message: string }) {
   return (
     <div className="space-y-6">
       <SectionHeader eyebrow="Finanzas · Deudas" title="Deudas temporalmente no disponibles." description="No podemos confirmar el estado real del negocio en este momento." />
-      <Card><CardContent className="pt-6"><div className="rounded-xl border border-danger-500/30 bg-danger-500/[0.06] p-4 text-sm text-danger-300">{message} No reemplazamos una falla por valores $0.</div></CardContent></Card>
+      <Card><CardContent className="pt-6"><div className="rounded-xl border border-danger-500/30 bg-danger-500/[0.06] p-4 text-sm text-danger-300">{message} Tus datos no fueron reemplazados por valores estimados.</div></CardContent></Card>
     </div>
   );
 }
