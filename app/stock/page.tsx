@@ -1,17 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { AlertTriangle, Boxes, Loader2, Plus, Sparkles } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Drawer } from "@/components/ui/drawer";
 import { InsightCard } from "@/components/common/insight-card";
-import { ToastPresets, useToast } from "@/components/ui/toast";
+import { useToast } from "@/components/ui/toast";
 import { stockItems as demoStockItems } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
-import { getStockPageDataAction, type StockPageData } from "@/app/actions/stock-page";
+import {
+  adjustStockManualAction,
+  getStockPageDataAction,
+  type ManualStockOperation,
+  type StockPageData,
+} from "@/app/actions/stock-page";
 
 const IS_DATABASE = process.env.NEXT_PUBLIC_APP_MODE === "database";
 
@@ -44,37 +50,41 @@ export default function StockPage() {
   const [loading, setLoading] = useState(IS_DATABASE);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [databaseData, setDatabaseData] = useState<StockPageData | null>(null);
+  const [movementOpen, setMovementOpen] = useState(false);
+  const [ingredientId, setIngredientId] = useState("");
+  const [branchId, setBranchId] = useState("");
+  const [operation, setOperation] = useState<ManualStockOperation>("in");
+  const [quantity, setQuantity] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const loadStock = async () => {
+    if (!IS_DATABASE) return;
+    setLoading(true);
+    try {
+      const res = await getStockPageDataAction();
+      if (!res.ok) {
+        setLoadError(res.error);
+        setDatabaseData(null);
+        return;
+      }
+      setDatabaseData(res.data);
+      setLoadError(null);
+    } catch {
+      setLoadError("No pudimos cargar el stock.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    if (!IS_DATABASE) return;
-    let cancelled = false;
-    setLoading(true);
-    void getStockPageDataAction()
-      .then((res) => {
-        if (cancelled) return;
-        if (!res.ok) {
-          setLoadError(res.error);
-          setDatabaseData(null);
-          return;
-        }
-        setDatabaseData(res.data);
-        setLoadError(null);
-      })
-      .catch(() => {
-        if (!cancelled) setLoadError("No pudimos cargar el stock real.");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    void loadStock();
   }, []);
 
   const rows = useMemo(() => {
     if (IS_DATABASE) {
       return (databaseData?.items ?? []).map((row) => ({
         id: row.id,
+        branchName: row.branchName,
         insumo: row.insumo,
         stock: row.stock,
         minimo: row.minimo,
@@ -83,7 +93,7 @@ export default function StockPage() {
         estado: stateFor(row.stock, row.minimo),
       }));
     }
-    return demoStockItems.map((row, index) => ({ ...row, id: `demo-${index}` }));
+    return demoStockItems.map((row, index) => ({ ...row, id: `demo-${index}`, branchName: "Principal" }));
   }, [databaseData]);
 
   const criticos = IS_DATABASE
@@ -92,6 +102,55 @@ export default function StockPage() {
   const alertas = IS_DATABASE
     ? databaseData?.alertCount ?? 0
     : rows.filter((row) => row.estado === "alerta").length;
+  const selectedIngredient = databaseData?.ingredients.find((item) => item.id === ingredientId);
+  const canRegisterMovement = Boolean(
+    IS_DATABASE && databaseData?.branches.length && databaseData?.ingredients.length,
+  );
+
+  const openMovement = () => {
+    if (!databaseData) return;
+    setIngredientId((current) => current || databaseData.ingredients[0]?.id || "");
+    setBranchId((current) => current || databaseData.branches[0]?.id || "");
+    setOperation("in");
+    setQuantity("");
+    setMovementOpen(true);
+  };
+
+  const submitMovement = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!ingredientId || !branchId) return;
+    const parsedQuantity = Number(quantity.replace(",", "."));
+    if (!Number.isFinite(parsedQuantity) || parsedQuantity < 0 || (operation !== "set" && parsedQuantity <= 0)) {
+      toast({ tone: "danger", title: "Revisá la cantidad", description: "Ingresá una cantidad válida para continuar." });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const result = await adjustStockManualAction({
+        ingredientId,
+        branchId,
+        operation,
+        quantity: parsedQuantity,
+      });
+      if (!result.ok) {
+        toast({ tone: "danger", title: "No pudimos registrar el movimiento", description: result.error });
+        return;
+      }
+      toast({
+        tone: "success",
+        title: "Movimiento registrado",
+        description: `${selectedIngredient?.name ?? "Insumo"}: stock actualizado a ${result.newCurrent} ${selectedIngredient?.unit ?? "u"}.`,
+      });
+      setMovementOpen(false);
+      setQuantity("");
+      await loadStock();
+    } catch {
+      toast({ tone: "danger", title: "No pudimos registrar el movimiento", description: "Intentá nuevamente." });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="space-y-8">
@@ -99,7 +158,7 @@ export default function StockPage() {
         eyebrow="Stock e insumos"
         title="Lo que tenés y lo que se está acabando."
         description={IS_DATABASE
-          ? "Estado persistido por sucursal. La cobertura y las sugerencias aparecerán cuando exista historial suficiente de consumo."
+          ? "Seguimiento de existencias por sucursal, con mínimos y movimientos registrados."
           : "La IA actualiza tu stock con cada foto, audio o texto que mandás. Calcula cobertura en días y avisa cuándo reponer."}
         actions={
           <>
@@ -117,7 +176,7 @@ export default function StockPage() {
             >
               <Sparkles className="h-4 w-4" /> Sugerir reposición
             </Button>
-            <Button size="sm" variant="primary" onClick={() => toast(ToastPresets.comingSoon("Movimiento manual de stock"))}>
+            <Button size="sm" variant="primary" disabled={!canRegisterMovement} onClick={openMovement}>
               <Plus className="h-4 w-4" /> Movimiento manual
             </Button>
           </>
@@ -126,22 +185,22 @@ export default function StockPage() {
 
       {IS_DATABASE && loadError && (
         <div className="rounded-2xl border border-warn-500/30 bg-warn-500/[0.06] p-5">
-          <div className="text-sm font-semibold text-ink">No pudimos leer el stock real</div>
-          <p className="mt-1 text-xs text-ink-muted">{loadError} No mostramos datos demo ni indicadores inventados.</p>
+          <div className="text-sm font-semibold text-ink">No pudimos cargar el stock</div>
+          <p className="mt-1 text-xs text-ink-muted">{loadError} Intentá nuevamente en unos minutos.</p>
         </div>
       )}
 
       {IS_DATABASE && loading ? (
         <div className="rounded-2xl border border-line p-8 text-center text-sm text-ink-muted">
-          <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> Cargando stock real…
+          <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> Cargando stock…
         </div>
       ) : loadError ? null : (
         <>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <KpiCard label="Insumos críticos" value={String(criticos)} tone="danger" hint="En o por debajo del mínimo" />
             <KpiCard label="En alerta" value={String(alertas)} tone="default" />
-            <KpiCard label="Cobertura promedio" value={IS_DATABASE ? "—" : "4 días"} delta={IS_DATABASE ? undefined : -1.2} hint={IS_DATABASE ? "Requiere historial de consumo" : undefined} />
-            <KpiCard label="Última actualización" value={IS_DATABASE ? formatLastUpdated(databaseData?.lastUpdatedAt ?? null) : "hace 9 min"} hint={IS_DATABASE ? "Último cambio persistido" : "Foto enviada por Lucía"} />
+            <KpiCard label="Cobertura promedio" value={IS_DATABASE ? "—" : "4 días"} delta={IS_DATABASE ? undefined : -1.2} hint={IS_DATABASE ? "Se calcula con historial de consumo" : undefined} />
+            <KpiCard label="Última actualización" value={IS_DATABASE ? formatLastUpdated(databaseData?.lastUpdatedAt ?? null) : "hace 9 min"} hint={IS_DATABASE ? "Último movimiento registrado" : "Foto enviada por Lucía"} />
           </div>
 
           {!IS_DATABASE && (
@@ -160,7 +219,7 @@ export default function StockPage() {
             {rows.length === 0 ? (
               <CardContent>
                 <div className="rounded-xl border border-dashed border-line px-4 py-8 text-center text-sm text-ink-muted">
-                  Todavía no hay stock registrado para las sucursales accesibles.
+                  Todavía no hay existencias cargadas. Usá “Movimiento manual” para registrar el primer stock de un insumo.
                 </div>
               </CardContent>
             ) : (
@@ -169,6 +228,7 @@ export default function StockPage() {
                   <thead className="border-y border-line bg-bg-subtle/60 text-left text-[11px] uppercase tracking-wider text-ink-subtle">
                     <tr>
                       <th className="px-5 py-2.5 font-medium">Insumo</th>
+                      <th className="px-5 py-2.5 font-medium">Sucursal</th>
                       <th className="px-5 py-2.5 font-medium">Stock actual</th>
                       <th className="px-5 py-2.5 font-medium">Mínimo</th>
                       <th className="px-5 py-2.5 font-medium">Cobertura</th>
@@ -182,6 +242,7 @@ export default function StockPage() {
                       return (
                         <tr key={row.id} className="border-b border-line/60 last:border-0 hover:bg-bg-subtle">
                           <td className="px-5 py-3 font-medium text-ink">{row.insumo}</td>
+                          <td className="px-5 py-3 text-ink-muted">{row.branchName}</td>
                           <td className="px-5 py-3">
                             <div className="flex items-center gap-3">
                               <span className="w-20 text-sm tabular-nums text-ink">{row.stock} {row.unidad}</span>
@@ -203,6 +264,99 @@ export default function StockPage() {
           </Card>
         </>
       )}
+
+      <Drawer
+        open={movementOpen}
+        onClose={() => !saving && setMovementOpen(false)}
+        title="Registrar movimiento de stock"
+        description="La operación queda registrada en el historial de la sucursal."
+      >
+        <form onSubmit={submitMovement} className="space-y-5 p-6">
+          <label className="block space-y-2">
+            <span className="text-xs font-medium text-ink-muted">Insumo</span>
+            <select
+              value={ingredientId}
+              onChange={(event) => setIngredientId(event.target.value)}
+              className="h-10 w-full rounded-lg border border-line bg-bg px-3 text-sm text-ink outline-none focus:border-brand-500"
+              required
+            >
+              {(databaseData?.ingredients ?? []).map((item) => (
+                <option key={item.id} value={item.id}>{item.name} · {item.unit}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block space-y-2">
+            <span className="text-xs font-medium text-ink-muted">Sucursal</span>
+            <select
+              value={branchId}
+              onChange={(event) => setBranchId(event.target.value)}
+              className="h-10 w-full rounded-lg border border-line bg-bg px-3 text-sm text-ink outline-none focus:border-brand-500"
+              required
+            >
+              {(databaseData?.branches ?? []).map((item) => (
+                <option key={item.id} value={item.id}>{item.name}</option>
+              ))}
+            </select>
+          </label>
+
+          <fieldset className="space-y-2">
+            <legend className="text-xs font-medium text-ink-muted">Tipo de movimiento</legend>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                ["in", "Entrada"],
+                ["out", "Salida"],
+                ["set", "Stock exacto"],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setOperation(value)}
+                  className={cn(
+                    "rounded-lg border px-3 py-2 text-xs font-medium transition",
+                    operation === value
+                      ? "border-brand-500 bg-brand-500/10 text-ink"
+                      : "border-line bg-bg text-ink-muted hover:text-ink",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+
+          <label className="block space-y-2">
+            <span className="text-xs font-medium text-ink-muted">
+              {operation === "set" ? "Nuevo stock" : "Cantidad"} {selectedIngredient?.unit ? `(${selectedIngredient.unit})` : ""}
+            </span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={quantity}
+              onChange={(event) => setQuantity(event.target.value)}
+              className="h-10 w-full rounded-lg border border-line bg-bg px-3 text-sm text-ink outline-none focus:border-brand-500"
+              placeholder={operation === "set" ? "Ej. 25" : "Ej. 5"}
+              required
+            />
+            <p className="text-xs text-ink-subtle">
+              {operation === "in" && "Suma la cantidad al stock actual."}
+              {operation === "out" && "Descuenta la cantidad. No se permiten existencias negativas."}
+              {operation === "set" && "Reemplaza el stock actual por el valor indicado."}
+            </p>
+          </label>
+
+          <div className="flex justify-end gap-2 border-t border-line pt-5">
+            <Button type="button" variant="ghost" onClick={() => setMovementOpen(false)} disabled={saving}>
+              Cancelar
+            </Button>
+            <Button type="submit" variant="primary" disabled={saving || !ingredientId || !branchId}>
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+              Registrar movimiento
+            </Button>
+          </div>
+        </form>
+      </Drawer>
     </div>
   );
 }
