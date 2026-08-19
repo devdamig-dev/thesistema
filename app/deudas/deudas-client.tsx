@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { FormEvent, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -15,7 +15,6 @@ import {
   Loader2,
   Plus,
   RefreshCw,
-  Sparkles,
   Truck,
   Wallet,
 } from "lucide-react";
@@ -74,6 +73,37 @@ type Filter =
   | "proveedores"
   | "saldadas";
 
+type DebtDbCategory = "supplier" | "tax" | "loan" | "rent" | "utility" | "payroll" | "other";
+
+type NewDebtPayload = {
+  creditor: string;
+  concept?: string;
+  original_amount: number;
+  due_date?: string;
+  interest_rate?: number;
+  notes?: string;
+  category: DebtDbCategory;
+  period?: string;
+  organism?: string;
+};
+
+type PaymentPayload = {
+  amount: number;
+  payment_method: string;
+  paid_at?: string;
+  notes?: string;
+};
+
+const CATEGORY_TO_DB: Record<DebtCategory, DebtDbCategory> = {
+  proveedor: "supplier",
+  impuesto: "tax",
+  prestamo: "loan",
+  alquiler: "rent",
+  servicio: "utility",
+  sueldo: "payroll",
+  otro: "other",
+};
+
 function parseDmy(dmy?: string): Date | null {
   if (!dmy) return null;
   const m = dmy.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
@@ -101,6 +131,8 @@ export default function DeudasClient({
   const [filter, setFilter] = useState<Filter>("todas");
   const [selected, setSelected] = useState<Debt | null>(null);
   const [open, setOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [paymentDebt, setPaymentDebt] = useState<Debt | null>(null);
   const [pending, startTransition] = useTransition();
   const [exporting, startExport] = useTransition();
 
@@ -134,7 +166,6 @@ export default function DeudasClient({
       return items.filter((d) => d.categoria === "impuesto" || d.categoria === "sueldo");
     }
     if (filter === "proveedores") return items.filter((d) => d.categoria === "proveedor");
-    // por_vencer
     return items.filter((d) => {
       if (d.estado === "saldada") return false;
       const days = daysUntil(d.vencimiento);
@@ -158,81 +189,49 @@ export default function DeudasClient({
     });
   }
 
-  function handleNewDebt() {
-    // Mock simple sin modal: pide datos mínimos por window.prompt para no
-    // sumar componentes nuevos. En sprint próximo lo reemplazamos por
-    // un Drawer de creación con form completo.
-    const creditor = window.prompt("Acreedor:");
-    if (!creditor) return;
-    const amountStr = window.prompt("Monto inicial ($):");
-    if (!amountStr) return;
-    const amount = Number(amountStr.replace(/[^\d]/g, ""));
-    if (!Number.isFinite(amount) || amount <= 0) return;
-    const categoria = (window.prompt(
-      "Categoría (proveedor / impuesto / prestamo / alquiler / servicio / sueldo / otro):",
-      "proveedor",
-    ) || "proveedor") as DebtCategory;
-    const dbCategory =
-      categoria === "proveedor"
-        ? "supplier"
-        : categoria === "impuesto"
-          ? "tax"
-          : categoria === "prestamo"
-            ? "loan"
-            : categoria === "alquiler"
-              ? "rent"
-              : categoria === "servicio"
-                ? "utility"
-                : categoria === "sueldo"
-                  ? "payroll"
-                  : "other";
-
+  function handleCreateDebt(payload: NewDebtPayload) {
     startTransition(async () => {
-      const result = await registerDebtAction({
-        creditor,
-        original_amount: amount,
-        category: dbCategory,
-      });
-      if (result.ok) {
+      const result = await registerDebtAction(payload);
+      if (result.ok && result.persisted) {
         toast({
           tone: "success",
           title: "Deuda registrada",
-          description: result.persisted
-            ? "Guardada en Supabase."
-            : "Modo demo · cambio local.",
+          description: "La deuda quedó guardada y ya forma parte del seguimiento.",
         });
+        setCreateOpen(false);
         router.refresh();
+      } else if (result.ok) {
+        toast({
+          tone: "warn",
+          title: "No se guardaron cambios",
+          description: "Esta operación no está disponible en este entorno.",
+        });
       } else {
         toast({ tone: "warn", title: "No pudimos guardar", description: result.error });
       }
     });
   }
 
-  function handleRegisterPayment(debt: Debt) {
-    const amountStr = window.prompt(
-      `Pago para ${debt.acreedor} — saldo pendiente $${debt.saldoPendiente.toLocaleString("es-AR")}.\nMonto del pago ($):`,
-    );
-    if (!amountStr) return;
-    const amount = Number(amountStr.replace(/[^\d]/g, ""));
-    if (!Number.isFinite(amount) || amount <= 0) return;
-
+  function handleRegisterPayment(debt: Debt, payload: PaymentPayload) {
     startTransition(async () => {
-      const result = await registerPaymentAction({
-        debt_id: debt.id,
-        amount,
-        payment_method: "Transferencia",
-      });
-      if (result.ok) {
+      const result = await registerPaymentAction({ debt_id: debt.id, ...payload });
+      if (result.ok && result.persisted) {
         toast({
           tone: "success",
           title: "Pago registrado",
-          description: result.persisted
-            ? "Recalculamos el saldo pendiente."
-            : "Modo demo · cambio local.",
+          description: "Actualizamos el saldo pendiente de la deuda.",
         });
+        setPaymentDebt(null);
+        setOpen(false);
         router.refresh();
+      } else if (result.ok) {
+        toast({
+          tone: "warn",
+          title: "No se guardaron cambios",
+          description: "Esta operación no está disponible en este entorno.",
+        });
       } else {
-        toast({ tone: "warn", title: "Error", description: result.error });
+        toast({ tone: "warn", title: "No pudimos registrar el pago", description: result.error });
       }
     });
   }
@@ -241,7 +240,7 @@ export default function DeudasClient({
     if (!confirm(`¿Marcar la deuda con ${debt.acreedor} como saldada?`)) return;
     startTransition(async () => {
       const result = await markDebtAsSettledAction(debt.id);
-      if (result.ok) {
+      if (result.ok && result.persisted) {
         toast({
           tone: "success",
           title: "Deuda saldada",
@@ -249,8 +248,14 @@ export default function DeudasClient({
         });
         setOpen(false);
         router.refresh();
+      } else if (result.ok) {
+        toast({
+          tone: "warn",
+          title: "No se guardaron cambios",
+          description: "Esta operación no está disponible en este entorno.",
+        });
       } else {
-        toast({ tone: "warn", title: "Error", description: result.error });
+        toast({ tone: "warn", title: "No pudimos actualizar la deuda", description: result.error });
       }
     });
   }
@@ -290,7 +295,7 @@ export default function DeudasClient({
             <Button
               size="sm"
               variant="primary"
-              onClick={handleNewDebt}
+              onClick={() => setCreateOpen(true)}
               disabled={pending}
             >
               <Plus className="h-4 w-4" />
@@ -300,7 +305,6 @@ export default function DeudasClient({
         }
       />
 
-      {/* KPIs */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <KpiCard
           label="Deuda total"
@@ -332,7 +336,6 @@ export default function DeudasClient({
         />
       </div>
 
-      {/* Filtros */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <SegmentedTabs
           value={filter}
@@ -351,7 +354,6 @@ export default function DeudasClient({
         </span>
       </div>
 
-      {/* Tabla */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -445,7 +447,7 @@ export default function DeudasClient({
                           size="sm"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleRegisterPayment(d);
+                            setPaymentDebt(d);
                           }}
                           disabled={pending}
                         >
@@ -473,8 +475,39 @@ export default function DeudasClient({
           <DebtDetail
             debt={selected}
             pending={pending}
-            onPay={() => handleRegisterPayment(selected)}
+            onPay={() => setPaymentDebt(selected)}
             onSettle={() => handleMarkAsSettled(selected)}
+          />
+        )}
+      </Drawer>
+
+      <Drawer
+        open={createOpen}
+        onClose={() => !pending && setCreateOpen(false)}
+        title="Registrar deuda"
+        description="Cargá los datos necesarios para seguir vencimientos y pagos."
+        width="max-w-xl"
+      >
+        <NewDebtForm
+          pending={pending}
+          onCancel={() => setCreateOpen(false)}
+          onSubmit={handleCreateDebt}
+        />
+      </Drawer>
+
+      <Drawer
+        open={Boolean(paymentDebt)}
+        onClose={() => !pending && setPaymentDebt(null)}
+        title={paymentDebt ? `Registrar pago · ${paymentDebt.acreedor}` : "Registrar pago"}
+        description={paymentDebt ? `Saldo pendiente: ${formatARS(paymentDebt.saldoPendiente)}` : undefined}
+        width="max-w-lg"
+      >
+        {paymentDebt && (
+          <PaymentForm
+            debt={paymentDebt}
+            pending={pending}
+            onCancel={() => setPaymentDebt(null)}
+            onSubmit={(payload) => handleRegisterPayment(paymentDebt, payload)}
           />
         )}
       </Drawer>
@@ -589,6 +622,226 @@ function DebtDetail({
         )}
       </div>
     </div>
+  );
+}
+
+function NewDebtForm({
+  pending,
+  onCancel,
+  onSubmit,
+}: {
+  pending: boolean;
+  onCancel: () => void;
+  onSubmit: (payload: NewDebtPayload) => void;
+}) {
+  const [creditor, setCreditor] = useState("");
+  const [amount, setAmount] = useState("");
+  const [category, setCategory] = useState<DebtCategory>("proveedor");
+  const [dueDate, setDueDate] = useState("");
+  const [period, setPeriod] = useState("");
+  const [organism, setOrganism] = useState("");
+  const [concept, setConcept] = useState("");
+  const [interestRate, setInterestRate] = useState("");
+  const [notes, setNotes] = useState("");
+  const [error, setError] = useState("");
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalizedCreditor = creditor.trim();
+    const parsedAmount = Number(amount.replace(",", "."));
+    const parsedInterest = interestRate ? Number(interestRate.replace(",", ".")) : undefined;
+
+    if (!normalizedCreditor) {
+      setError("Ingresá el acreedor.");
+      return;
+    }
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      setError("Ingresá un monto mayor a cero.");
+      return;
+    }
+    if (parsedInterest != null && (!Number.isFinite(parsedInterest) || parsedInterest < 0)) {
+      setError("El interés no puede ser negativo.");
+      return;
+    }
+
+    setError("");
+    onSubmit({
+      creditor: normalizedCreditor,
+      original_amount: parsedAmount,
+      category: CATEGORY_TO_DB[category],
+      due_date: dueDate || undefined,
+      period: period.trim() || undefined,
+      organism: organism.trim() || undefined,
+      concept: concept.trim() || undefined,
+      interest_rate: parsedInterest,
+      notes: notes.trim() || undefined,
+    });
+  }
+
+  const showOrganism = category === "impuesto" || category === "sueldo";
+
+  return (
+    <form onSubmit={submit} className="space-y-5 p-6">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Acreedor" required>
+          <input className={inputClass} value={creditor} onChange={(e) => setCreditor(e.target.value)} placeholder="Ej. Proveedor Norte" />
+        </Field>
+        <Field label="Monto inicial" required>
+          <input className={inputClass} type="number" min="0.01" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+        </Field>
+        <Field label="Categoría" required>
+          <select className={inputClass} value={category} onChange={(e) => setCategory(e.target.value as DebtCategory)}>
+            {(Object.keys(DEBT_CATEGORY_LABELS) as DebtCategory[]).map((key) => (
+              <option key={key} value={key}>{DEBT_CATEGORY_LABELS[key]}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Vencimiento">
+          <input className={inputClass} type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+        </Field>
+        <Field label="Período">
+          <input className={inputClass} value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="Ej. Agosto 2026" />
+        </Field>
+        {showOrganism ? (
+          <Field label="Organismo">
+            <input className={inputClass} value={organism} onChange={(e) => setOrganism(e.target.value)} placeholder="Ej. ARCA" />
+          </Field>
+        ) : (
+          <Field label="Interés mensual (%)">
+            <input className={inputClass} type="number" min="0" step="0.01" value={interestRate} onChange={(e) => setInterestRate(e.target.value)} placeholder="0" />
+          </Field>
+        )}
+      </div>
+
+      {showOrganism && (
+        <Field label="Interés mensual (%)">
+          <input className={inputClass} type="number" min="0" step="0.01" value={interestRate} onChange={(e) => setInterestRate(e.target.value)} placeholder="0" />
+        </Field>
+      )}
+
+      <Field label="Concepto">
+        <input className={inputClass} value={concept} onChange={(e) => setConcept(e.target.value)} placeholder="Ej. Factura pendiente" />
+      </Field>
+
+      <Field label="Notas">
+        <textarea className={`${inputClass} min-h-24 resize-y`} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Información adicional para el seguimiento" />
+      </Field>
+
+      {error && <div className="rounded-lg border border-danger-500/30 bg-danger-500/[0.06] px-3 py-2 text-xs text-danger-300">{error}</div>}
+
+      <div className="flex justify-end gap-2 border-t border-line pt-4">
+        <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>Cancelar</Button>
+        <Button type="submit" variant="primary" disabled={pending}>
+          {pending && <Loader2 className="h-4 w-4 animate-spin" />}
+          {pending ? "Guardando…" : "Registrar deuda"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function PaymentForm({
+  debt,
+  pending,
+  onCancel,
+  onSubmit,
+}: {
+  debt: Debt;
+  pending: boolean;
+  onCancel: () => void;
+  onSubmit: (payload: PaymentPayload) => void;
+}) {
+  const [amount, setAmount] = useState("");
+  const [method, setMethod] = useState("Transferencia");
+  const [paidAt, setPaidAt] = useState(new Date().toISOString().slice(0, 10));
+  const [notes, setNotes] = useState("");
+  const [error, setError] = useState("");
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const parsedAmount = Number(amount.replace(",", "."));
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      setError("Ingresá un monto de pago mayor a cero.");
+      return;
+    }
+    if (parsedAmount > debt.saldoPendiente) {
+      setError("El pago no puede superar el saldo pendiente.");
+      return;
+    }
+    if (!method.trim()) {
+      setError("Seleccioná o ingresá un medio de pago.");
+      return;
+    }
+
+    setError("");
+    onSubmit({
+      amount: parsedAmount,
+      payment_method: method.trim(),
+      paid_at: paidAt || undefined,
+      notes: notes.trim() || undefined,
+    });
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-5 p-6">
+      <div className="rounded-xl border border-line bg-bg-subtle/60 p-4">
+        <div className="text-xs text-ink-muted">Saldo pendiente</div>
+        <div className="mt-1 text-2xl font-semibold tabular-nums text-ink">{formatARS(debt.saldoPendiente)}</div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Monto del pago" required>
+          <input className={inputClass} type="number" min="0.01" step="0.01" max={debt.saldoPendiente} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+        </Field>
+        <Field label="Fecha" required>
+          <input className={inputClass} type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} />
+        </Field>
+        <Field label="Medio de pago" required>
+          <select className={inputClass} value={method} onChange={(e) => setMethod(e.target.value)}>
+            <option value="Transferencia">Transferencia</option>
+            <option value="Efectivo">Efectivo</option>
+            <option value="Débito">Débito</option>
+            <option value="Crédito">Crédito</option>
+            <option value="Otro">Otro</option>
+          </select>
+        </Field>
+      </div>
+
+      <Field label="Notas">
+        <textarea className={`${inputClass} min-h-20 resize-y`} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Referencia, comprobante u observación" />
+      </Field>
+
+      {error && <div className="rounded-lg border border-danger-500/30 bg-danger-500/[0.06] px-3 py-2 text-xs text-danger-300">{error}</div>}
+
+      <div className="flex justify-end gap-2 border-t border-line pt-4">
+        <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>Cancelar</Button>
+        <Button type="submit" variant="primary" disabled={pending}>
+          {pending && <Loader2 className="h-4 w-4 animate-spin" />}
+          {pending ? "Registrando…" : "Registrar pago"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+const inputClass = "w-full rounded-lg border border-line bg-bg-subtle px-3 py-2 text-sm text-ink outline-none transition placeholder:text-ink-subtle focus:border-brand-500";
+
+function Field({
+  label,
+  required,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block space-y-1.5">
+      <span className="text-xs font-medium text-ink-muted">
+        {label}{required ? " *" : ""}
+      </span>
+      {children}
+    </label>
   );
 }
 
