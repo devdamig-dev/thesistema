@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { FormEvent, useEffect, useMemo, useState, useTransition } from "react";
 import { ArrowDownRight, ArrowUpRight, FileSpreadsheet, Loader2, Plus, Truck } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
 import { KpiCard } from "@/components/ui/kpi-card";
@@ -8,47 +8,57 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { InsightCard } from "@/components/common/insight-card";
-import { ToastPresets, useToast } from "@/components/ui/toast";
+import { Drawer } from "@/components/ui/drawer";
+import { useToast } from "@/components/ui/toast";
 import { exportPurchasesCsvAction } from "@/app/actions/exports";
-import { getPurchasesPageDataAction, type PurchasesPageData } from "@/app/actions/purchases-page";
+import {
+  createPurchaseAction,
+  createSupplierAction,
+  getPurchasesPageDataAction,
+  type PurchaseInput,
+  type PurchasesPageData,
+  type SupplierInput,
+} from "@/app/actions/purchases-page";
 import { triggerCsvDownload } from "@/lib/csv-download";
 import { recentPurchases as demoRecentPurchases, topSuppliers as demoTopSuppliers } from "@/lib/mock-data";
 import { formatARS, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const IS_DATABASE = process.env.NEXT_PUBLIC_APP_MODE === "database";
+const inputClass = "h-10 w-full rounded-lg border border-line bg-bg px-3 text-sm text-ink outline-none transition placeholder:text-ink-subtle focus:border-brand-500";
 
 export default function ComprasPage() {
   const { toast } = useToast();
   const [exporting, startExport] = useTransition();
+  const [pending, startMutation] = useTransition();
   const [loading, setLoading] = useState(IS_DATABASE);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [databaseData, setDatabaseData] = useState<PurchasesPageData | null>(null);
+  const [supplierDrawerOpen, setSupplierDrawerOpen] = useState(false);
+  const [purchaseDrawerOpen, setPurchaseDrawerOpen] = useState(false);
+
+  async function loadPurchases() {
+    if (!IS_DATABASE) return;
+    setLoading(true);
+    try {
+      const res = await getPurchasesPageDataAction();
+      if (!res.ok) {
+        setLoadError(res.error);
+        setDatabaseData(null);
+        return;
+      }
+      setDatabaseData(res.data);
+      setLoadError(null);
+    } catch {
+      setLoadError("No pudimos cargar Compras.");
+      setDatabaseData(null);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    if (!IS_DATABASE) return;
-    let cancelled = false;
-    setLoading(true);
-    void getPurchasesPageDataAction()
-      .then((res) => {
-        if (cancelled) return;
-        if (!res.ok) {
-          setLoadError(res.error);
-          setDatabaseData(null);
-          return;
-        }
-        setDatabaseData(res.data);
-        setLoadError(null);
-      })
-      .catch(() => {
-        if (!cancelled) setLoadError("No pudimos cargar las compras reales.");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    void loadPurchases();
   }, []);
 
   const recentPurchases = IS_DATABASE ? databaseData?.recentPurchases ?? [] : demoRecentPurchases;
@@ -74,13 +84,39 @@ export default function ComprasPage() {
     });
   }
 
+  function saveSupplier(input: SupplierInput) {
+    startMutation(async () => {
+      const res = await createSupplierAction(input);
+      if (!res.ok) {
+        toast({ tone: "warn", title: "No pudimos registrar el proveedor", description: res.error });
+        return;
+      }
+      toast({ tone: "success", title: "Proveedor registrado", description: "Ya podés usarlo al cargar una compra." });
+      setSupplierDrawerOpen(false);
+      await loadPurchases();
+    });
+  }
+
+  function savePurchase(input: PurchaseInput) {
+    startMutation(async () => {
+      const res = await createPurchaseAction(input);
+      if (!res.ok) {
+        toast({ tone: "warn", title: "No pudimos registrar la compra", description: res.error });
+        return;
+      }
+      toast({ tone: "success", title: "Compra registrada", description: "La compra quedó incorporada al mes y a los reportes." });
+      setPurchaseDrawerOpen(false);
+      await loadPurchases();
+    });
+  }
+
   return (
     <div className="space-y-8">
       <SectionHeader
         eyebrow="Compras y proveedores"
         title="Cada compra, su proveedor y su variación."
         description={IS_DATABASE
-          ? "Los indicadores se calculan con compras y proveedores persistidos en Supabase."
+          ? "Seguimiento de compras y proveedores con información registrada por tu equipo."
           : "Comparamos precios entre proveedores y alertamos cuando un insumo se sale del rango habitual."}
         actions={
           <>
@@ -88,10 +124,10 @@ export default function ComprasPage() {
               {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
               {exporting ? "Generando…" : "Exportar compras Excel"}
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => toast(ToastPresets.comingSoon("Alta de proveedor"))}>
+            <Button size="sm" variant="ghost" onClick={() => setSupplierDrawerOpen(true)} disabled={!IS_DATABASE || pending}>
               <Truck className="h-4 w-4" /> Nuevo proveedor
             </Button>
-            <Button size="sm" variant="primary" onClick={() => toast(ToastPresets.comingSoon("Carga manual de compra"))}>
+            <Button size="sm" variant="primary" onClick={() => setPurchaseDrawerOpen(true)} disabled={!IS_DATABASE || pending}>
               <Plus className="h-4 w-4" /> Registrar compra
             </Button>
           </>
@@ -100,14 +136,15 @@ export default function ComprasPage() {
 
       {IS_DATABASE && loadError && (
         <div className="rounded-2xl border border-warn-500/30 bg-warn-500/[0.06] p-5">
-          <div className="text-sm font-semibold text-ink">No pudimos leer el estado real de Compras</div>
-          <p className="mt-1 text-xs text-ink-muted">{loadError} No mostramos ceros para evitar confundir una falla de lectura con un negocio vacío.</p>
+          <div className="text-sm font-semibold text-ink">No pudimos cargar Compras</div>
+          <p className="mt-1 text-xs text-ink-muted">{loadError}</p>
+          <Button size="sm" variant="ghost" className="mt-3" onClick={() => void loadPurchases()}>Reintentar</Button>
         </div>
       )}
 
       {IS_DATABASE && loading ? (
         <div className="rounded-2xl border border-line p-8 text-center text-sm text-ink-muted">
-          <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> Cargando compras reales…
+          <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> Cargando compras…
         </div>
       ) : loadError ? null : (
         <>
@@ -134,8 +171,17 @@ export default function ComprasPage() {
               </CardHeader>
               {recentPurchases.length === 0 ? (
                 <CardContent>
-                  <div className="rounded-xl border border-dashed border-line px-4 py-8 text-center text-sm text-ink-muted">
-                    Todavía no hay compras registradas.
+                  <div className="rounded-xl border border-dashed border-line px-4 py-8 text-center">
+                    <div className="text-sm font-semibold text-ink">Todavía no hay compras registradas.</div>
+                    <p className="mt-1 text-xs text-ink-muted">Cargá la primera compra para empezar a comparar proveedores y costos.</p>
+                    {IS_DATABASE && (
+                      <Button size="sm" variant="primary" className="mt-4" onClick={() => setPurchaseDrawerOpen(true)} disabled={supplierCount === 0}>
+                        <Plus className="h-4 w-4" /> Registrar compra
+                      </Button>
+                    )}
+                    {IS_DATABASE && supplierCount === 0 && (
+                      <p className="mt-3 text-xs text-ink-muted">Primero registrá un proveedor.</p>
+                    )}
                   </div>
                 </CardContent>
               ) : (
@@ -184,8 +230,13 @@ export default function ComprasPage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 {topSuppliers.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-line px-4 py-8 text-center text-sm text-ink-muted">
-                    Sin proveedores con movimientos todavía.
+                  <div className="rounded-xl border border-dashed border-line px-4 py-8 text-center">
+                    <div className="text-sm text-ink-muted">Sin proveedores con movimientos todavía.</div>
+                    {IS_DATABASE && (
+                      <Button size="sm" variant="ghost" className="mt-3" onClick={() => setSupplierDrawerOpen(true)}>
+                        <Truck className="h-4 w-4" /> Nuevo proveedor
+                      </Button>
+                    )}
                   </div>
                 ) : topSuppliers.map((s) => (
                   <div key={s.nombre} className="rounded-xl border border-line bg-bg-subtle/60 p-3">
@@ -206,6 +257,153 @@ export default function ComprasPage() {
           </div>
         </>
       )}
+
+      <Drawer
+        open={supplierDrawerOpen}
+        onClose={() => !pending && setSupplierDrawerOpen(false)}
+        title="Nuevo proveedor"
+        description="Guardá los datos básicos para asociarlo a futuras compras."
+        width="max-w-lg"
+      >
+        <SupplierForm pending={pending} onCancel={() => setSupplierDrawerOpen(false)} onSubmit={saveSupplier} />
+      </Drawer>
+
+      <Drawer
+        open={purchaseDrawerOpen}
+        onClose={() => !pending && setPurchaseDrawerOpen(false)}
+        title="Registrar compra"
+        description="Cargá una compra manual con su proveedor y detalle principal."
+        width="max-w-lg"
+      >
+        <PurchaseForm
+          pending={pending}
+          suppliers={databaseData?.suppliers ?? []}
+          onCancel={() => setPurchaseDrawerOpen(false)}
+          onCreateSupplier={() => {
+            setPurchaseDrawerOpen(false);
+            setSupplierDrawerOpen(true);
+          }}
+          onSubmit={savePurchase}
+        />
+      </Drawer>
     </div>
   );
+}
+
+function SupplierForm({ pending, onCancel, onSubmit }: { pending: boolean; onCancel: () => void; onSubmit: (input: SupplierInput) => void }) {
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("");
+  const [taxId, setTaxId] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [error, setError] = useState("");
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!name.trim()) {
+      setError("Ingresá el nombre del proveedor.");
+      return;
+    }
+    if (email.trim() && !/^\S+@\S+\.\S+$/.test(email.trim())) {
+      setError("Ingresá un email válido.");
+      return;
+    }
+    setError("");
+    onSubmit({ name, category, taxId, phone, email });
+  }
+
+  return (
+    <form className="space-y-4" onSubmit={submit}>
+      <Field label="Nombre *"><input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej. Frigorífico Sur" /></Field>
+      <Field label="Categoría"><input className={inputClass} value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Ej. Carnes" /></Field>
+      <Field label="CUIT"><input className={inputClass} value={taxId} onChange={(e) => setTaxId(e.target.value)} placeholder="30-12345678-9" /></Field>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Teléfono"><input className={inputClass} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="11 5555 5555" /></Field>
+        <Field label="Email"><input className={inputClass} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ventas@proveedor.com" /></Field>
+      </div>
+      {error && <p className="text-xs text-danger-400">{error}</p>}
+      <div className="flex justify-end gap-2 pt-2">
+        <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>Cancelar</Button>
+        <Button type="submit" variant="primary" disabled={pending}>{pending && <Loader2 className="h-4 w-4 animate-spin" />} Guardar proveedor</Button>
+      </div>
+    </form>
+  );
+}
+
+function PurchaseForm({ pending, suppliers, onCancel, onCreateSupplier, onSubmit }: {
+  pending: boolean;
+  suppliers: Array<{ id: string; name: string; category: string | null }>;
+  onCancel: () => void;
+  onCreateSupplier: () => void;
+  onSubmit: (input: PurchaseInput) => void;
+}) {
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
+  const [supplierId, setSupplierId] = useState(suppliers[0]?.id ?? "");
+  const [purchasedAt, setPurchasedAt] = useState(today);
+  const [paymentMethod, setPaymentMethod] = useState("Transferencia");
+  const [description, setDescription] = useState("");
+  const [qty, setQty] = useState("1");
+  const [unit, setUnit] = useState("u");
+  const [unitPrice, setUnitPrice] = useState("");
+  const [error, setError] = useState("");
+  const total = Number(qty.replace(",", ".")) * Number(unitPrice.replace(",", "."));
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const parsedQty = Number(qty.replace(",", "."));
+    const parsedUnitPrice = Number(unitPrice.replace(",", "."));
+    if (!supplierId) return setError("Elegí un proveedor.");
+    if (!description.trim()) return setError("Ingresá el insumo o concepto comprado.");
+    if (!Number.isFinite(parsedQty) || parsedQty <= 0) return setError("Ingresá una cantidad mayor a cero.");
+    if (!unit.trim()) return setError("Ingresá la unidad.");
+    if (!Number.isFinite(parsedUnitPrice) || parsedUnitPrice < 0) return setError("Ingresá un precio unitario válido.");
+    setError("");
+    onSubmit({ supplierId, purchasedAt, paymentMethod, description, qty: parsedQty, unit, unitPrice: parsedUnitPrice });
+  }
+
+  if (suppliers.length === 0) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-xl border border-dashed border-line p-5 text-sm text-ink-muted">Para registrar una compra primero necesitás un proveedor.</div>
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onCancel}>Cancelar</Button>
+          <Button variant="primary" onClick={onCreateSupplier}><Truck className="h-4 w-4" /> Nuevo proveedor</Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <form className="space-y-4" onSubmit={submit}>
+      <Field label="Proveedor *">
+        <select className={inputClass} value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
+          {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}{supplier.category ? ` · ${supplier.category}` : ""}</option>)}
+        </select>
+      </Field>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Fecha *"><input className={inputClass} type="date" value={purchasedAt} onChange={(e) => setPurchasedAt(e.target.value)} /></Field>
+        <Field label="Medio de pago *">
+          <select className={inputClass} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+            <option>Transferencia</option><option>Efectivo</option><option>Tarjeta</option><option>Cuenta corriente</option><option>Otro</option>
+          </select>
+        </Field>
+      </div>
+      <Field label="Insumo o concepto *"><input className={inputClass} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ej. Carne picada premium" /></Field>
+      <div className="grid grid-cols-3 gap-3">
+        <Field label="Cantidad *"><input className={inputClass} inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value)} /></Field>
+        <Field label="Unidad *"><input className={inputClass} value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="kg" /></Field>
+        <Field label="Precio unit. *"><input className={inputClass} inputMode="decimal" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} placeholder="0" /></Field>
+      </div>
+      <div className="rounded-xl border border-line bg-bg-subtle/50 p-3 text-sm text-ink-muted">Total: <span className="font-semibold text-ink">{Number.isFinite(total) ? formatARS(total) : "—"}</span></div>
+      {error && <p className="text-xs text-danger-400">{error}</p>}
+      <div className="flex justify-end gap-2 pt-2">
+        <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>Cancelar</Button>
+        <Button type="submit" variant="primary" disabled={pending}>{pending && <Loader2 className="h-4 w-4 animate-spin" />} Registrar compra</Button>
+      </div>
+    </form>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <label className="block space-y-1.5"><span className="text-xs font-medium text-ink-muted">{label}</span>{children}</label>;
 }
