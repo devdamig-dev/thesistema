@@ -6,19 +6,16 @@ import { getCurrentUserContext } from "@/lib/data/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SectionHeader } from "@/components/ui/section-header";
+import { WhatsAppConnectButton } from "./connect-button";
 
 export default async function WhatsappSettingsLayout({ children }: { children: ReactNode }) {
   if (!isDatabaseMode()) return <>{children}</>;
 
   const supabase = createSupabaseServerClient() as any;
-  if (!supabase) {
-    return <Unavailable message="Supabase no está configurado. No mostramos estado demo de WhatsApp." />;
-  }
+  if (!supabase) return <Unavailable />;
 
   const ctx = await getCurrentUserContext();
-  if (!ctx.businessId) {
-    return <Unavailable message="No se pudo resolver el negocio activo." />;
-  }
+  if (!ctx.businessId) return <Unavailable />;
 
   const result = await supabase
     .from("businesses")
@@ -26,9 +23,7 @@ export default async function WhatsappSettingsLayout({ children }: { children: R
     .eq("id", ctx.businessId)
     .maybeSingle();
 
-  if (result.error) {
-    return <Unavailable message={`No pudimos leer la conexión real de WhatsApp (${result.error.code ?? "query_error"}).`} />;
-  }
+  if (result.error) return <Unavailable />;
 
   const row = result.data as {
     whatsapp_connected: boolean | null;
@@ -49,12 +44,16 @@ export default async function WhatsappSettingsLayout({ children }: { children: R
       }).format(new Date(row.whatsapp_connected_at))
     : null;
 
+  const appId = process.env.NEXT_PUBLIC_META_APP_ID?.trim() || null;
+  const configId = process.env.NEXT_PUBLIC_META_WHATSAPP_CONFIG_ID?.trim() || null;
+  const apiVersion = process.env.NEXT_PUBLIC_META_GRAPH_VERSION?.trim() || "v25.0";
+
   return (
     <div className="space-y-6">
       <SectionHeader
         eyebrow="Ajustes · WhatsApp"
         title="Conexión con WhatsApp Business"
-        description="Estado persistido del negocio. En producción no mostramos números ni conexiones ficticias."
+        description="Vinculá el número del negocio para recibir mensajes y procesarlos desde Thesistema."
       />
 
       <Card>
@@ -68,23 +67,21 @@ export default async function WhatsappSettingsLayout({ children }: { children: R
           {connected ? (
             <div className="rounded-xl border border-success-500/25 bg-success-500/[0.06] p-5">
               <div className="flex items-center gap-2 text-sm font-semibold text-ink">
-                <Phone className="h-4 w-4 text-success-400" /> {phone ?? "Número no informado"}
+                <Phone className="h-4 w-4 text-success-400" /> {phone ?? "Número conectado"}
               </div>
               <p className="mt-1 text-xs text-ink-muted">
-                {connectedAt ? `Conexión registrada el ${connectedAt}.` : "La base indica una conexión activa."}
+                {connectedAt ? `Conectado el ${connectedAt}.` : "La conexión está activa."}
               </p>
-              {!phone && (
-                <p className="mt-2 text-xs text-warn-400">
-                  La conexión figura activa pero no tiene whatsapp_phone persistido. Revisá la configuración antes de usar el webhook en producción.
-                </p>
-              )}
             </div>
           ) : (
             <div className="rounded-xl border border-warn-500/25 bg-warn-500/[0.05] p-5">
-              <div className="text-sm font-semibold text-ink">Sin número conectado</div>
-              <p className="mt-1 text-xs text-ink-muted">
-                El negocio todavía no tiene una conexión real de WhatsApp Business registrada en Supabase.
+              <div className="text-sm font-semibold text-ink">Todavía no conectaste un número</div>
+              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-ink-muted">
+                La conexión se realiza con el flujo oficial de Meta. Thesistema sólo marcará este estado como conectado cuando Meta confirme el número y la integración quede registrada.
               </p>
+              <div className="mt-4">
+                <WhatsAppConnectButton appId={appId} configId={configId} apiVersion={apiVersion} />
+              </div>
             </div>
           )}
         </CardContent>
@@ -92,30 +89,34 @@ export default async function WhatsappSettingsLayout({ children }: { children: R
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Users className="h-4 w-4" /> Miembros autorizados</CardTitle>
+          <CardTitle className="flex items-center gap-2"><Users className="h-4 w-4" /> Acceso del equipo</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="rounded-xl border border-dashed border-line p-6 text-sm text-ink-muted">
-            La base actual no modela una lista independiente de teléfonos autorizados por WhatsApp. No mostramos los miembros ficticios de la demo como si fueran reales.
+            {connected
+              ? "La administración de personas autorizadas se habilitará sobre el número conectado."
+              : "Primero conectá WhatsApp Business. Después vas a poder definir quiénes del equipo pueden operar por este canal."}
           </div>
         </CardContent>
       </Card>
+
+      {children}
     </div>
   );
 }
 
-function Unavailable({ message }: { message: string }) {
+function Unavailable() {
   return (
     <div className="space-y-6">
       <SectionHeader
         eyebrow="Ajustes · WhatsApp"
         title="WhatsApp temporalmente no disponible"
-        description="No podemos confirmar el estado real de la integración en este momento."
+        description="No pudimos confirmar el estado de la conexión en este momento."
       />
       <Card>
         <CardContent className="pt-6">
           <div className="rounded-xl border border-danger-500/30 bg-danger-500/[0.06] p-4 text-sm text-danger-300">
-            {message}
+            Reintentá en unos minutos. Si el problema continúa, revisaremos la conexión del negocio.
           </div>
         </CardContent>
       </Card>
