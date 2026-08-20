@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { business, env } from "@/lib/data";
+import { getCurrentUserContext } from "@/lib/data/auth";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const CARDS = [
   {
@@ -29,10 +31,9 @@ const CARDS = [
   {
     href: "/ajustes/whatsapp",
     icon: MessageSquareText,
-    title: "WhatsApp conectado",
-    detail: "Número activo, miembros autorizados y plantillas de respuesta.",
-    chip: "Conectado",
-    tone: "success" as const,
+    title: "WhatsApp Business",
+    detail: "Conectá el número del negocio para recibir y procesar mensajes.",
+    chip: "Pendiente",
   },
   {
     href: "/ajustes/ia",
@@ -58,9 +59,46 @@ export default async function AjustesResumenPage() {
   const businessPlan = biz?.plan ?? "—";
   const businessOwner = biz?.owner ?? "—";
 
+  let whatsappConnected = env.appMode !== "database";
+  let whatsappPhone: string | null = null;
+
+  if (env.appMode === "database") {
+    const [ctx, supabase] = await Promise.all([
+      getCurrentUserContext(),
+      Promise.resolve(createSupabaseServerClient()),
+    ]);
+
+    if (supabase && ctx.businessId) {
+      const result = await (supabase as any)
+        .from("businesses")
+        .select("whatsapp_connected, whatsapp_phone")
+        .eq("id", ctx.businessId)
+        .maybeSingle();
+
+      if (!result.error && result.data) {
+        whatsappConnected = Boolean(result.data.whatsapp_connected);
+        whatsappPhone = typeof result.data.whatsapp_phone === "string"
+          ? result.data.whatsapp_phone.trim() || null
+          : null;
+      }
+    }
+  }
+
+  const cards = CARDS.map((card) => {
+    if (card.href !== "/ajustes/whatsapp") return card;
+    return {
+      ...card,
+      title: "WhatsApp Business",
+      detail: whatsappConnected
+        ? `Número conectado${whatsappPhone ? `: ${whatsappPhone}` : ""}. Administrá la integración y sus permisos.`
+        : "Conectá el número del negocio para recibir y procesar mensajes.",
+      chip: whatsappConnected ? "Conectado" : "Pendiente",
+      tone: whatsappConnected ? ("success" as const) : ("default" as const),
+    };
+  });
+
   return (
     <div className="space-y-6">
-      {/* Header desde data layer */}
       <div className="card relative overflow-hidden p-5">
         <div className="absolute inset-0 grid-dots opacity-30" />
         <div className="absolute -right-16 -top-16 h-40 w-40 rounded-full bg-brand-500/15 blur-3xl" />
@@ -77,14 +115,14 @@ export default async function AjustesResumenPage() {
           <div className="flex items-center gap-2">
             <Badge tone={env.appMode === "database" ? "success" : "ai"}>
               <Sparkles className="h-3 w-3" />
-              {env.appMode === "database" ? "Conectado a Supabase" : "Modo demo"}
+              {env.appMode === "database" ? "Datos sincronizados" : "Entorno de muestra"}
             </Badge>
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        {CARDS.map((c) => {
+        {cards.map((c) => {
           const Icon = c.icon;
           return (
             <Link
