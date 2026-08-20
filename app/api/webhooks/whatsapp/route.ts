@@ -1,29 +1,13 @@
 /**
- * Webhook WhatsApp Cloud API · Sprint 2.
+ * Webhook WhatsApp Cloud API.
  *
- * Flujo:
- *   1. Verifica firma/token (GET).
- *   2. Recibe POST con payload simplificado o Cloud API.
- *   3. Resuelve el negocio por el número receptor configurado.
- *   4. Inserta el mensaje en `whatsapp_messages`.
- *   5. Llama a la IA (`extractFromMessage`) para extraer campos.
- *   6. Inserta el resultado en `ai_extractions` con estado pending /
- *      needs_review / failed según confidence y fuente.
- *   7. Devuelve 200 con `message_id` y `extraction_id`.
- *
- * En modo demo, devolvemos 200 sin persistir para que tests con curl
- * sigan funcionando.
- *
- * IMPORTANTE: en database mode nunca elegimos "el primer negocio".
- * Un mensaje sólo se persiste si el número receptor coincide de forma
- * unívoca con un business que tenga WhatsApp marcado como conectado.
- *
- * Variables de entorno:
- *   META_VERIFY_TOKEN    — token compartido para Meta (default: gastropilot-dev).
- *   ANTHROPIC_API_KEY    — opcional. Si no está, usamos el heurístico.
- *   ANTHROPIC_MODEL_ID   — opcional. Default: claude-haiku-4-5-20251001.
+ * En producción:
+ *   - GET valida META_VERIFY_TOKEN para el alta del webhook.
+ *   - POST valida x-hub-signature-256 con META_APP_SECRET antes de parsear.
+ *   - El tenant se resuelve únicamente por el número receptor conectado.
  */
 
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isDatabaseMode } from "@/lib/env";
@@ -54,12 +38,22 @@ async function logSystemEvent(
   }
 }
 
-const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN ?? "gastropilot-dev";
-
 function normalizePhone(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const digits = value.replace(/\D/g, "");
   return digits.length >= 8 ? digits : null;
+}
+
+function verifyMetaSignature(rawBody: string, signatureHeader: string | null): boolean {
+  const appSecret = process.env.META_APP_SECRET?.trim();
+  if (!appSecret || !signatureHeader?.startsWith("sha256=")) return false;
+
+  const providedHex = signatureHeader.slice("sha256=".length);
+  if (!/^[a-f0-9]{64}$/i.test(providedHex)) return false;
+
+  const expected = createHmac("sha256", appSecret).update(rawBody, "utf8").digest();
+  const provided = Buffer.from(providedHex, "hex");
+  return expected.length === provided.length && timingSafeEqual(expected, provided);
 }
 
 async function resolveBusinessByRecipient(
@@ -91,12 +85,17 @@ async function resolveBusinessByRecipient(
 
 // ---------- GET — verificación inicial de Meta ----------
 export async function GET(request: NextRequest) {
+  const verifyToken = process.env.META_VERIFY_TOKEN?.trim() || (!isDatabaseMode() ? "gastropilot-dev" : null);
+  if (!verifyToken) {
+    return NextResponse.json({ ok: false, reason: "webhook_not_configured" }, { status: 503 });
+  }
+
   const { searchParams } = new URL(request.url);
   const mode = searchParams.get("hub.mode");
   const token = searchParams.get("hub.verify_token");
   const challenge = searchParams.get("hub.challenge");
 
-  if (mode === "subscribe" && token === VERIFY_TOKEN && challenge) {
+  if (mode === "subscribe" && token === verifyToken && challenge) {
     return new NextResponse(challenge, { status: 200 });
   }
   return NextResponse.json({ ok: false, reason: "invalid_verify_token" }, { status: 403 });
@@ -107,18 +106,32 @@ export async function POST(request: NextRequest) {
   const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
   const rl = rateLimit(`webhook:${ip}`, { windowMs: 60_000, max: 60 });
   if (!rl.ok) {
-    // Antes de parsear el payload no conocemos el tenant. No inventamos uno.
     return NextResponse.json(
       { ok: false, reason: "rate_limited", remaining: rl.remaining },
       { status: 429 },
     );
   }
 
+  let rawBody: string;
+  try {
+    rawBody = await request.text();
+  } catch {
+    return NextResponse.json({ ok: false, reason: "invalid_body" }, { status: 400 });
+  }
+
+  if (isDatabaseMode()) {
+    if (!process.env.META_APP_SECRET?.trim()) {
+      return NextResponse.json({ ok: false, reason: "webhook_not_configured" }, { status: 503 });
+    }
+    if (!verifyMetaSignature(rawBody, request.headers.get("x-hub-signature-256"))) {
+      return NextResponse.json({ ok: false, reason: "invalid_signature" }, { status: 401 });
+    }
+  }
+
   let body: any;
   try {
-    body = await request.json();
+    body = JSON.parse(rawBody);
   } catch {
-    // Un JSON inválido tampoco permite atribuir el evento a un negocio de forma segura.
     return NextResponse.json({ ok: false, reason: "invalid_json" }, { status: 400 });
   }
 
@@ -146,7 +159,6 @@ export async function POST(request: NextRequest) {
     }
     businessId = resolved.businessId;
 
-    // 1) Persistir el mensaje en el tenant resuelto.
     const msgRes = await db
       .from("whatsapp_messages")
       .insert({
@@ -171,10 +183,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2) Extraer con IA.
     const extraction = await extractFromMessage(incoming.raw, incoming.sender_name);
-
-    // 3) Estado inicial según confidence y fuente.
     const status =
       extraction.source === "failed" || extraction.confidence < 0.4
         ? "failed"
@@ -182,7 +191,6 @@ export async function POST(request: NextRequest) {
           ? "needs_review"
           : "pending";
 
-    // 4) Persistir extracción en el mismo tenant.
     const extractionRes = await db
       .from("ai_extractions")
       .insert({
@@ -249,8 +257,6 @@ function normalizeIncoming(payload: any): {
   raw: string;
   recipient_phone: string | null;
 } {
-  // Payload simplificado para curl/test. En database mode debe incluir `to`
-  // (o `recipient` / `business_phone`) para poder resolver el tenant.
   if (typeof payload?.text === "string") {
     return {
       sender_name: payload.from ?? "Sin nombre",
@@ -261,7 +267,6 @@ function normalizeIncoming(payload: any): {
     };
   }
 
-  // Cloud API real: Meta incluye el número receptor en value.metadata.display_phone_number.
   const change = payload?.entry?.[0]?.changes?.[0]?.value;
   const message = change?.messages?.[0];
   const contact = change?.contacts?.[0];

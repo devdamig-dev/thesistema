@@ -31,63 +31,9 @@ const DEMO_AUTHORIZED = [
 export default function AjustesWhatsappPage() {
   const { toast } = useToast();
 
-  if (IS_DATABASE) {
-    return (
-      <div className="space-y-6">
-        <SettingsCard
-          title="Conexión con WhatsApp Business"
-          description="El número desde el cual la IA recibe mensajes y envía respuestas."
-        >
-          <div className="rounded-xl border border-warn-500/25 bg-warn-500/[0.05] p-5">
-            <div className="flex items-start gap-3">
-              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-warn-500/30 bg-warn-500/10">
-                <MessageSquareText className="h-5 w-5 text-warn-400" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-semibold text-ink">Sin número conectado</span>
-                  <Badge tone="default">Pendiente</Badge>
-                </div>
-                <p className="mt-1 max-w-2xl text-xs leading-relaxed text-ink-muted">
-                  Todavía no existe una conexión real con Meta/WhatsApp Business para este negocio. Hasta que la integración se complete, GastroPilot no va a mostrar números, mensajes ni miembros ficticios.
-                </p>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="mt-3"
-                  onClick={() => toast(ToastPresets.comingSoon("Conectar WhatsApp Business"))}
-                >
-                  Conectar WhatsApp Business
-                </Button>
-              </div>
-            </div>
-          </div>
-        </SettingsCard>
-
-        <SettingsCard
-          title="Miembros autorizados"
-          description="Quiénes pueden cargar movimientos desde WhatsApp."
-        >
-          <div className="rounded-xl border border-dashed border-line p-8 text-center">
-            <Users className="mx-auto h-5 w-5 text-ink-subtle" />
-            <p className="mt-3 text-sm font-medium text-ink">Sin miembros autorizados</p>
-            <p className="mt-1 text-xs text-ink-muted">
-              Esta lista se habilitará cuando exista una conexión real de WhatsApp Business.
-            </p>
-          </div>
-        </SettingsCard>
-
-        <SettingsCard
-          title="Plantillas y respuestas automáticas"
-          description="Se habilitan cuando WhatsApp Business está conectado."
-        >
-          <div className="rounded-xl border border-dashed border-line p-6 text-sm text-ink-muted">
-            No hay respuestas automáticas activas todavía.
-          </div>
-        </SettingsCard>
-      </div>
-    );
-  }
+  // En producción, el layout server-side es la única fuente de verdad para el
+  // estado de la integración. Evitamos duplicar cards o caer a contenido demo.
+  if (IS_DATABASE) return null;
 
   return (
     <div className="space-y-6">
