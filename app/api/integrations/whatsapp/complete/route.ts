@@ -59,18 +59,13 @@ export async function POST(request: NextRequest) {
 
   try {
     const version = graphVersion();
-    const tokenParams = new URLSearchParams({
-      client_id: appId,
-      client_secret: appSecret,
-      code,
-    });
+    const tokenParams = new URLSearchParams({ client_id: appId, client_secret: appSecret, code });
     const tokenPayload = await graphJson(
       `https://graph.facebook.com/${version}/oauth/access_token?${tokenParams.toString()}`,
     );
     const accessToken = typeof tokenPayload?.access_token === "string" ? tokenPayload.access_token : null;
     if (!accessToken) throw new Error("Meta no devolvió un token de acceso válido.");
 
-    // Verificamos que el teléfono informado realmente pertenezca al WABA autorizado.
     const phoneList = await graphJson(
       `https://graph.facebook.com/${version}/${encodeURIComponent(wabaId)}/phone_numbers?fields=id,display_phone_number,verified_name`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -80,14 +75,9 @@ export async function POST(request: NextRequest) {
       : null;
     if (!phone) throw new Error("El número seleccionado no pertenece a la cuenta de WhatsApp autorizada.");
 
-    // El webhook del App debe estar configurado previamente en Meta. Esta suscripción
-    // hace que el WABA recién conectado entregue sus eventos a ese webhook.
     await graphJson(
       `https://graph.facebook.com/${version}/${encodeURIComponent(wabaId)}/subscribed_apps`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
-      },
+      { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } },
     );
 
     const displayPhone = typeof phone.display_phone_number === "string" ? phone.display_phone_number.trim() : null;
@@ -123,6 +113,9 @@ export async function POST(request: NextRequest) {
         whatsapp_connected: true,
         whatsapp_phone: displayPhone,
         whatsapp_connected_at: now,
+        whatsapp_waba_id: wabaId,
+        whatsapp_phone_number_id: phoneNumberId,
+        whatsapp_connection_status: "connected",
       })
       .eq("id", ctx.businessId);
     if (businessResult.error) throw new Error("No pudimos actualizar el estado del negocio.");
