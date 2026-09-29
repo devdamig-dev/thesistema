@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Check, Sparkles, Zap } from "lucide-react";
+import { AlertTriangle, Bot, Check, Sparkles, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ToastPresets, useToast } from "@/components/ui/toast";
@@ -10,6 +10,7 @@ import {
   Toggle,
 } from "@/components/ajustes/setting-row";
 import { cn } from "@/lib/utils";
+import { WHATSAPP_TOOLS } from "@/lib/whatsapp-agent/registry";
 
 const IS_DATABASE = process.env.NEXT_PUBLIC_APP_MODE === "database";
 
@@ -37,6 +38,7 @@ export default function AjustesIAPage() {
 function DatabaseAiSettings() {
   return (
     <div className="space-y-6">
+      <WhatsAppCapabilities />
       <SettingsCard
         title="Configuración de IA"
         description="Este apartado todavía no tiene un modelo persistido de planes, créditos, tono, automatizaciones ni módulos por negocio."
@@ -62,6 +64,7 @@ function DemoAiSettings() {
   const { toast } = useToast();
   return (
     <div className="space-y-6">
+      <WhatsAppCapabilities />
       <SettingsCard
         title="Plan y créditos IA"
         description="Cada plan incluye una cuota mensual de procesamiento."
@@ -162,6 +165,27 @@ function DemoAiSettings() {
         </ul>
       </SettingsCard>
     </div>
+  );
+}
+
+function WhatsAppCapabilities() {
+  const groups = WHATSAPP_TOOLS.reduce<Record<string, typeof WHATSAPP_TOOLS[number][]>>((all, tool) => {
+    (all[tool.module] ??= []).push(tool);
+    return all;
+  }, {});
+  return (
+    <SettingsCard title="Capacidades por WhatsApp" description="Operaciones reales disponibles. El rol, los permisos, los módulos y la sucursal del usuario se validan en cada mensaje.">
+      <div className="grid gap-3 sm:grid-cols-2">
+        {Object.entries(groups).map(([module, tools]) => (
+          <section key={module} className="rounded-xl border border-border bg-bg-subtle/40 p-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-ink-muted">{module.replace("_", " ")}</h3>
+            <ul className="mt-3 space-y-2">
+              {tools.map((tool) => <li key={tool.name} className="flex items-start gap-2 text-sm text-ink"><span className={tool.risk === "SENSITIVE" ? "text-warn-400" : "text-success-500"}>{tool.risk === "SENSITIVE" ? <AlertTriangle className="mt-0.5 h-4 w-4" /> : <Check className="mt-0.5 h-4 w-4" />}</span><span>{tool.description}{tool.risk === "SENSITIVE" && <small className="block text-ink-subtle">Requiere confirmación</small>}</span></li>)}
+            </ul>
+          </section>
+        ))}
+      </div>
+    </SettingsCard>
   );
 }
 
