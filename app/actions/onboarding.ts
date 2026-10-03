@@ -96,16 +96,36 @@ export async function saveBranchStep(payload: {
     const branchName = b.name.trim();
     if (!branchName) continue;
 
-    const { data: existingBranch, error: lookupError } = await db
-      .from("branches")
-      .select("id")
-      .eq("business_id", businessId)
-      .eq("name", branchName)
-      .maybeSingle();
-
-    if (lookupError) {
-      console.error("saveBranchStep lookup failed", lookupError);
-      return { ok: false, persisted: false, error: "branch_save_failed" };
+    // bootstrap_first_business creates the initial main branch. During onboarding
+    // we must edit that row instead of inserting a second main branch with the
+    // name entered by the user.
+    let existingBranch: { id: string } | null = null;
+    if (b.isMain) {
+      const mainLookup = await db
+        .from("branches")
+        .select("id")
+        .eq("business_id", businessId)
+        .eq("is_main", true)
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (mainLookup.error) {
+        console.error("saveBranchStep main lookup failed", mainLookup.error);
+        return { ok: false, persisted: false, error: "branch_save_failed" };
+      }
+      existingBranch = mainLookup.data;
+    } else {
+      const nameLookup = await db
+        .from("branches")
+        .select("id")
+        .eq("business_id", businessId)
+        .eq("name", branchName)
+        .maybeSingle();
+      if (nameLookup.error) {
+        console.error("saveBranchStep lookup failed", nameLookup.error);
+        return { ok: false, persisted: false, error: "branch_save_failed" };
+      }
+      existingBranch = nameLookup.data;
     }
 
     const branchPayload = {
