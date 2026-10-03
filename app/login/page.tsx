@@ -187,9 +187,12 @@ function LoginPageInner() {
         return;
       }
 
+      const signupNext = inviteToken ? next : "/onboarding";
+      const signupParams = new URLSearchParams({ next: signupNext });
+      if (inviteToken) signupParams.set("invite_token", inviteToken);
       const emailRedirectTo =
         typeof window !== "undefined"
-          ? `${window.location.origin}/login?next=${encodeURIComponent("/onboarding")}`
+          ? `${window.location.origin}/login?${signupParams.toString()}`
           : undefined;
 
       const { data, error } = await supabase.auth.signUp({
@@ -207,12 +210,23 @@ function LoginPageInner() {
       }
 
       if (data.session) {
-        toast({
-          tone: "success",
-          title: "Cuenta creada",
-          description: "Ahora configurá los datos de tu negocio.",
-        });
-        router.replace("/onboarding");
+        if (inviteToken) {
+          const accepted = await acceptPendingInvite();
+          if (!accepted) return;
+          toast({
+            tone: "success",
+            title: "Cuenta creada",
+            description: "Ya te sumaste al negocio que te invitó.",
+          });
+          router.replace(next);
+        } else {
+          toast({
+            tone: "success",
+            title: "Cuenta creada",
+            description: "Ahora configurá los datos de tu negocio.",
+          });
+          router.replace("/onboarding");
+        }
         router.refresh();
         return;
       }
@@ -220,7 +234,9 @@ function LoginPageInner() {
       toast({
         tone: "success",
         title: "Revisá tu correo",
-        description: "Te enviamos un enlace para confirmar la cuenta. Después vas a poder configurar tu negocio.",
+        description: inviteToken
+          ? "Te enviamos un enlace para confirmar la cuenta y sumarte al negocio que te invitó."
+          : "Te enviamos un enlace para confirmar la cuenta. Después vas a poder configurar tu negocio.",
       });
       setPassword("");
       setPasswordConfirm("");
