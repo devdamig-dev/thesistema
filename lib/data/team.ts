@@ -49,14 +49,15 @@ const DEMO_INVITATIONS: PendingInvitation[] = [
 export async function listTeamMembers(): Promise<TeamMember[]> {
   if (!isDatabaseMode()) return DEMO_MEMBERS;
   const supabase = createSupabaseServerClient();
-  if (!supabase) return DEMO_MEMBERS;
+  if (!supabase) return [];
   const db = supabase as any;
   try {
     const memberRes = await db
       .from("business_members")
       .select("id, user_id, role");
     const members = (memberRes.data as { id: string; user_id: string; role: Role }[] | null) ?? [];
-    if (members.length === 0) return DEMO_MEMBERS;
+    if (memberRes.error) throw memberRes.error;
+    if (members.length === 0) return [];
 
     const profilesRes = await db
       .from("profiles")
@@ -82,15 +83,16 @@ export async function listTeamMembers(): Promise<TeamMember[]> {
         canApprove,
       };
     });
-  } catch {
-    return DEMO_MEMBERS;
+  } catch (error) {
+    console.error("[team] members query failed", error);
+    return [];
   }
 }
 
 export async function listPendingInvitations(): Promise<PendingInvitation[]> {
   if (!isDatabaseMode()) return DEMO_INVITATIONS;
   const supabase = createSupabaseServerClient();
-  if (!supabase) return DEMO_INVITATIONS;
+  if (!supabase) return [];
   const db = supabase as any;
   try {
     const res = await db
@@ -98,9 +100,10 @@ export async function listPendingInvitations(): Promise<PendingInvitation[]> {
       .select("id, email, role, created_at, expires_at, status")
       .eq("status", "pending")
       .order("created_at", { ascending: false });
+    if (res.error) throw res.error;
     const rows =
       (res.data as { id: string; email: string; role: Role; created_at: string; expires_at: string; status: string }[] | null) ?? [];
-    if (rows.length === 0) return DEMO_INVITATIONS;
+    if (rows.length === 0) return [];
     return rows.map((r) => ({
       id: r.id,
       email: r.email,
@@ -108,7 +111,8 @@ export async function listPendingInvitations(): Promise<PendingInvitation[]> {
       invitedAt: r.created_at,
       expiresAt: r.expires_at,
     }));
-  } catch {
-    return DEMO_INVITATIONS;
+  } catch (error) {
+    console.error("[team] invitations query failed", error);
+    return [];
   }
 }
