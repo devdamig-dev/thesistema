@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "rm -rf .test-dist && tsc -p tests/tsconfig.json && node --test .test-dist/tests/*.test.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.1",

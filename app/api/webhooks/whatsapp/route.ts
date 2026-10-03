@@ -15,6 +15,8 @@ import { extractFromMessage } from "@/lib/ai/extract";
 import { createNotification } from "@/lib/data/notifications";
 import { logActivity } from "@/lib/data/activity";
 import { rateLimit } from "@/lib/rate-limit";
+import { processWhatsAppAgentMessage } from "@/lib/whatsapp-agent/service";
+import { sendMetaTextReply } from "@/lib/whatsapp-agent/meta-transport";
 
 async function logSystemEvent(
   businessId: string | null,
@@ -183,6 +185,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Los mensajes de miembros autorizados pasan por el core operativo. Los
+    // demás conservan el flujo de Inbox existente (clientes/proveedores).
+    if (incoming.channel === "text" && incoming.provider_message_id && incoming.sender_phone) {
+      const agentReply = await processWhatsAppAgentMessage({
+        messageId: incoming.provider_message_id,
+        senderPhone: incoming.sender_phone,
+        recipientPhone: incoming.recipient_phone ?? "",
+        senderName: incoming.sender_name,
+        text: incoming.raw,
+      });
+      if (agentReply.status !== "rejected") {
+        if (agentReply.status !== "duplicate") {
+          try {
+            await sendMetaTextReply(businessId, incoming.sender_phone, agentReply.text);
+          } catch (error) {
+            await logSystemEvent(businessId, "whatsapp.reply_failed", "No se pudo enviar la respuesta del agente", { error: error instanceof Error ? error.message : "send_failed" });
+          }
+        }
+        return NextResponse.json({ ok: true, persisted: true, message_id: msg.id, agent: agentReply.status });
+      }
+    }
+
     const extraction = await extractFromMessage(incoming.raw, incoming.sender_name);
     const status =
       extraction.source === "failed" || extraction.confidence < 0.4
@@ -256,6 +280,8 @@ function normalizeIncoming(payload: any): {
   channel: "text" | "audio" | "image" | "document";
   raw: string;
   recipient_phone: string | null;
+  sender_phone: string | null;
+  provider_message_id: string | null;
 } {
   if (typeof payload?.text === "string") {
     return {
@@ -264,6 +290,8 @@ function normalizeIncoming(payload: any): {
       channel: payload.channel ?? "text",
       raw: payload.text,
       recipient_phone: payload.to ?? payload.recipient ?? payload.business_phone ?? null,
+      sender_phone: payload.from ?? null,
+      provider_message_id: payload.message_id ?? null,
     };
   }
 
@@ -276,5 +304,7 @@ function normalizeIncoming(payload: any): {
     channel: (message?.type as any) ?? "text",
     raw: message?.text?.body ?? "[mensaje no textual]",
     recipient_phone: change?.metadata?.display_phone_number ?? null,
+    sender_phone: message?.from ?? null,
+    provider_message_id: message?.id ?? null,
   };
 }
