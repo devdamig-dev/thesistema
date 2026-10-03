@@ -59,6 +59,7 @@ export default function EquipoClient({
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<Role>("manager");
+  const [createdInviteUrl, setCreatedInviteUrl] = useState<string | null>(null);
 
   function handleInvite() {
     if (!inviteEmail.includes("@")) {
@@ -70,13 +71,17 @@ export default function EquipoClient({
       if (res.ok) {
         toast({
           tone: "success",
-          title: "Invitación enviada",
+          title: res.persisted ? "Invitación creada" : "Invitación preparada",
           description: res.persisted
-            ? `${inviteEmail} recibirá un link en breve.`
+            ? "Compartí el enlace seguro con la persona invitada."
             : "Modo demo · cambio local.",
         });
+        setCreatedInviteUrl(
+          res.inviteUrl && typeof window !== "undefined"
+            ? new URL(res.inviteUrl, window.location.origin).toString()
+            : null,
+        );
         setInviteEmail("");
-        setInviteOpen(false);
         router.refresh();
       } else {
         toast({ tone: "warn", title: "No pudimos invitar", description: res.error });
@@ -132,6 +137,21 @@ export default function EquipoClient({
           </Button>
         }
       >
+        {createdInviteUrl && (
+          <div className="mb-4 rounded-xl border border-success-500/25 bg-success-500/[0.05] p-4">
+            <div className="text-xs font-semibold text-success-400">Invitación lista</div>
+            <p className="mt-1 text-xs text-ink-muted">
+              Compartí este enlace con la persona invitada. Al aceptarlo se sumará a este negocio y no hará onboarding.
+            </p>
+            <div className="mt-3 flex gap-2">
+              <input readOnly value={createdInviteUrl} className="min-w-0 flex-1 rounded-lg border border-line bg-bg-subtle px-3 py-2 text-xs text-ink" />
+              <Button type="button" variant="ghost" size="sm" onClick={() => navigator.clipboard.writeText(createdInviteUrl)}>
+                Copiar enlace
+              </Button>
+            </div>
+          </div>
+        )}
+
         {inviteOpen && (
           <div className="mb-4 rounded-xl border border-ai-400/30 bg-ai-500/[0.06] p-4">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_180px_auto]">
