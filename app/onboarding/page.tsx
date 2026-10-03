@@ -41,7 +41,7 @@ async function getInitialState(): Promise<InitialStateResult> {
   if (membershipsRes.error) {
     return {
       ok: false,
-      error: `No pudimos leer tus negocios (${membershipsRes.error.code ?? "query_error"}). No mostramos un wizard vacío para evitar crear o sobrescribir datos por error.`,
+      error: "No pudimos cargar tus negocios. Recargá la página y, si el problema continúa, contactá a soporte.",
     };
   }
 
@@ -66,7 +66,7 @@ async function getInitialState(): Promise<InitialStateResult> {
   if (businessesRes.error) {
     return {
       ok: false,
-      error: `No pudimos leer el estado real del onboarding (${businessesRes.error.code ?? "query_error"}). No usamos valores demo como fallback.`,
+      error: "No pudimos recuperar el estado de tu configuración. Recargá la página y, si el problema continúa, contactá a soporte.",
     };
   }
 
@@ -95,7 +95,7 @@ async function getInitialState(): Promise<InitialStateResult> {
   if (branchRes.error) {
     return {
       ok: false,
-      error: `No pudimos leer el punto de venta principal (${branchRes.error.code ?? "query_error"}). No reemplazamos esa falla por una sucursal ficticia.`,
+      error: "No pudimos recuperar tu punto de venta principal. Recargá la página y, si el problema continúa, contactá a soporte.",
     };
   }
 
