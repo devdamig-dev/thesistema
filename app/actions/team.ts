@@ -8,7 +8,7 @@ import { logActivity } from "@/lib/data/activity";
 import { assertPermission } from "@/lib/permissions/server-action";
 
 type Result =
-  | { ok: true; persisted: boolean; id?: string }
+  | { ok: true; persisted: boolean; id?: string; inviteUrl?: string }
   | { ok: false; persisted: false; error: string };
 
 async function resolveBusinessId(db: any): Promise<string | null> {
@@ -75,7 +75,12 @@ export async function inviteUserAction(payload: {
   });
 
   refresh();
-  return { ok: true, persisted: true, id: row.id };
+  return {
+    ok: true,
+    persisted: true,
+    id: row.id,
+    inviteUrl: `/login?invite_token=${encodeURIComponent(row.token)}&next=${encodeURIComponent("/")}`,
+  };
 }
 
 /**
