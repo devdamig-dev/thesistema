@@ -9,7 +9,7 @@ export const WHATSAPP_TOOLS: readonly ToolDefinition[] = [
   { name: "purchases.create", description: "Registrar una compra", module: "purchases", permission: "purchases.create", risk: "WRITE", required: ["supplier", "amount", "paymentMethod"] },
   { name: "debts.list", description: "Consultar deudas", module: "debts", permission: "debts.view", risk: "READ", required: [] },
   { name: "debts.create", description: "Registrar una deuda", module: "debts", permission: "debts.create", risk: "WRITE", required: ["creditor", "amount"] },
-  { name: "debts.registerPayment", description: "Registrar pago de deuda", module: "debts", permission: "debts.pay", risk: "SENSITIVE", required: ["creditor"] },
+  { name: "debts.registerPayment", description: "Registrar pago de deuda", module: "debts", permission: "debts.pay", risk: "SENSITIVE", required: ["creditor", "amount", "paymentMethod"] },
   { name: "stock.getLowStock", description: "Consultar stock bajo", module: "stock", permission: "stock.view", risk: "READ", required: [] },
   { name: "stock.addMovement", description: "Registrar movimiento de stock", module: "stock", permission: "stock.adjust", risk: "WRITE", required: ["ingredient", "quantity", "operation"] },
   { name: "products.list", description: "Consultar productos", module: "products", permission: "products.view", risk: "READ", required: [] },

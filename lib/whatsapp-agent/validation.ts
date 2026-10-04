@@ -1,0 +1,104 @@
+import type { ToolCall } from "./types";
+
+type FieldKind = "string" | "positiveNumber" | "nonNegativeNumber" | "date" | "paymentMethod" | "stockOperation" | "debtCategory";
+type ToolSchema = Record<string, FieldKind>;
+export type ValidationIssue = { key: string; message: string; unexpected?: boolean };
+export type ToolValidation = { call: ToolCall; issues: ValidationIssue[] };
+
+const schemas: Record<string, ToolSchema> = {
+  "sales.getToday": {},
+  "sales.getPeriod": { from: "date", to: "date" },
+  "sales.comparePeriods": { from: "date", to: "date", previousFrom: "date", previousTo: "date" },
+  "purchases.list": {},
+  "purchases.create": { supplier: "string", amount: "positiveNumber", paymentMethod: "paymentMethod", purchasedAt: "date" },
+  "debts.list": {},
+  "debts.create": { creditor: "string", amount: "positiveNumber", concept: "string", category: "debtCategory", dueDate: "date" },
+  "debts.registerPayment": { creditor: "string", amount: "positiveNumber", paymentMethod: "paymentMethod", paidAt: "date" },
+  "stock.getLowStock": {},
+  "stock.addMovement": { ingredient: "string", quantity: "positiveNumber", operation: "stockOperation", branchId: "string" },
+  "products.list": {},
+  "products.create": { name: "string", price: "positiveNumber", category: "string", cost: "nonNegativeNumber" },
+  "invoices.listPending": {},
+};
+
+const paymentMethods: Record<string, string> = {
+  transferencia: "Transferencia",
+  efectivo: "Efectivo",
+  debito: "Débito",
+  credito: "Crédito",
+  tarjeta: "Tarjeta",
+  "cuenta corriente": "Cuenta corriente",
+  otro: "Otro",
+};
+const debtCategories = new Set(["supplier", "tax", "loan", "rent", "utility", "payroll", "other"]);
+const stockOperations = new Set(["in", "out", "set"]);
+const normalizeEnum = (value: string) => value.trim().toLocaleLowerCase("es").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+function validIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function validateField(key: string, kind: FieldKind, raw: unknown): { value?: unknown; issue?: ValidationIssue } {
+  if (raw === undefined || raw === null || raw === "") return {};
+  if (kind === "string") {
+    if (typeof raw !== "string" || !raw.trim() || raw.trim().length > 160) return { issue: { key, message: "debe ser un texto de hasta 160 caracteres" } };
+    return { value: raw.trim() };
+  }
+  if (kind === "positiveNumber" || kind === "nonNegativeNumber") {
+    if (typeof raw !== "number" || !Number.isFinite(raw) || raw > 1_000_000_000_000 || (kind === "positiveNumber" ? raw <= 0 : raw < 0)) {
+      return { issue: { key, message: kind === "positiveNumber" ? "debe ser un número mayor a cero" : "debe ser un número igual o mayor a cero" } };
+    }
+    return { value: raw };
+  }
+  if (kind === "date") {
+    if (typeof raw !== "string" || !validIsoDate(raw)) return { issue: { key, message: "debe tener formato AAAA-MM-DD y ser una fecha válida" } };
+    return { value: raw };
+  }
+  if (typeof raw !== "string") return { issue: { key, message: "tiene un valor no permitido" } };
+  const normalized = normalizeEnum(raw);
+  if (kind === "paymentMethod") {
+    const value = paymentMethods[normalized];
+    return value ? { value } : { issue: { key, message: "debe ser Transferencia, Efectivo, Débito, Crédito, Tarjeta, Cuenta corriente u Otro" } };
+  }
+  if (kind === "stockOperation") return stockOperations.has(normalized) ? { value: normalized } : { issue: { key, message: "debe ser in, out o set" } };
+  return debtCategories.has(normalized) ? { value: normalized } : { issue: { key, message: "tiene una categoría no permitida" } };
+}
+
+function validatePeriod(argumentsValue: Record<string, unknown>, from: string, to: string, issues: ValidationIssue[]) {
+  if (typeof argumentsValue[from] !== "string" || typeof argumentsValue[to] !== "string") return;
+  const start = new Date(`${argumentsValue[from]}T00:00:00Z`);
+  const end = new Date(`${argumentsValue[to]}T00:00:00Z`);
+  const days = (end.getTime() - start.getTime()) / 86_400_000;
+  if (days < 0) issues.push({ key: to, message: "no puede ser anterior a la fecha inicial" });
+  else if (days > 366) issues.push({ key: to, message: "no puede superar un período de 366 días" });
+}
+
+export function validateToolCall(call: ToolCall): ToolValidation {
+  const schema = schemas[call.name];
+  if (!schema || !call.arguments || typeof call.arguments !== "object" || Array.isArray(call.arguments)) {
+    return { call: { name: call.name, arguments: {} }, issues: [{ key: "arguments", message: "no tienen un formato válido", unexpected: true }] };
+  }
+
+  const cleaned: Record<string, unknown> = {};
+  const issues: ValidationIssue[] = [];
+  for (const [key, raw] of Object.entries(call.arguments)) {
+    const kind = schema[key];
+    if (!kind) {
+      issues.push({ key, message: "no es un argumento permitido", unexpected: true });
+      continue;
+    }
+    const result = validateField(key, kind, raw);
+    if (result.issue) issues.push(result.issue);
+    else if (result.value !== undefined) cleaned[key] = result.value;
+  }
+
+  if (call.name === "sales.getPeriod") validatePeriod(cleaned, "from", "to", issues);
+  if (call.name === "sales.comparePeriods") {
+    validatePeriod(cleaned, "from", "to", issues);
+    validatePeriod(cleaned, "previousFrom", "previousTo", issues);
+  }
+  for (const issue of issues) delete cleaned[issue.key];
+  return { call: { name: call.name, arguments: cleaned }, issues };
+}

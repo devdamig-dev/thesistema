@@ -25,6 +25,8 @@ Sin estos pasos el core sigue siendo comprobable por tests y por el endpoint int
 - Antes de ejecutar una operación sensible, `consumePending` hace un UPDATE condicionado por id, negocio, miembro, `consumed_at IS NULL` y vigencia. Sólo el mensaje que recibe una fila puede ejecutar; dos confirmaciones diferentes no pueden consumir el mismo pedido. Una cancelación compite por esa misma fila y no afirma haber cancelado si la confirmación ya ganó.
 - El consumo previo al write garantiza como máximo un intento por confirmación. Si el proceso falla después de consumirla, el pedido debe iniciarse de nuevo; no hay reintento automático de writes sensibles.
 - Los argumentos no aceptan `business_id`; el tenant procede exclusivamente del actor resuelto.
+- Cada tool valida claves permitidas, tipos, números finitos/positivos, fechas ISO reales, períodos máximos de 366 días y enums antes de guardar contexto o ejecutar. Los argumentos desconocidos se rechazan.
+- Un pago de deuda requiere acreedor, monto y medio de pago concretos. La confirmación muestra los tres valores antes de aceptar “Sí”; no se completa silenciosamente con valores por defecto.
 - Auditoría, mensajes procesados y estado conversacional son tablas server-owned con RLS habilitada y sin grants a `authenticated`/`anon`.
 - Los logs sanitizan claves con nombres de token, secreto, password o authorization.
 
@@ -34,6 +36,5 @@ El router incluido es determinístico y cubre las frases MVP. La interfaz `inter
 
 ## Próximos incrementos
 
-1. Validación tipada de argumentos y preview de los valores concretos antes de confirmar (acreedor, monto y medio de pago).
-2. Resolución de identidad por teléfono que rechace coincidencias ambiguas y errores de consulta.
-3. Prueba end-to-end con un negocio y número Meta autorizados, incluyendo permisos de rol y sucursal.
+1. Resolución de identidad por teléfono que rechace coincidencias ambiguas y errores de consulta.
+2. Prueba end-to-end con un negocio y número Meta autorizados, incluyendo permisos de rol y sucursal.

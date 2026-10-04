@@ -1,6 +1,7 @@
 import { getMissingArguments } from "./interpreter";
 import { getTool, toolsForActor } from "./registry";
 import type { AgentDependencies, AgentReply, IncomingAgentMessage } from "./types";
+import { validateToolCall } from "./validation";
 
 const CANCELLATION = /^(no|cancelar|cancel[aá]|cancelo|no confirmar)[.!\s]*$/i;
 const CONFIRMATION = /^(s[ií]|confirmo|dale|ok|confirmar)[.!\s]*$/i;
@@ -16,8 +17,15 @@ const labels: Record<string, string> = {
 };
 
 const money = (value: unknown) =>
-  new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 })
+  new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 2 })
     .format(Number(value ?? 0));
+
+function confirmationText(toolName: string, argumentsValue: Record<string, unknown>, description: string): string {
+  if (toolName === "debts.registerPayment") {
+    return `Voy a registrar un pago a ${String(argumentsValue.creditor)} por ${money(argumentsValue.amount)} mediante ${String(argumentsValue.paymentMethod)}. Respondé “Sí” para confirmar o “Cancelar” para descartar.`;
+  }
+  return `Voy a ejecutar “${description}”. Respondé “Sí” para confirmar o “Cancelar” para descartar.`;
+}
 
 function formatResult(toolName: string, result: unknown): string {
   const data = result as any;
@@ -118,8 +126,8 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
     confirmed = true;
   }
 
-  const call = confirmed && pending ? pending.toolCall : await deps.interpret(input.text, available, pending);
-  if (!call) {
+  const interpreted = confirmed && pending ? pending.toolCall : await deps.interpret(input.text, available, pending);
+  if (!interpreted) {
     await safeAudit(deps, { actor, input, error: "intent_not_recognized" });
     return {
       status: "needs_input",
@@ -127,13 +135,40 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
     };
   }
 
-  const tool = getTool(call.name);
+  const tool = getTool(interpreted.name);
   if (!tool) return { status: "rejected", text: "Esa capacidad no existe." };
   if (!actor.enabledModules.includes(tool.module)) {
     return { status: "rejected", text: `No tenés habilitado el módulo de ${tool.module} para este negocio.` };
   }
   if (!available.some((item) => item.name === tool.name)) {
     return { status: "rejected", text: "No tenés permiso para realizar esa operación." };
+  }
+
+  const validation = validateToolCall(interpreted);
+  const call = validation.call;
+  if (validation.issues.length) {
+    const unexpected = validation.issues.some((issue) => issue.unexpected);
+    await safeAudit(deps, {
+      actor,
+      input,
+      tool: tool.name,
+      module: tool.module,
+      arguments: call.arguments,
+      error: `invalid_arguments:${validation.issues.map((issue) => issue.key).join(",")}`,
+    });
+    if (unexpected) return { status: "rejected", text: "La operación incluye datos no permitidos y no fue ejecutada.", tool: tool.name };
+    const issue = validation.issues[0];
+    await deps.savePending({
+      actor,
+      toolCall: call,
+      kind: "clarification",
+      expiresAt: new Date(deps.now().getTime() + 15 * 60_000).toISOString(),
+    });
+    return {
+      status: "needs_input",
+      text: `${labels[issue.key] ?? issue.key}: ${issue.message}. ¿Me lo indicás nuevamente?`,
+      tool: tool.name,
+    };
   }
 
   const missing = getMissingArguments(call, available);
@@ -176,7 +211,7 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
     });
     return {
       status: "needs_confirmation",
-      text: `Voy a ejecutar “${tool.description}”. Respondé “Sí” para confirmar o “Cancelar” para descartar.`,
+      text: confirmationText(tool.name, call.arguments, tool.description),
       tool: tool.name,
     };
   }

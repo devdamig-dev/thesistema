@@ -40,7 +40,21 @@ test("unauthorized phone is rejected", async () => { const h = harness({ actor: 
 test("role restrictions do not expose write tools", async () => { const h = harness({ actor: { ...actor, role: "viewer" } }); const reply = await runAgent(input("Registrá una compra de $100 a José"), h.deps); assert.equal(reply.status, "needs_input"); assert.equal(h.executions.length, 0); });
 test("disabled modules cannot execute", async () => { const h = harness({ actor: { ...actor, enabledModules: ["sales"] } }); const reply = await runAgent(input("¿Qué insumos están bajos?"), h.deps); assert.equal(reply.status, "needs_input"); assert.equal(h.executions.length, 0); });
 test("business isolation uses the resolved actor and ignores no caller tenant", async () => { const h = harness(); await runAgent(input("ventas de hoy"), h.deps); assert.equal(h.executions[0].actor.businessId, "business-a"); assert.equal("businessId" in h.executions[0].call.arguments, false); });
-test("sensitive payment requires and then consumes confirmation", async () => { const h = harness(); const first = await runAgent(input("Marcá como pagada la deuda de Pablo"), h.deps); assert.equal(first.status, "needs_confirmation"); const second = await runAgent(input("Sí", "wamid.2"), h.deps); assert.equal(second.status, "completed"); assert.equal(h.executions.length, 1); assert.equal(h.audits.at(-1).confirmed, true); });
+test("sensitive payment previews creditor, amount and method before confirmation", async () => {
+  const h = harness();
+  assert.equal((await runAgent(input("Marcá como pagada la deuda de Pablo"), h.deps)).status, "needs_input");
+  assert.equal((await runAgent(input("$50.000", "wamid.2"), h.deps)).status, "needs_input");
+  const preview = await runAgent(input("Transferencia", "wamid.3"), h.deps);
+  assert.equal(preview.status, "needs_confirmation");
+  assert.match(preview.text, /Pablo/);
+  assert.match(preview.text, /50\.000/);
+  assert.match(preview.text, /Transferencia/);
+  const result = await runAgent(input("Sí", "wamid.4"), h.deps);
+  assert.equal(result.status, "completed");
+  assert.equal(h.executions.length, 1);
+  assert.deepEqual(h.executions[0].call.arguments, { creditor: "Pablo", amount: 50000, paymentMethod: "Transferencia" });
+  assert.equal(h.audits.at(-1).confirmed, true);
+});
 test("expired confirmation is never executed", async () => { const expired: PendingOperation = { id: "old", actor, kind: "confirmation", toolCall: { name: "debts.registerPayment", arguments: { creditor: "Pablo" } }, expiresAt: "2026-09-29T11:00:00.000Z" }; const h = harness({ pending: expired }); const reply = await runAgent(input("Sí"), h.deps); assert.equal(reply.status, "needs_input"); assert.equal(h.executions.length, 0); });
 test("missing argument creates clarification context", async () => { const h = harness(); const reply = await runAgent(input("Registrá una compra de $180.000 a Don José"), h.deps); assert.equal(reply.status, "needs_input"); assert.match(reply.text, /medio de pago/); assert.equal(h.pending()?.kind, "clarification"); });
 test("duplicate webhook is idempotent", async () => { const h = harness({ duplicate: true }); assert.equal((await runAgent(input("ventas de hoy"), h.deps)).status, "duplicate"); assert.equal(h.executions.length, 0); });
@@ -49,6 +63,7 @@ test("successful action is audited with tenant, tool and sanitized arguments", a
 
 test("two distinct simultaneous confirmations execute the sensitive operation once", async () => {
   const h = harness();
+  h.deps.interpret = async () => ({ name: "debts.registerPayment", arguments: { creditor: "Pablo", amount: 50000, paymentMethod: "Transferencia" } });
   await runAgent(input("Marcá como pagada la deuda de Pablo"), h.deps);
   const replies = await Promise.all([
     runAgent(input("Sí", "confirmation-1"), h.deps),
@@ -77,6 +92,7 @@ test("No and Cancelar discard confirmation and clarification without executing",
 test("failed consumption never executes and failed cancellation does not report cancellation", async () => {
   for (const answer of ["Sí", "Cancelar"]) {
     const h = harness();
+    h.deps.interpret = async () => ({ name: "debts.registerPayment", arguments: { creditor: "Pablo", amount: 50000, paymentMethod: "Transferencia" } });
     await runAgent(input("Marcá como pagada la deuda de Pablo"), h.deps);
     h.deps.consumePending = async () => { throw new Error("database unavailable"); };
     assert.equal((await runAgent(input(answer, "failed-consume"), h.deps)).status, "failed");
@@ -87,6 +103,7 @@ test("failed consumption never executes and failed cancellation does not report 
 
 test("expired or concurrently consumed row cannot authorize a write", async () => {
   const h = harness();
+  h.deps.interpret = async () => ({ name: "debts.registerPayment", arguments: { creditor: "Pablo", amount: 50000, paymentMethod: "Transferencia" } });
   await runAgent(input("Marcá como pagada la deuda de Pablo"), h.deps);
   h.deps.consumePending = async (_id, scopedActor, requireUnexpired) => {
     assert.equal(scopedActor.businessId, actor.businessId);
@@ -99,6 +116,7 @@ test("expired or concurrently consumed row cannot authorize a write", async () =
 
 test("cancellation and confirmation racing on a pending operation have only one winner", async () => {
   const h = harness();
+  h.deps.interpret = async () => ({ name: "debts.registerPayment", arguments: { creditor: "Pablo", amount: 50000, paymentMethod: "Transferencia" } });
   await runAgent(input("Marcá como pagada la deuda de Pablo"), h.deps);
   const replies = await Promise.all([
     runAgent(input("Cancelar", "cancel-race"), h.deps),
@@ -135,4 +153,39 @@ test("numeric clarifications parse Argentine amounts and leave invalid input mis
   assert.equal((await interpretHeuristically("$180.000,50", [...WHATSAPP_TOOLS], pending))?.arguments.amount, 180000.5);
   assert.equal((await interpretHeuristically("180k", [...WHATSAPP_TOOLS], pending))?.arguments.amount, 180000);
   assert.equal((await interpretHeuristically("No sé", [...WHATSAPP_TOOLS], pending))?.arguments.amount, undefined);
+});
+
+test("typed tool validation rejects unknown keys and never executes", async () => {
+  const h = harness();
+  h.deps.interpret = async () => ({ name: "purchases.create", arguments: { supplier: "Don José", amount: 1000, paymentMethod: "Efectivo", business_id: "other-business" } });
+  const reply = await runAgent(input("registrar compra"), h.deps);
+  assert.equal(reply.status, "rejected");
+  assert.equal(h.executions.length, 0);
+  assert.match(h.audits[0].error, /business_id/);
+});
+
+test("typed tool validation rejects invalid numbers, dates, periods and enums", async () => {
+  const invalidCalls: ToolCall[] = [
+    { name: "products.create", arguments: { name: "Producto", price: Number.POSITIVE_INFINITY } },
+    { name: "sales.getPeriod", arguments: { from: "2026-02-30", to: "2026-03-01" } },
+    { name: "sales.getPeriod", arguments: { from: "2026-10-02", to: "2026-10-01" } },
+    { name: "stock.addMovement", arguments: { ingredient: "Carne", quantity: 2, operation: "delete" } },
+  ];
+  for (const [index, invalidCall] of invalidCalls.entries()) {
+    const h = harness();
+    h.deps.interpret = async () => invalidCall;
+    const reply = await runAgent(input("pedido", `invalid-${index}`), h.deps);
+    assert.equal(reply.status, "needs_input");
+    assert.equal(h.executions.length, 0);
+    assert.equal(h.pending()?.kind, "clarification");
+  }
+});
+
+test("typed tool validation normalizes supported payment methods", async () => {
+  const h = harness();
+  h.deps.interpret = async () => ({ name: "debts.registerPayment", arguments: { creditor: "Pablo", amount: 1000, paymentMethod: "debito" } });
+  const reply = await runAgent(input("pagar"), h.deps);
+  assert.equal(reply.status, "needs_confirmation");
+  assert.match(reply.text, /Débito/);
+  assert.deepEqual(h.pending()?.toolCall.arguments, { creditor: "Pablo", amount: 1000, paymentMethod: "Débito" });
 });
