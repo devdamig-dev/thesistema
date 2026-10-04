@@ -41,5 +41,5 @@ export function getRoleLabel(role: Role | null | undefined): string {
 }
 
 export type { ModuleKey, Permission, Role } from "./types";
-export { PRIMARY_ROLES, ROLE_LABELS } from "./types";
+export { BUSINESS_WIDE_ROLES, PRIMARY_ROLES, ROLE_LABELS } from "./types";
 export { modulesFor, permissionsFor } from "./matrix";

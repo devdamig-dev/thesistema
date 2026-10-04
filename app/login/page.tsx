@@ -60,6 +60,7 @@ function LoginPageInner() {
         invitation_accepted: "Esta invitación ya fue aceptada.",
         invitation_revoked: "La invitación fue revocada.",
         invitation_email_mismatch: "Ingresaste con un email distinto al que recibió la invitación.",
+        invitation_branch_required: "La invitación no tiene una sucursal válida. Pedí que la reemplacen.",
         already_member: "Esta cuenta ya pertenece al negocio.",
         business_already_assigned: "Esta cuenta ya pertenece a otro negocio. El cambio de negocio todavía no está habilitado.",
       };

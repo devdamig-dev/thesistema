@@ -43,6 +43,9 @@ export const ROLE_LABELS: Record<Role, string> = {
   viewer: "Lectura",
 };
 
+/** Roles con acceso transversal al negocio; el resto requiere sucursal. */
+export const BUSINESS_WIDE_ROLES: Role[] = ["owner", "admin", "manager", "accountant"];
+
 /**
  * Las permissions están agrupadas por dominio · verbo para que sea
  * fácil chequear desde server actions y filtros de UI.

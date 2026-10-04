@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import Module from "node:module";
-import { hasPermission } from "../lib/permissions/index";
+import { BUSINESS_WIDE_ROLES, hasPermission } from "../lib/permissions/index";
 
 const context = { isAuthenticated: true, userId: "owner-a", businessId: "a", role: "owner" };
 let ctx: any = context;
@@ -10,6 +10,10 @@ const records: Record<string, any[]> = {
   business_members: [{ id: "member-a", business_id: "a", user_id: "user-a", role: "viewer" }, { id: "member-b", business_id: "b", user_id: "user-b", role: "owner" }],
   user_invitations: [{ id: "invite-a", business_id: "a", status: "pending" }, { id: "invite-b", business_id: "b", status: "pending" }],
   profiles: [],
+  branches: [
+    { id: "branch-a", business_id: "a", name: "Principal A", is_main: true },
+    { id: "branch-b", business_id: "b", name: "Principal B", is_main: true },
+  ],
 };
 let queries = 0;
 const db = { from(table: string) {
@@ -40,7 +44,7 @@ loader._load = function(name: string, ...args: any[]) {
     "@/lib/supabase/server": { createSupabaseServerClient: () => connected ? db : null },
     "@/lib/env": { isDatabaseMode: () => true },
     "@/lib/data/auth": { getCurrentUserContext: async () => ctx },
-    "@/lib/permissions": { hasPermission },
+    "@/lib/permissions": { BUSINESS_WIDE_ROLES, hasPermission },
     "@/lib/data/activity": { logActivity: async () => {} },
   };
   return name in mocks ? mocks[name] : original.call(this, name, ...args);
@@ -62,6 +66,10 @@ test("Equipo reads and mutations stay inside the authenticated business", async 
   assert.equal((await actions.revokeInvitationAction("invite-a")).ok, false);
   assert.equal((await actions.inviteUserAction({ email: "new@example.com", role: "viewer" })).persisted, true);
   assert.equal(records.user_invitations.at(-1).business_id, "a");
+  assert.equal(records.user_invitations.at(-1).branch_id, "branch-a");
+  assert.equal((await actions.inviteUserAction({ email: "other@example.com", role: "employee", branchId: "branch-b" })).ok, false);
+  assert.equal((await actions.inviteUserAction({ email: "admin@example.com", role: "admin", branchId: "branch-b" })).persisted, true);
+  assert.equal(records.user_invitations.at(-1).branch_id, null);
 });
 
 test("ambiguous business, missing session, permission and connection fail closed", async () => {

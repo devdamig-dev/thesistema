@@ -6,7 +6,7 @@ import { isDatabaseMode } from "@/lib/env";
 import type { Role } from "@/lib/permissions";
 import { logActivity } from "@/lib/data/activity";
 import { getCurrentUserContext } from "@/lib/data/auth";
-import { hasPermission } from "@/lib/permissions";
+import { BUSINESS_WIDE_ROLES, hasPermission } from "@/lib/permissions";
 
 type Result =
   | { ok: true; persisted: boolean; id?: string; inviteUrl?: string }
@@ -23,6 +23,7 @@ function refresh() {
 export async function inviteUserAction(payload: {
   email: string;
   role: Role;
+  branchId?: string;
 }): Promise<Result> {
   const ctx = await getCurrentUserContext();
   if (!hasPermission(ctx.role, "settings.team")) {
@@ -40,6 +41,21 @@ export async function inviteUserAction(payload: {
   const db = supabase as any;
   const businessId = ctx.businessId!;
   const invitedBy = ctx.userId;
+  let branchId: string | null = null;
+
+  if (!BUSINESS_WIDE_ROLES.includes(payload.role)) {
+    const branchQuery = db
+      .from("branches")
+      .select("id")
+      .eq("business_id", businessId);
+    const branchRes = payload.branchId
+      ? await branchQuery.eq("id", payload.branchId).maybeSingle()
+      : await branchQuery.eq("is_main", true).maybeSingle();
+    branchId = (branchRes.data as { id: string } | null)?.id ?? null;
+    if (branchRes.error || !branchId) {
+      return { ok: false, persisted: false, error: "branch_required" };
+    }
+  }
 
   const res = await db
     .from("user_invitations")
@@ -47,6 +63,7 @@ export async function inviteUserAction(payload: {
       business_id: businessId,
       email: payload.email,
       role: payload.role,
+      branch_id: branchId,
       invited_by: invitedBy,
     })
     .select("id, token")
@@ -64,7 +81,7 @@ export async function inviteUserAction(payload: {
     targetType: "user_invitations",
     targetId: row.id,
     summary: `Invitación enviada a ${payload.email} como ${payload.role}.`,
-    data: { email: payload.email, role: payload.role },
+    data: { email: payload.email, role: payload.role, branchId },
   });
 
   refresh();
