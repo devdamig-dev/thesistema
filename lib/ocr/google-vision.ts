@@ -4,7 +4,8 @@
  * Activación:
  *   - GOOGLE_VISION_API_KEY (API key con Cloud Vision habilitado)
  *
- * Si la key no está, este provider no se selecciona y caemos al mock.
+ * Si la key no está, el provider devuelve error. Sólo demo puede resolverlo
+ * con el mock; database mode falla cerrado.
  *
  * Usa el endpoint REST images:annotate con feature TEXT_DETECTION o
  * DOCUMENT_TEXT_DETECTION (mejor para facturas/PDFs).

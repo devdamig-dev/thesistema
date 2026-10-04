@@ -159,7 +159,7 @@ export async function uploadInvoiceAction(
       .update({ ocr_text: ocrText, ocr_provider: ocrResult.provider })
       .eq("id", invoiceId)
       .eq("business_id", ctx.business_id);
-    if (!ocrText) {
+    if (ocrResult.error || !ocrText) {
       await adminDb
         .from("invoices")
         .update({ status: "failed", processing_error: ocrResult.error ?? "empty_ocr" })
