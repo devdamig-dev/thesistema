@@ -5,6 +5,8 @@ import Module from "node:module";
 const branchA = "a0000000-0000-4000-8000-000000000001";
 const branchB = "b0000000-0000-4000-8000-000000000001";
 let assignedBranchIds: string[] | null = [branchA];
+let rpcResult: any = null;
+let rpcArgs: any = null;
 
 const records: Record<string, any[]> = {
   businesses: [{ id: "business-a", organization_id: "org-a" }],
@@ -17,10 +19,16 @@ const records: Record<string, any[]> = {
 
 function adminDb() {
   return {
+    async rpc(name: string, args: any) {
+      assert.equal(name, "approve_invoice_atomic");
+      rpcArgs = args;
+      return { data: rpcResult, error: null };
+    },
     from(table: string) {
       const filters: Array<(row: any) => boolean> = [];
       const query: any = {
         select() { return query; },
+        async insert() { return { data: null, error: null }; },
         eq(column: string, value: unknown) { filters.push((row) => row[column] === value); return query; },
         in(column: string, values: unknown[]) { filters.push((row) => values.includes(row[column])); return query; },
         or(expression: string) {
@@ -95,4 +103,35 @@ test("invoice attachment signing fails closed without assignments", async () => 
   assignedBranchIds = [];
   assert.equal((await invoiceActions.getInvoiceAttachmentUrlAction("invoice-a")).ok, false);
   assert.equal((await invoiceActions.getInvoiceAttachmentUrlAction("invoice-shared")).ok, false);
+});
+
+test("invoice approval delegates one tenant-bound atomic RPC and is idempotent", async () => {
+  assignedBranchIds = null;
+  rpcResult = {
+    ok: true,
+    already_approved: false,
+    purchase_id: "purchase-a",
+    ingredient_ids: [],
+  };
+  rpcArgs = null;
+
+  const first = await invoiceActions.approveInvoiceAction("invoice-a");
+  assert.equal(first.ok, true);
+  assert.equal(first.purchase_id, "purchase-a");
+  assert.deepEqual(rpcArgs, {
+    p_invoice_id: "invoice-a",
+    p_business_id: "business-a",
+    p_actor_id: "viewer-a",
+  });
+
+  rpcResult = {
+    ok: true,
+    already_approved: true,
+    purchase_id: "purchase-a",
+    ingredient_ids: [],
+  };
+  const retry = await invoiceActions.approveInvoiceAction("invoice-a");
+  assert.equal(retry.ok, true);
+  assert.equal(retry.purchase_id, "purchase-a");
+  assert.deepEqual(retry.recalc, []);
 });
