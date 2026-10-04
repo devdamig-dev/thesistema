@@ -18,6 +18,8 @@
     "../lib/permissions/**/*.ts",
     "../app/actions/team.ts",
     "../lib/data/team.ts",
-    "../lib/whatsapp-agent/supabase-adapter.ts"
+    "../lib/whatsapp-agent/supabase-adapter.ts",
+    "../lib/ocr/**/*.ts",
+    "../lib/env.ts"
   ]
 }
