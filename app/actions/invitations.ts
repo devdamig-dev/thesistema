@@ -47,7 +47,7 @@ export async function acceptInvitationAction(token: string): Promise<AcceptResul
     return { ok: false, persisted: false, error: "invitation_accept_failed" };
   }
   const accepted = rpcRes.data as
-    | { ok: true; business_id: string; invitation_id: string; role: string }
+    | { ok: true; business_id: string; invitation_id: string; role: string; branch_id?: string }
     | { ok: false; error: string }
     | null;
   if (!accepted?.ok) {

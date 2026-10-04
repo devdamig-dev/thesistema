@@ -29,6 +29,16 @@ export type PendingInvitation = {
   expiresAt: string;
 };
 
+export type TeamBranch = {
+  id: string;
+  name: string;
+  isMain: boolean;
+};
+
+const DEMO_BRANCHES: TeamBranch[] = [
+  { id: "demo-main", name: "Palermo", isMain: true },
+];
+
 const DEMO_MEMBERS: TeamMember[] = [
   { id: "demo-1", userId: null, fullName: "Mateo Iglesias", email: "mateo@labirra.com", role: "owner", canApprove: true },
   { id: "demo-2", userId: null, fullName: "Lucía Romero", email: "lucia@labirra.com", role: "manager", canApprove: true },
@@ -121,6 +131,32 @@ export async function listPendingInvitations(): Promise<PendingInvitation[]> {
     }));
   } catch (error) {
     console.error("[team] invitations query failed", error);
+    return [];
+  }
+}
+
+export async function listTeamBranches(): Promise<TeamBranch[]> {
+  if (!isDatabaseMode()) return DEMO_BRANCHES;
+  const ctx = await getCurrentUserContext();
+  if (!ctx.isAuthenticated || !ctx.businessId || !hasPermission(ctx.role, "settings.team")) return [];
+  const supabase = createSupabaseServerClient();
+  if (!supabase) return [];
+  const db = supabase as any;
+  try {
+    const res = await db
+      .from("branches")
+      .select("id, name, is_main")
+      .eq("business_id", ctx.businessId)
+      .order("is_main", { ascending: false })
+      .order("name");
+    if (res.error) throw res.error;
+    return ((res.data ?? []) as Array<{ id: string; name: string; is_main: boolean }>).map((branch) => ({
+      id: branch.id,
+      name: branch.name,
+      isMain: branch.is_main,
+    }));
+  } catch (error) {
+    console.error("[team] branches query failed", error);
     return [];
   }
 }

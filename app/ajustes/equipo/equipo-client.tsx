@@ -25,11 +25,12 @@ import {
   updateMemberRoleAction,
 } from "@/app/actions/team";
 import {
+  BUSINESS_WIDE_ROLES,
   PRIMARY_ROLES,
   ROLE_LABELS,
   type Role,
 } from "@/lib/permissions";
-import type { PendingInvitation, TeamMember } from "@/lib/data/team";
+import type { PendingInvitation, TeamBranch, TeamMember } from "@/lib/data/team";
 import { cn } from "@/lib/utils";
 
 const ROLE_TONE: Record<string, "brand" | "warn" | "info" | "ai" | "success" | "default"> = {
@@ -49,9 +50,11 @@ const ROLE_TONE: Record<string, "brand" | "warn" | "info" | "ai" | "success" | "
 export default function EquipoClient({
   members,
   invitations,
+  branches,
 }: {
   members: TeamMember[];
   invitations: PendingInvitation[];
+  branches: TeamBranch[];
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -59,6 +62,7 @@ export default function EquipoClient({
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<Role>("manager");
+  const [inviteBranchId, setInviteBranchId] = useState(branches.find((branch) => branch.isMain)?.id ?? branches[0]?.id ?? "");
   const [createdInviteUrl, setCreatedInviteUrl] = useState<string | null>(null);
 
   function handleInvite() {
@@ -67,7 +71,11 @@ export default function EquipoClient({
       return;
     }
     startTransition(async () => {
-      const res = await inviteUserAction({ email: inviteEmail, role: inviteRole });
+      const res = await inviteUserAction({
+        email: inviteEmail,
+        role: inviteRole,
+        branchId: BUSINESS_WIDE_ROLES.includes(inviteRole) ? undefined : inviteBranchId,
+      });
       if (res.ok) {
         toast({
           tone: "success",
@@ -84,7 +92,13 @@ export default function EquipoClient({
         setInviteEmail("");
         router.refresh();
       } else {
-        toast({ tone: "warn", title: "No pudimos invitar", description: res.error });
+        toast({
+          tone: "warn",
+          title: "No pudimos invitar",
+          description: res.error === "branch_required"
+            ? "Elegí una sucursal válida para este rol."
+            : res.error,
+        });
       }
     });
   }
@@ -154,7 +168,7 @@ export default function EquipoClient({
 
         {inviteOpen && (
           <div className="mb-4 rounded-xl border border-ai-400/30 bg-ai-500/[0.06] p-4">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_180px_auto]">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_180px_180px_auto]">
               <div>
                 <label className="mb-1 block text-[10px] uppercase tracking-wider text-ink-subtle">
                   Email
@@ -183,8 +197,33 @@ export default function EquipoClient({
                   ))}
                 </select>
               </div>
+              {!BUSINESS_WIDE_ROLES.includes(inviteRole) && (
+                <div>
+                  <label className="mb-1 block text-[10px] uppercase tracking-wider text-ink-subtle">
+                    Sucursal
+                  </label>
+                  <select
+                    value={inviteBranchId}
+                    onChange={(e) => setInviteBranchId(e.target.value)}
+                    disabled={branches.length === 0}
+                    className="w-full rounded-lg border border-line bg-bg-subtle px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-brand-500/20 disabled:opacity-60"
+                  >
+                    {branches.length === 0 && <option value="">Sin sucursales</option>}
+                    {branches.map((branch) => (
+                      <option key={branch.id} value={branch.id}>
+                        {branch.name}{branch.isMain ? " · Principal" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="flex items-end">
-                <Button variant="primary" size="md" onClick={handleInvite} disabled={pending}>
+                <Button
+                  variant="primary"
+                  size="md"
+                  onClick={handleInvite}
+                  disabled={pending || (!BUSINESS_WIDE_ROLES.includes(inviteRole) && !inviteBranchId)}
+                >
                   <Check className="h-4 w-4" />
                   Enviar invitación
                 </Button>
