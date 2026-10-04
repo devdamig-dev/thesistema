@@ -111,12 +111,22 @@ export default function EquipoClient({
           tone: "success",
           title: "Rol actualizado",
           description: res.persisted
-            ? "Cambio guardado en Supabase."
+            ? res.branchAssigned
+              ? "Cambio guardado y sucursal principal asignada."
+              : "Cambio guardado correctamente."
             : "Modo demo · cambio local.",
         });
         router.refresh();
       } else {
-        toast({ tone: "warn", title: "Error", description: res.error });
+        toast({
+          tone: "warn",
+          title: "No pudimos cambiar el rol",
+          description: res.error === "owner_immutable"
+            ? "El rol del socio propietario no se modifica desde este editor."
+            : res.error === "branch_required"
+              ? "El negocio necesita una sucursal antes de asignar ese rol."
+              : res.error,
+        });
       }
     });
   }
