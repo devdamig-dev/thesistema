@@ -25,6 +25,20 @@ async function getDatabaseContext() {
   return { ctx, db: createSupabaseAdminClient() as any, businessId: ctx.businessId };
 }
 
+/**
+ * Los exports usan el cliente administrativo para poder generar archivos
+ * server-side, por lo que no reciben el filtro de RLS de la sesión. Replicamos
+ * explícitamente el alcance de sucursal resuelto para el actor y fallamos
+ * cerrado cuando un rol restringido no tiene asignaciones.
+ */
+function applyExportBranchScope(query: any, branchIds: string[] | null) {
+  if (branchIds === null) return query;
+  if (branchIds.length === 0) {
+    return query.in("branch_id", ["00000000-0000-0000-0000-000000000000"]);
+  }
+  return query.or(`branch_id.in.(${branchIds.join(",")}),branch_id.is.null`);
+}
+
 function dbError(error: unknown): ExportResult {
   console.error("[exports] database export failed", error);
   return { ok: false, persisted: false, error: "No se pudo generar el archivo con los datos reales del negocio." };
@@ -53,12 +67,14 @@ export async function exportPurchasesCsvAction(): Promise<ExportResult> {
     try {
       const resolved = await getDatabaseContext();
       if (!resolved) return { ok: false, persisted: false, error: "No hay un negocio autenticado para exportar." };
-      const { db, businessId } = resolved;
-      const res = await db.from("invoices")
+      const { ctx, db, businessId } = resolved;
+      let query = db.from("invoices")
         .select("invoice_date, number, type, tax_id, subtotal, tax, total, payment_method, status, confidence, ai_provider, storage_path, suppliers(name, tax_id)")
         .eq("business_id", businessId)
         .order("invoice_date", { ascending: false })
         .limit(1000);
+      query = applyExportBranchScope(query, ctx.assignedBranchIds);
+      const res = await query;
       if (res.error) return dbError(res.error);
       const rows = ((res.data as any[]) ?? []).map((r) => {
         const parts = String(r.number ?? "").split("-");
@@ -113,12 +129,14 @@ export async function exportSalesCsvAction(): Promise<ExportResult> {
     try {
       const resolved = await getDatabaseContext();
       if (!resolved) return { ok: false, persisted: false, error: "No hay un negocio autenticado para exportar." };
-      const { db, businessId } = resolved;
-      const res = await db.from("sales")
+      const { ctx, db, businessId } = resolved;
+      let query = db.from("sales")
         .select("occurred_at, channel, amount, branches(name)")
         .eq("business_id", businessId)
         .order("occurred_at", { ascending: false })
         .limit(5000);
+      query = applyExportBranchScope(query, ctx.assignedBranchIds);
+      const res = await query;
       if (res.error) return dbError(res.error);
       const rows = ((res.data as any[]) ?? []).map((r) => {
         const bruto = Number(r.amount ?? 0);
