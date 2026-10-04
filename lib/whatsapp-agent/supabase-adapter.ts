@@ -10,50 +10,64 @@ export async function resolveActor(db: Db, input: IncomingAgentMessage): Promise
   const sender = normalizePhone(input.senderPhone);
   if (recipient.length < 8 || sender.length < 8) return null;
 
-  const integration = await db
+  const integrationRes = await db
     .from("whatsapp_integrations")
-    .select("business_id")
-    .eq("display_phone_number", recipient)
-    .eq("status", "connected")
-    .maybeSingle();
+    .select("business_id,display_phone_number")
+    .eq("status", "connected");
 
-  let businessId = integration.data?.business_id as string | undefined;
+  // Nunca continuar por el fallback legado si la fuente oficial falló: eso
+  // podría resolver otro negocio mientras la integración real es incierta.
+  if (integrationRes.error) return null;
+  const integrations = (integrationRes.data ?? []).filter(
+    (row: any) => normalizePhone(row.display_phone_number ?? "") === recipient,
+  );
+  if (integrations.length > 1) return null;
+
+  let businessId = integrations[0]?.business_id as string | undefined;
   if (!businessId) {
-    const businesses = await db
+    const businessesRes = await db
       .from("businesses")
       .select("id,whatsapp_phone")
       .eq("whatsapp_connected", true);
 
-    businessId = businesses.data?.find(
+    if (businessesRes.error) return null;
+    const businesses = (businessesRes.data ?? []).filter(
       (row: any) => normalizePhone(row.whatsapp_phone ?? "") === recipient,
-    )?.id;
+    );
+    if (businesses.length !== 1) return null;
+    businessId = businesses[0].id;
   }
   if (!businessId) return null;
 
-  const profiles = await db
+  const profilesRes = await db
     .from("profiles")
     .select("id,full_name,phone")
+    .eq("active", true)
     .not("phone", "is", null);
 
-  const profile = profiles.data?.find(
+  if (profilesRes.error) return null;
+  const profiles = (profilesRes.data ?? []).filter(
     (row: any) => normalizePhone(row.phone ?? "") === sender,
   );
-  if (!profile) return null;
+  if (profiles.length !== 1) return null;
+  const profile = profiles[0];
 
   const memberRes = await db
     .from("business_members")
     .select("id,role")
     .eq("business_id", businessId)
     .eq("user_id", profile.id)
-    .maybeSingle();
+    .limit(2);
 
-  const member = memberRes.data as { id: string; role: Role } | null;
-  if (!member || permissionsFor(member.role).length === 0) return null;
+  if (memberRes.error || memberRes.data?.length !== 1) return null;
+  const member = memberRes.data[0] as { id: string; role: Role };
+  if (permissionsFor(member.role).length === 0) return null;
 
   const [modulesRes, branchesRes] = await Promise.all([
     db.from("business_modules").select("module_key").eq("business_id", businessId).eq("enabled", true),
     db.from("branch_assignments").select("branch_id").eq("business_member_id", member.id),
   ]);
+  if (modulesRes.error || branchesRes.error) return null;
 
   const unrestricted = ["owner", "admin", "manager", "accountant"].includes(member.role);
 
