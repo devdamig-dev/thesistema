@@ -10,7 +10,7 @@ const original = loader._load;
 loader._load = function(name: string, ...args: any[]) {
   return name === "@/lib/permissions" ? { permissionsFor } : original.call(this, name, ...args);
 };
-const { consumePending } = require("../lib/whatsapp-agent/supabase-adapter");
+const { consumePending, resolveActor } = require("../lib/whatsapp-agent/supabase-adapter");
 loader._load = original;
 
 const actor: AgentActor = { userId: "u", memberId: "m", businessId: "b", phone: "5491111111111", name: "Ana", role: "owner", enabledModules: ["debts"], branchIds: null };
@@ -40,4 +40,113 @@ test("adapter propagates database failures instead of authorizing execution", as
     new Response(JSON.stringify({ code: "42501", message: "permission denied" }), { status: 403, headers: { "Content-Type": "application/json" } })
   } });
   await assert.rejects(consumePending(db, "pending-1", actor, true), (error: any) => error.code === "42501");
+});
+
+type IdentityRows = Record<string, unknown[] | { error: string }>;
+const identityInput = {
+  messageId: "wamid.identity",
+  senderPhone: "+54 9 11 1234-5678",
+  recipientPhone: "+54 9 11 9999-0000",
+  text: "ventas de hoy",
+};
+
+function identityDb(rows: IdentityRows, requests: string[] = []) {
+  return createClient("https://agent.test", "test-key", { global: { fetch: async (request) => {
+    const url = new URL(String(request));
+    const table = url.pathname.split("/").at(-1)!;
+    requests.push(table);
+    const value = rows[table] ?? [];
+    if (!Array.isArray(value)) {
+      return new Response(JSON.stringify({ code: "XX000", message: value.error }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify(value), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } } });
+}
+
+const validIdentityRows: IdentityRows = {
+  whatsapp_integrations: [{ business_id: "business-a", display_phone_number: "+54 9 11 9999-0000" }],
+  profiles: [{ id: "user-a", full_name: "Ana", phone: "+54 9 11 1234-5678" }],
+  business_members: [{ id: "member-a", role: "owner" }],
+  business_modules: [{ module_key: "sales" }],
+  branch_assignments: [],
+};
+
+test("phone identity resolves one exact active profile inside the recipient business", async () => {
+  const resolved = await resolveActor(identityDb(validIdentityRows), identityInput);
+  assert.equal(resolved?.businessId, "business-a");
+  assert.equal(resolved?.userId, "user-a");
+  assert.deepEqual(resolved?.enabledModules, ["sales"]);
+});
+
+test("ambiguous recipient or sender phones fail closed before authorization", async () => {
+  const ambiguousIntegration = {
+    ...validIdentityRows,
+    whatsapp_integrations: [
+      { business_id: "business-a", display_phone_number: "+54 9 11 9999-0000" },
+      { business_id: "business-b", display_phone_number: "5491199990000" },
+    ],
+  };
+  const integrationRequests: string[] = [];
+  assert.equal(await resolveActor(identityDb(ambiguousIntegration, integrationRequests), identityInput), null);
+  assert.deepEqual(integrationRequests, ["whatsapp_integrations"]);
+
+  const ambiguousProfile = {
+    ...validIdentityRows,
+    profiles: [
+      { id: "user-a", full_name: "Ana", phone: "+54 9 11 1234-5678" },
+      { id: "user-b", full_name: "Otra Ana", phone: "5491112345678" },
+    ],
+  };
+  const profileRequests: string[] = [];
+  assert.equal(await resolveActor(identityDb(ambiguousProfile, profileRequests), identityInput), null);
+  assert.deepEqual(profileRequests, ["whatsapp_integrations", "profiles"]);
+});
+
+test("legacy recipient lookup rejects zero or multiple businesses", async () => {
+  for (const businesses of [
+    [],
+    [
+      { id: "business-a", whatsapp_phone: "+54 9 11 9999-0000" },
+      { id: "business-b", whatsapp_phone: "5491199990000" },
+    ],
+  ]) {
+    const rows = { ...validIdentityRows, whatsapp_integrations: [], businesses };
+    assert.equal(await resolveActor(identityDb(rows), identityInput), null);
+  }
+});
+
+test("every identity query error fails closed without using partial data", async () => {
+  for (const failingTable of [
+    "whatsapp_integrations",
+    "businesses",
+    "profiles",
+    "business_members",
+    "business_modules",
+    "branch_assignments",
+  ]) {
+    const rows: IdentityRows = {
+      ...validIdentityRows,
+      ...(failingTable === "businesses" ? { whatsapp_integrations: [] } : {}),
+      [failingTable]: { error: `${failingTable} unavailable` },
+    };
+    const requests: string[] = [];
+    assert.equal(await resolveActor(identityDb(rows, requests), identityInput), null, failingTable);
+    if (failingTable === "whatsapp_integrations") assert.deepEqual(requests, ["whatsapp_integrations"]);
+  }
+});
+
+test("missing or duplicated membership cannot authorize the sender", async () => {
+  for (const memberships of [
+    [],
+    [{ id: "member-a", role: "owner" }, { id: "member-b", role: "admin" }],
+  ]) {
+    const rows = { ...validIdentityRows, business_members: memberships };
+    assert.equal(await resolveActor(identityDb(rows), identityInput), null);
+  }
 });
