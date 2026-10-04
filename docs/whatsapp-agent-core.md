@@ -28,6 +28,7 @@ Sin estos pasos el core sigue siendo comprobable por tests y por el endpoint int
 - Cada tool valida claves permitidas, tipos, números finitos/positivos, fechas ISO reales, períodos máximos de 366 días y enums antes de guardar contexto o ejecutar. Los argumentos desconocidos se rechazan.
 - Un pago de deuda requiere acreedor, monto y medio de pago concretos. La confirmación muestra los tres valores antes de aceptar “Sí”; no se completa silenciosamente con valores por defecto.
 - La identidad telefónica falla cerrado si cualquier consulta de integración, negocio, perfil, membership, módulos o sucursales devuelve error. Un teléfono sólo autoriza cuando coincide con exactamente un negocio receptor, un perfil activo y una membership; las coincidencias ambiguas se rechazan.
+- Ajustes → IA muestra un catálogo derivado del mismo `WHATSAPP_TOOLS`: disponibilidad por módulo y permiso del rol, acciones sensibles y estado real del canal. No mantiene una lista paralela ni expone tools stub.
 - Auditoría, mensajes procesados y estado conversacional son tablas server-owned con RLS habilitada y sin grants a `authenticated`/`anon`.
 - Los logs sanitizan claves con nombres de token, secreto, password o authorization.
 
@@ -37,5 +38,4 @@ El router incluido es determinístico y cubre las frases MVP. La interfaz `inter
 
 ## Próximos incrementos
 
-1. Catálogo real de capacidades en Ajustes → IA, derivado del registro y de los módulos/rol activos.
-2. Prueba end-to-end con un negocio y número Meta autorizados, incluyendo permisos de rol y sucursal.
+1. Prueba end-to-end con un negocio y número Meta autorizados, incluyendo permisos de rol y sucursal.
