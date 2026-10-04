@@ -65,6 +65,15 @@ loader._load = function(name: string, ...args: any[]) {
     "@/lib/permissions/server-action": { assertPermission: async () => null },
     "@/lib/data/activity": { logActivity: async () => {} },
     "@/lib/data/auth": { getCurrentUserContext: async () => ctx },
+    "@/lib/data/branch-scope": {
+      applyAdminBranchScope(query: any, branchIds: string[] | null) {
+        if (branchIds === null) return query;
+        if (branchIds.length === 0) {
+          return query.in("branch_id", ["00000000-0000-0000-0000-000000000000"]);
+        }
+        return query.or(`branch_id.in.(${branchIds.join(",")}),branch_id.is.null`);
+      },
+    },
     "@/lib/csv": {
       csvFilename: (name: string) => `${name}.csv`,
       buildCsv: (_headers: unknown, rows: unknown) => JSON.stringify(rows),
