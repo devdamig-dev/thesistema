@@ -19,6 +19,7 @@ export type TeamMember = {
   email: string | null;
   role: Role;
   canApprove: boolean;
+  branchIds: string[];
 };
 
 export type PendingInvitation = {
@@ -40,12 +41,12 @@ const DEMO_BRANCHES: TeamBranch[] = [
 ];
 
 const DEMO_MEMBERS: TeamMember[] = [
-  { id: "demo-1", userId: null, fullName: "Mateo Iglesias", email: "mateo@labirra.com", role: "owner", canApprove: true },
-  { id: "demo-2", userId: null, fullName: "Lucía Romero", email: "lucia@labirra.com", role: "manager", canApprove: true },
-  { id: "demo-3", userId: null, fullName: "Juan Pérez", email: "juan@labirra.com", role: "kitchen", canApprove: false },
-  { id: "demo-4", userId: null, fullName: "Mariana López", email: "mariana@labirra.com", role: "cashier", canApprove: false },
-  { id: "demo-5", userId: null, fullName: "Diego Sosa", email: "diego@labirra.com", role: "kitchen", canApprove: false },
-  { id: "demo-6", userId: null, fullName: "Bruno Méndez", email: "bruno@labirra.com", role: "delivery", canApprove: false },
+  { id: "demo-1", userId: null, fullName: "Mateo Iglesias", email: "mateo@labirra.com", role: "owner", canApprove: true, branchIds: [] },
+  { id: "demo-2", userId: null, fullName: "Lucía Romero", email: "lucia@labirra.com", role: "manager", canApprove: true, branchIds: [] },
+  { id: "demo-3", userId: null, fullName: "Juan Pérez", email: "juan@labirra.com", role: "kitchen", canApprove: false, branchIds: ["demo-main"] },
+  { id: "demo-4", userId: null, fullName: "Mariana López", email: "mariana@labirra.com", role: "cashier", canApprove: false, branchIds: ["demo-main"] },
+  { id: "demo-5", userId: null, fullName: "Diego Sosa", email: "diego@labirra.com", role: "kitchen", canApprove: false, branchIds: ["demo-main"] },
+  { id: "demo-6", userId: null, fullName: "Bruno Méndez", email: "bruno@labirra.com", role: "delivery", canApprove: false, branchIds: ["demo-main"] },
 ];
 
 const DEMO_INVITATIONS: PendingInvitation[] = [
@@ -81,9 +82,27 @@ export async function listTeamMembers(): Promise<TeamMember[]> {
         "id",
         members.map((m) => m.user_id),
       );
+    if (profilesRes.error) throw profilesRes.error;
     const profiles =
       (profilesRes.data as { id: string; full_name: string; email: string | null }[] | null) ?? [];
     const byId = new Map(profiles.map((p) => [p.id, p]));
+
+    const assignmentsRes = await db
+      .from("branch_assignments")
+      .select("business_member_id, branch_id")
+      .in(
+        "business_member_id",
+        members.map((m) => m.id),
+      );
+    if (assignmentsRes.error) throw assignmentsRes.error;
+    const assignments =
+      (assignmentsRes.data as Array<{ business_member_id: string; branch_id: string }> | null) ?? [];
+    const branchesByMember = new Map<string, string[]>();
+    for (const assignment of assignments) {
+      const branchIds = branchesByMember.get(assignment.business_member_id) ?? [];
+      branchIds.push(assignment.branch_id);
+      branchesByMember.set(assignment.business_member_id, branchIds);
+    }
 
     return members.map((m) => {
       const p = byId.get(m.user_id);
@@ -96,6 +115,7 @@ export async function listTeamMembers(): Promise<TeamMember[]> {
         email: p?.email ?? null,
         role,
         canApprove,
+        branchIds: branchesByMember.get(m.id) ?? [],
       };
     });
   } catch (error) {

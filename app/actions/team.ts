@@ -9,7 +9,7 @@ import { getCurrentUserContext } from "@/lib/data/auth";
 import { BUSINESS_WIDE_ROLES, hasPermission } from "@/lib/permissions";
 
 type Result =
-  | { ok: true; persisted: boolean; id?: string; inviteUrl?: string; branchAssigned?: boolean }
+  | { ok: true; persisted: boolean; id?: string; inviteUrl?: string; branchAssigned?: boolean; branchCount?: number }
   | { ok: false; persisted: false; error: string };
 
 function refresh() {
@@ -149,6 +149,79 @@ export async function updateMemberRoleAction(
     persisted: true,
     id: memberId,
     branchAssigned: result.branch_assigned,
+  };
+}
+
+/**
+ * Reemplaza el alcance de sucursales de un miembro con rol restringido.
+ * La función de base valida tenant, rol y sucursales antes de reemplazar todo
+ * el conjunto en una única transacción.
+ */
+export async function updateMemberBranchesAction(
+  memberId: string,
+  branchIds: string[],
+): Promise<Result> {
+  const ctx = await getCurrentUserContext();
+  if (!hasPermission(ctx.role, "settings.team")) {
+    return { ok: false, persisted: false, error: "forbidden" };
+  }
+  if (isDatabaseMode() && (!ctx.isAuthenticated || !ctx.userId || !ctx.businessId)) {
+    return { ok: false, persisted: false, error: "no_business" };
+  }
+
+  const uniqueBranchIds = [...new Set(branchIds)];
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (
+    uniqueBranchIds.length === 0 ||
+    uniqueBranchIds.length > 50
+  ) {
+    return { ok: false, persisted: false, error: "invalid_branches" };
+  }
+  if (!isDatabaseMode()) {
+    refresh();
+    return { ok: true, persisted: false, branchCount: uniqueBranchIds.length };
+  }
+  if (uniqueBranchIds.some((branchId) => !uuidPattern.test(branchId))) {
+    return { ok: false, persisted: false, error: "invalid_branches" };
+  }
+
+  const supabase = createSupabaseServerClient();
+  if (!supabase) return { ok: false, persisted: false, error: "connection_unavailable" };
+  const db = supabase as any;
+  const rpcRes = await db.rpc("replace_member_branch_assignments", {
+    p_member_id: memberId,
+    p_business_id: ctx.businessId,
+    p_branch_ids: uniqueBranchIds,
+  });
+  if (rpcRes.error) {
+    console.error("[team] branch assignment update failed", rpcRes.error.message);
+    return { ok: false, persisted: false, error: "branch_update_failed" };
+  }
+  const result = rpcRes.data as
+    | { ok: true; member_id: string; branch_count: number }
+    | { ok: false; error: string }
+    | null;
+  if (!result?.ok) {
+    return { ok: false, persisted: false, error: result?.error ?? "branch_update_failed" };
+  }
+
+  await logActivity({
+    businessId: ctx.businessId!,
+    actorId: ctx.userId,
+    actorRole: ctx.role,
+    action: "team.branches.updated",
+    targetType: "business_members",
+    targetId: result.member_id,
+    summary: `Acceso actualizado a ${result.branch_count} sucursal(es).`,
+    data: { branchIds: uniqueBranchIds, branchCount: result.branch_count },
+  });
+
+  refresh();
+  return {
+    ok: true,
+    persisted: true,
+    id: result.member_id,
+    branchCount: result.branch_count,
   };
 }
 

@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Check,
   Clock,
   Mail,
+  MapPin,
   Plus,
   ShieldCheck,
   Trash2,
@@ -23,6 +24,7 @@ import {
   inviteUserAction,
   revokeInvitationAction,
   updateMemberRoleAction,
+  updateMemberBranchesAction,
 } from "@/app/actions/team";
 import {
   BUSINESS_WIDE_ROLES,
@@ -64,6 +66,13 @@ export default function EquipoClient({
   const [inviteRole, setInviteRole] = useState<Role>("manager");
   const [inviteBranchId, setInviteBranchId] = useState(branches.find((branch) => branch.isMain)?.id ?? branches[0]?.id ?? "");
   const [createdInviteUrl, setCreatedInviteUrl] = useState<string | null>(null);
+  const [memberBranchIds, setMemberBranchIds] = useState<Record<string, string[]>>(() =>
+    Object.fromEntries(members.map((member) => [member.id, member.branchIds])),
+  );
+
+  useEffect(() => {
+    setMemberBranchIds(Object.fromEntries(members.map((member) => [member.id, member.branchIds])));
+  }, [members]);
 
   function handleInvite() {
     if (!inviteEmail.includes("@")) {
@@ -126,6 +135,47 @@ export default function EquipoClient({
             : res.error === "branch_required"
               ? "El negocio necesita una sucursal antes de asignar ese rol."
               : res.error,
+        });
+      }
+    });
+  }
+
+  function toggleMemberBranch(memberId: string, branchId: string) {
+    setMemberBranchIds((current) => {
+      const selected = current[memberId] ?? [];
+      return {
+        ...current,
+        [memberId]: selected.includes(branchId)
+          ? selected.filter((id) => id !== branchId)
+          : [...selected, branchId],
+      };
+    });
+  }
+
+  function handleBranchSave(memberId: string) {
+    const branchIds = memberBranchIds[memberId] ?? [];
+    startTransition(async () => {
+      const res = await updateMemberBranchesAction(memberId, branchIds);
+      if (res.ok) {
+        toast({
+          tone: "success",
+          title: "Sucursales actualizadas",
+          description: res.persisted
+            ? `Acceso guardado para ${res.branchCount ?? branchIds.length} sucursal(es).`
+            : "Modo demo · cambio local.",
+        });
+        router.refresh();
+      } else {
+        const messages: Record<string, string> = {
+          invalid_branches: "Elegí al menos una sucursal válida.",
+          business_wide_role: "Este rol ya tiene acceso a todas las sucursales.",
+          invalid_branch_scope: "Una de las sucursales no pertenece a este negocio.",
+          not_found: "No encontramos al miembro dentro de este negocio.",
+        };
+        toast({
+          tone: "warn",
+          title: "No pudimos guardar las sucursales",
+          description: messages[res.error] ?? res.error,
         });
       }
     });
@@ -291,6 +341,43 @@ export default function EquipoClient({
                   ))}
                 </select>
               </div>
+              {BUSINESS_WIDE_ROLES.includes(u.role) ? (
+                <div className="flex items-center gap-1 text-[11px] text-ink-muted">
+                  <MapPin className="h-3.5 w-3.5" /> Todas las sucursales
+                </div>
+              ) : (
+                <details className="w-full rounded-lg border border-line bg-bg-elevated/60 p-2 md:w-auto md:min-w-[220px]">
+                  <summary className="cursor-pointer text-xs font-medium text-ink">
+                    Sucursales ({(memberBranchIds[u.id] ?? []).length})
+                  </summary>
+                  <div className="mt-2 space-y-2 border-t border-line pt-2">
+                    {branches.map((branch) => (
+                      <label key={branch.id} className="flex cursor-pointer items-center gap-2 text-xs text-ink-muted">
+                        <input
+                          type="checkbox"
+                          checked={(memberBranchIds[u.id] ?? []).includes(branch.id)}
+                          onChange={() => toggleMemberBranch(u.id, branch.id)}
+                          disabled={pending}
+                          className="h-4 w-4 rounded border-line bg-bg-subtle accent-brand-500"
+                        />
+                        <span>{branch.name}{branch.isMain ? " · Principal" : ""}</span>
+                      </label>
+                    ))}
+                    {branches.length === 0 && (
+                      <div className="text-xs text-ink-subtle">No hay sucursales disponibles.</div>
+                    )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleBranchSave(u.id)}
+                      disabled={pending || (memberBranchIds[u.id] ?? []).length === 0}
+                    >
+                      Guardar sucursales
+                    </Button>
+                  </div>
+                </details>
+              )}
             </li>
           ))}
         </ul>
