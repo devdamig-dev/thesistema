@@ -16,7 +16,7 @@ function harness(options: { actor?: AgentActor | null; pending?: PendingOperatio
     interpret: interpretHeuristically,
     getPending: async () => pending,
     savePending: async (operation) => (pending = { ...operation, id: "pending-1" }),
-    clearPending: async () => { pending = null; },
+    consumePending: async () => { if (!pending) return false; pending = null; return true; },
     execute: async (resolvedActor, call) => { executions.push({ actor: resolvedActor, call }); if (options.fail) throw new Error("database down"); return { businessId: resolvedActor.businessId, ok: true }; },
     audit: async (event) => { audits.push(event); },
     now: () => new Date("2026-09-29T12:00:00.000Z"),
@@ -46,3 +46,65 @@ test("missing argument creates clarification context", async () => { const h = h
 test("duplicate webhook is idempotent", async () => { const h = harness({ duplicate: true }); assert.equal((await runAgent(input("ventas de hoy"), h.deps)).status, "duplicate"); assert.equal(h.executions.length, 0); });
 test("tool failure is audited without reporting success", async () => { const h = harness({ fail: true }); const reply = await runAgent(input("ventas de hoy"), h.deps); assert.equal(reply.status, "failed"); assert.equal(h.audits[0].error, "database down"); });
 test("successful action is audited with tenant, tool and sanitized arguments", async () => { const h = harness(); await runAgent(input("ventas de hoy"), h.deps); assert.equal(h.audits[0].actor.businessId, "business-a"); assert.equal(h.audits[0].tool, "sales.getToday"); assert.deepEqual(h.audits[0].arguments, {}); });
+
+test("two distinct simultaneous confirmations execute the sensitive operation once", async () => {
+  const h = harness();
+  await runAgent(input("Marcá como pagada la deuda de Pablo"), h.deps);
+  const replies = await Promise.all([
+    runAgent(input("Sí", "confirmation-1"), h.deps),
+    runAgent(input("Sí", "confirmation-2"), h.deps),
+  ]);
+  assert.equal(h.executions.length, 1);
+  assert.deepEqual(replies.map(reply => reply.status).sort(), ["completed", "rejected"]);
+});
+
+test("No and Cancelar discard confirmation and clarification without executing", async () => {
+  for (const [request, cancellation] of [
+    ["Marcá como pagada la deuda de Pablo", "No"],
+    ["Registrá una compra de $180.000 a Don José", "Cancelar"],
+  ]) {
+    const h = harness();
+    await runAgent(input(request), h.deps);
+    assert.equal((await runAgent(input(cancellation, "cancel-1"), h.deps)).status, "cancelled");
+    assert.equal(h.pending(), null);
+    assert.equal(h.executions.length, 0);
+    assert.equal(h.audits.at(-1).error, "operation_cancelled");
+    await runAgent(input("Sí", "late-confirmation"), h.deps);
+    assert.equal(h.executions.length, 0);
+  }
+});
+
+test("failed consumption never executes and failed cancellation does not report cancellation", async () => {
+  for (const answer of ["Sí", "Cancelar"]) {
+    const h = harness();
+    await runAgent(input("Marcá como pagada la deuda de Pablo"), h.deps);
+    h.deps.consumePending = async () => { throw new Error("database unavailable"); };
+    assert.equal((await runAgent(input(answer, "failed-consume"), h.deps)).status, "failed");
+    assert.equal(h.executions.length, 0);
+    assert.ok(h.pending());
+  }
+});
+
+test("expired or concurrently consumed row cannot authorize a write", async () => {
+  const h = harness();
+  await runAgent(input("Marcá como pagada la deuda de Pablo"), h.deps);
+  h.deps.consumePending = async (_id, scopedActor, requireUnexpired) => {
+    assert.equal(scopedActor.businessId, actor.businessId);
+    assert.equal(requireUnexpired, true);
+    return false;
+  };
+  assert.equal((await runAgent(input("Sí", "lost-consume"), h.deps)).status, "rejected");
+  assert.equal(h.executions.length, 0);
+});
+
+test("cancellation and confirmation racing on a pending operation have only one winner", async () => {
+  const h = harness();
+  await runAgent(input("Marcá como pagada la deuda de Pablo"), h.deps);
+  const replies = await Promise.all([
+    runAgent(input("Cancelar", "cancel-race"), h.deps),
+    runAgent(input("Sí", "confirm-race"), h.deps),
+  ]);
+  assert.equal(replies.filter(reply => reply.status === "rejected").length, 1);
+  const cancelled = replies.some(reply => reply.status === "cancelled");
+  assert.equal(h.executions.length, cancelled ? 0 : 1);
+});
