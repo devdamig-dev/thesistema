@@ -61,6 +61,7 @@ function LoginPageInner() {
         invitation_revoked: "La invitación fue revocada.",
         invitation_email_mismatch: "Ingresaste con un email distinto al que recibió la invitación.",
         already_member: "Esta cuenta ya pertenece al negocio.",
+        business_already_assigned: "Esta cuenta ya pertenece a otro negocio. El cambio de negocio todavía no está habilitado.",
       };
       toast({
         tone: "warn",
