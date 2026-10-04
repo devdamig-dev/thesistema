@@ -3,11 +3,13 @@
  *
  * En demo mode devuelve datos mockeados del mock-data.ts existente
  * mapeados al shape canonical. En database mode lee Supabase con
- * fallback al demo si la query falla.
+ * aislamiento explícito al negocio del contexto autenticado.
  */
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isDatabaseMode } from "@/lib/env";
+import { getCurrentUserContext } from "@/lib/data/auth";
+import { hasPermission } from "@/lib/permissions";
 import type { Role } from "@/lib/permissions";
 
 export type TeamMember = {
@@ -48,13 +50,16 @@ const DEMO_INVITATIONS: PendingInvitation[] = [
 
 export async function listTeamMembers(): Promise<TeamMember[]> {
   if (!isDatabaseMode()) return DEMO_MEMBERS;
+  const ctx = await getCurrentUserContext();
+  if (!ctx.isAuthenticated || !ctx.businessId || !hasPermission(ctx.role, "settings.team")) return [];
   const supabase = createSupabaseServerClient();
   if (!supabase) return [];
   const db = supabase as any;
   try {
     const memberRes = await db
       .from("business_members")
-      .select("id, user_id, role");
+      .select("id, user_id, role")
+      .eq("business_id", ctx.businessId);
     const members = (memberRes.data as { id: string; user_id: string; role: Role }[] | null) ?? [];
     if (memberRes.error) throw memberRes.error;
     if (members.length === 0) return [];
@@ -91,6 +96,8 @@ export async function listTeamMembers(): Promise<TeamMember[]> {
 
 export async function listPendingInvitations(): Promise<PendingInvitation[]> {
   if (!isDatabaseMode()) return DEMO_INVITATIONS;
+  const ctx = await getCurrentUserContext();
+  if (!ctx.isAuthenticated || !ctx.businessId || !hasPermission(ctx.role, "settings.team")) return [];
   const supabase = createSupabaseServerClient();
   if (!supabase) return [];
   const db = supabase as any;
@@ -98,6 +105,7 @@ export async function listPendingInvitations(): Promise<PendingInvitation[]> {
     const res = await db
       .from("user_invitations")
       .select("id, email, role, created_at, expires_at, status")
+      .eq("business_id", ctx.businessId)
       .eq("status", "pending")
       .order("created_at", { ascending: false });
     if (res.error) throw res.error;

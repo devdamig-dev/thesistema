@@ -9,5 +9,14 @@
     "outDir": "../.test-dist",
     "rootDir": ".."
   },
-  "include": ["./*.test.ts", "../lib/whatsapp-agent/core.ts", "../lib/whatsapp-agent/interpreter.ts", "../lib/whatsapp-agent/registry.ts", "../lib/whatsapp-agent/types.ts", "../lib/permissions/**/*.ts"]
+  "include": [
+    "./*.test.ts",
+    "../lib/whatsapp-agent/core.ts",
+    "../lib/whatsapp-agent/interpreter.ts",
+    "../lib/whatsapp-agent/registry.ts",
+    "../lib/whatsapp-agent/types.ts",
+    "../lib/permissions/**/*.ts",
+    "../app/actions/team.ts",
+    "../lib/data/team.ts"
+  ]
 }
