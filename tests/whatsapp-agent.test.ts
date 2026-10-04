@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { runAgent } from "../lib/whatsapp-agent/core.js";
 import { interpretHeuristically } from "../lib/whatsapp-agent/interpreter.js";
-import { WHATSAPP_TOOLS } from "../lib/whatsapp-agent/registry.js";
+import { capabilityCatalogFor, WHATSAPP_TOOLS } from "../lib/whatsapp-agent/registry.js";
 import type { AgentActor, AgentDependencies, IncomingAgentMessage, PendingOperation, ToolCall } from "../lib/whatsapp-agent/types.js";
 
 const actor: AgentActor = { userId: "user-a", memberId: "member-a", businessId: "business-a", phone: "5491112345678", name: "Ana", role: "owner", enabledModules: ["sales", "purchases", "debts", "stock", "products", "invoices_ocr"], branchIds: null };
@@ -188,4 +188,14 @@ test("typed tool validation normalizes supported payment methods", async () => {
   assert.equal(reply.status, "needs_confirmation");
   assert.match(reply.text, /Débito/);
   assert.deepEqual(h.pending()?.toolCall.arguments, { creditor: "Pablo", amount: 1000, paymentMethod: "Débito" });
+});
+
+test("capabilities catalog is derived only from real tools, modules and role permissions", () => {
+  const catalog = capabilityCatalogFor("viewer", ["sales", "purchases"]);
+  assert.equal(catalog.length, WHATSAPP_TOOLS.length);
+  assert.equal(catalog.find((tool) => tool.name === "sales.getToday")?.availability, "available");
+  assert.equal(catalog.find((tool) => tool.name === "purchases.list")?.availability, "available");
+  assert.equal(catalog.find((tool) => tool.name === "purchases.create")?.availability, "forbidden");
+  assert.equal(catalog.find((tool) => tool.name === "stock.getLowStock")?.availability, "module_disabled");
+  assert.equal(catalog.some((tool) => tool.name.includes("comingSoon") || tool.name.includes("stub")), false);
 });

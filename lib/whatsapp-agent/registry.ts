@@ -1,4 +1,5 @@
 import { permissionsFor } from "../permissions";
+import type { ModuleKey, Role } from "../permissions";
 import type { AgentActor, ToolDefinition } from "./types";
 
 export const WHATSAPP_TOOLS: readonly ToolDefinition[] = [
@@ -25,4 +26,21 @@ export function toolsForActor(actor: AgentActor): ToolDefinition[] {
 
 export function getTool(name: string): ToolDefinition | undefined {
   return WHATSAPP_TOOLS.find((tool) => tool.name === name);
+}
+
+export type CapabilityAvailability = "available" | "module_disabled" | "forbidden";
+export type WhatsAppCapability = ToolDefinition & { availability: CapabilityAvailability };
+
+/** Catálogo de producto: siempre parte de las tools ejecutables del registry. */
+export function capabilityCatalogFor(role: Role, enabledModules: readonly ModuleKey[]): WhatsAppCapability[] {
+  const permissions = new Set(permissionsFor(role));
+  const modules = new Set(enabledModules);
+  return WHATSAPP_TOOLS.map((tool) => ({
+    ...tool,
+    availability: !modules.has(tool.module)
+      ? "module_disabled"
+      : permissions.has(tool.permission)
+        ? "available"
+        : "forbidden",
+  }));
 }
