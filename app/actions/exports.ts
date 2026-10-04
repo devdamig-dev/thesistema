@@ -5,6 +5,7 @@ import { isDatabaseMode } from "@/lib/env";
 import { assertPermission } from "@/lib/permissions/server-action";
 import { logActivity } from "@/lib/data/activity";
 import { getCurrentUserContext } from "@/lib/data/auth";
+import { applyAdminBranchScope } from "@/lib/data/branch-scope";
 import { buildCsv, csvFilename } from "@/lib/csv";
 import {
   invoices as mockInvoices,
@@ -31,14 +32,6 @@ async function getDatabaseContext() {
  * explícitamente el alcance de sucursal resuelto para el actor y fallamos
  * cerrado cuando un rol restringido no tiene asignaciones.
  */
-function applyExportBranchScope(query: any, branchIds: string[] | null) {
-  if (branchIds === null) return query;
-  if (branchIds.length === 0) {
-    return query.in("branch_id", ["00000000-0000-0000-0000-000000000000"]);
-  }
-  return query.or(`branch_id.in.(${branchIds.join(",")}),branch_id.is.null`);
-}
-
 function dbError(error: unknown): ExportResult {
   console.error("[exports] database export failed", error);
   return { ok: false, persisted: false, error: "No se pudo generar el archivo con los datos reales del negocio." };
@@ -73,7 +66,7 @@ export async function exportPurchasesCsvAction(): Promise<ExportResult> {
         .eq("business_id", businessId)
         .order("invoice_date", { ascending: false })
         .limit(1000);
-      query = applyExportBranchScope(query, ctx.assignedBranchIds);
+      query = applyAdminBranchScope(query, ctx.assignedBranchIds);
       const res = await query;
       if (res.error) return dbError(res.error);
       const rows = ((res.data as any[]) ?? []).map((r) => {
@@ -135,7 +128,7 @@ export async function exportSalesCsvAction(): Promise<ExportResult> {
         .eq("business_id", businessId)
         .order("occurred_at", { ascending: false })
         .limit(5000);
-      query = applyExportBranchScope(query, ctx.assignedBranchIds);
+      query = applyAdminBranchScope(query, ctx.assignedBranchIds);
       const res = await query;
       if (res.error) return dbError(res.error);
       const rows = ((res.data as any[]) ?? []).map((r) => {
