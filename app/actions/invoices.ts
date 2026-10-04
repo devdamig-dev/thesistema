@@ -8,8 +8,6 @@ import { extractTextFromInvoice } from "@/lib/ocr";
 import { extractInvoiceFromText } from "@/lib/ai/invoice-extract";
 import { matchAllItems, type IngredientCandidate } from "@/lib/ingredients/matching";
 import { recalcRecipesForIngredient } from "@/lib/recipes/recalc";
-import { logActivity } from "@/lib/data/activity";
-import { createNotification } from "@/lib/data/notifications";
 import { getCurrentUserContext } from "@/lib/data/auth";
 import { applyAdminBranchScope } from "@/lib/data/branch-scope";
 import { assertPermission } from "@/lib/permissions/server-action";
@@ -21,6 +19,7 @@ type ActionResult<T = unknown> =
 type BusinessContext = {
   business_id: string;
   org_id: string;
+  actor_id: string;
   assigned_branch_ids: string[] | null;
 };
 
@@ -51,6 +50,7 @@ async function resolveBusiness(db: any): Promise<BusinessContext | null> {
     ? {
         business_id: userCtx.businessId,
         org_id: biz.organization_id,
+        actor_id: userCtx.userId!,
         assigned_branch_ids: userCtx.assignedBranchIds,
       }
     : null;
@@ -305,136 +305,57 @@ export async function approveInvoiceAction(
   const ctx = await resolveBusiness(db);
   if (!ctx) return { ok: false, persisted: false, error: "no_business" };
 
-  let invoiceQuery = db
-    .from("invoices")
-    .select("*")
-    .eq("id", invoiceId)
-    .eq("business_id", ctx.business_id);
-  invoiceQuery = scopeInvoiceQuery(invoiceQuery, ctx);
-  const invoiceRes = await invoiceQuery.maybeSingle();
-  const invoice = invoiceRes.data as any;
-  if (!invoice) return { ok: false, persisted: false, error: "invoice_not_found" };
-  if (invoice.status === "approved" || invoice.status === "sent_to_accountant") {
-    return { ok: true, persisted: true };
+  const approvalRes = await db.rpc("approve_invoice_atomic", {
+    p_invoice_id: invoiceId,
+    p_business_id: ctx.business_id,
+    p_actor_id: ctx.actor_id,
+  });
+  if (approvalRes.error) {
+    console.error("[invoices] atomic approval failed", approvalRes.error);
+    return { ok: false, persisted: false, error: "approval_failed" };
   }
 
-  const itemsRes = await db.from("invoice_items").select("*").eq("invoice_id", invoiceId);
-  const items = (itemsRes.data as any[]) ?? [];
+  const approval = approvalRes.data as {
+    ok: boolean;
+    error?: string;
+    already_approved?: boolean;
+    purchase_id?: string;
+    invoice_number?: string;
+    item_count?: number;
+    ingredient_ids?: string[];
+  } | null;
+  if (!approval?.ok || !approval.purchase_id) {
+    return {
+      ok: false,
+      persisted: false,
+      error: approval?.error ?? "approval_failed",
+    };
+  }
 
-  const purchaseInsert = await db
-    .from("purchases")
-    .insert({
-      business_id: ctx.business_id,
-      supplier_id: invoice.supplier_id,
-      purchased_at: invoice.invoice_date,
-      total: invoice.total,
-      payment_method: invoice.payment_method,
-      invoice_id: invoice.id,
-    })
-    .select("id")
-    .maybeSingle();
-  const purchase = purchaseInsert.data as { id: string } | null;
-  if (!purchase) return { ok: false, persisted: false, error: "purchase_insert_failed" };
+  if (approval.already_approved) {
+    refresh();
+    return { ok: true, persisted: true, purchase_id: approval.purchase_id, recalc: [] };
+  }
 
   const recalcSummaries: any[] = [];
-  const ingredientsToRecalc = new Set<string>();
-
-  for (const item of items) {
-    const ingredientId = item.matched_ingredient_id ?? item.suggested_ingredient_id;
-    if (ingredientId) {
-      const ownedIngredient = await db
-        .from("ingredients")
-        .select("id")
-        .eq("id", ingredientId)
-        .eq("business_id", ctx.business_id)
-        .maybeSingle();
-      if (!ownedIngredient.data) continue;
-      ingredientsToRecalc.add(ingredientId);
-    }
-
-    await db.from("purchase_items").insert({
-      purchase_id: purchase.id,
-      ingredient_id: ingredientId || null,
-      description: item.description,
-      qty: Number(item.qty_numeric ?? item.qty ?? 0),
-      unit: item.unit ?? "u",
-      unit_price: Number(item.unit_price ?? 0),
-      total: Number(item.total ?? 0),
-    });
-
-    if (ingredientId) {
-      let stockBranchId = invoice.branch_id as string | null;
-      if (!stockBranchId) {
-        const branchRes = await db
-          .from("branches")
-          .select("id")
-          .eq("business_id", ctx.business_id)
-          .eq("is_main", true)
-          .limit(1)
-          .maybeSingle();
-        stockBranchId = (branchRes.data as { id: string } | null)?.id ?? null;
-      }
-      if (stockBranchId) {
-        await db.from("stock_movements").insert({
-          ingredient_id: ingredientId,
-          branch_id: stockBranchId,
-          reason: "purchase",
-          qty: Number(item.qty_numeric ?? item.qty ?? 0),
-          ref_type: "purchase",
-          ref_id: purchase.id,
-        });
-      }
-    }
-  }
-
-  for (const ingredientId of ingredientsToRecalc) {
+  const ingredientIds = approval.ingredient_ids ?? [];
+  for (const ingredientId of ingredientIds) {
     try {
-      await db.rpc("recalc_ingredient_cost", { p_ingredient_id: ingredientId });
-    } catch {}
-    const summary = await recalcRecipesForIngredient(db, ctx.business_id, ingredientId);
-    recalcSummaries.push(summary);
+      const summary = await recalcRecipesForIngredient(db, ctx.business_id, ingredientId);
+      recalcSummaries.push(summary);
+    } catch (error) {
+      console.error("[invoices] post-approval recipe recalculation failed", error);
+    }
   }
 
-  await logStage(db, invoiceId, "recalc", true, {
-    ingredients: ingredientsToRecalc.size,
+  await logStage(db, invoiceId, "recalc", recalcSummaries.length === ingredientIds.length, {
+    ingredients: ingredientIds.length,
     products_affected: recalcSummaries.reduce((s, r) => s + r.productsAffected, 0),
     recommendations: recalcSummaries.reduce((s, r) => s + r.recommendationsCreated, 0),
   });
 
-  await db
-    .from("invoices")
-    .update({ status: "approved" })
-    .eq("id", invoiceId)
-    .eq("business_id", ctx.business_id);
-  await logStage(db, invoiceId, "approval", true, { purchase_id: purchase.id });
-
-  const totalRecommendations = recalcSummaries.reduce((s, r) => s + (r.recommendationsCreated ?? 0), 0);
-  await logActivity({
-    businessId: ctx.business_id,
-    action: "invoice.approved",
-    targetType: "invoices",
-    targetId: invoiceId,
-    summary: `Factura ${invoice.number} aprobada · ${items.length} ítems · purchase creada.`,
-    data: {
-      invoice_id: invoiceId,
-      purchase_id: purchase.id,
-      ingredients_affected: ingredientsToRecalc.size,
-      recommendations_created: totalRecommendations,
-    },
-  });
-  await createNotification({
-    businessId: ctx.business_id,
-    tone: totalRecommendations > 0 ? "warn" : "success",
-    title: totalRecommendations > 0
-      ? `${totalRecommendations} alerta(s) de margen tras aprobar factura`
-      : "Factura aprobada e imputada",
-    detail: `${invoice.number} · ${items.length} ítems · stock actualizado.`,
-    href: "/facturas",
-    source: "invoices",
-  });
-
   refresh();
-  return { ok: true, persisted: true, purchase_id: purchase.id, recalc: recalcSummaries };
+  return { ok: true, persisted: true, purchase_id: approval.purchase_id, recalc: recalcSummaries };
 }
 
 export async function rejectInvoiceAction(invoiceId: string): Promise<ActionResult> {
