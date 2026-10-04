@@ -9,7 +9,7 @@ import { getCurrentUserContext } from "@/lib/data/auth";
 import { BUSINESS_WIDE_ROLES, hasPermission } from "@/lib/permissions";
 
 type Result =
-  | { ok: true; persisted: boolean; id?: string; inviteUrl?: string }
+  | { ok: true; persisted: boolean; id?: string; inviteUrl?: string; branchAssigned?: boolean }
   | { ok: false; persisted: false; error: string };
 
 function refresh() {
@@ -115,18 +115,41 @@ export async function updateMemberRoleAction(
   if (!supabase) return { ok: false, persisted: false, error: "connection_unavailable" };
   const db = supabase as any;
 
-  const { data, error } = await db
-    .from("business_members")
-    .update({ role })
-    .eq("id", memberId)
-    .eq("business_id", ctx.businessId)
-    .select("id")
-    .maybeSingle();
-  if (error) return { ok: false, persisted: false, error: error.message };
-  if (!data) return { ok: false, persisted: false, error: "not_found" };
+  const rpcRes = await db.rpc("update_member_role_with_branch", {
+    p_member_id: memberId,
+    p_business_id: ctx.businessId,
+    p_role: role,
+  });
+  if (rpcRes.error) {
+    console.error("[team] atomic role update failed", rpcRes.error.message);
+    return { ok: false, persisted: false, error: "role_update_failed" };
+  }
+  const result = rpcRes.data as
+    | { ok: true; member_id: string; old_role: Role; role: Role; branch_assigned: boolean }
+    | { ok: false; error: string }
+    | null;
+  if (!result?.ok) {
+    return { ok: false, persisted: false, error: result?.error ?? "role_update_failed" };
+  }
+
+  await logActivity({
+    businessId: ctx.businessId!,
+    actorId: ctx.userId,
+    actorRole: ctx.role,
+    action: "team.role.updated",
+    targetType: "business_members",
+    targetId: result.member_id,
+    summary: `Rol actualizado de ${result.old_role} a ${result.role}.`,
+    data: { oldRole: result.old_role, role: result.role, branchAssigned: result.branch_assigned },
+  });
 
   refresh();
-  return { ok: true, persisted: true, id: memberId };
+  return {
+    ok: true,
+    persisted: true,
+    id: memberId,
+    branchAssigned: result.branch_assigned,
+  };
 }
 
 /**

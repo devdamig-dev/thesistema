@@ -14,9 +14,48 @@ const records: Record<string, any[]> = {
     { id: "branch-a", business_id: "a", name: "Principal A", is_main: true },
     { id: "branch-b", business_id: "b", name: "Principal B", is_main: true },
   ],
+  branch_assignments: [],
 };
+let rpcError = false;
 let queries = 0;
-const db = { from(table: string) {
+const db = {
+  async rpc(name: string, args: any) {
+    queries++;
+    if (rpcError) return { data: null, error: { message: "database failure" } };
+    assert.equal(name, "update_member_role_with_branch");
+    const member = records.business_members.find(
+      (row) => row.id === args.p_member_id && row.business_id === args.p_business_id,
+    );
+    if (!member) return { data: { ok: false, error: "not_found" }, error: null };
+    if (member.role === "owner" || args.p_role === "owner") {
+      return { data: { ok: false, error: "owner_immutable" }, error: null };
+    }
+    const oldRole = member.role;
+    let branchAssigned = false;
+    if (!BUSINESS_WIDE_ROLES.includes(args.p_role)) {
+      const existing = records.branch_assignments.find((row) => row.business_member_id === member.id);
+      if (!existing) {
+        const branch = records.branches.find(
+          (row) => row.business_id === member.business_id && row.is_main,
+        );
+        if (!branch) return { data: { ok: false, error: "branch_required" }, error: null };
+        records.branch_assignments.push({ business_member_id: member.id, branch_id: branch.id });
+        branchAssigned = true;
+      }
+    }
+    member.role = args.p_role;
+    return {
+      data: {
+        ok: true,
+        member_id: member.id,
+        old_role: oldRole,
+        role: member.role,
+        branch_assigned: branchAssigned,
+      },
+      error: null,
+    };
+  },
+  from(table: string) {
   queries++;
   const filters: Array<[string, unknown]> = [];
   let update: any;
@@ -60,8 +99,17 @@ test("Equipo reads and mutations stay inside the authenticated business", async 
   assert.equal(records.business_members[1].role, "owner");
   assert.equal((await actions.revokeInvitationAction("invite-b")).ok, false);
   assert.equal(records.user_invitations[1].status, "pending");
-  assert.equal((await actions.updateMemberRoleAction("member-a", "manager")).persisted, true);
-  assert.equal(records.business_members[0].role, "manager");
+  const restrictedUpdate = await actions.updateMemberRoleAction("member-a", "employee");
+  assert.equal(restrictedUpdate.persisted, true);
+  assert.equal(restrictedUpdate.branchAssigned, true);
+  assert.equal(records.business_members[0].role, "employee");
+  assert.deepEqual(records.branch_assignments, [{ business_member_id: "member-a", branch_id: "branch-a" }]);
+  assert.equal((await actions.updateMemberRoleAction("member-a", "marketing")).branchAssigned, false);
+  assert.equal(records.branch_assignments.length, 1);
+  assert.equal((await actions.updateMemberRoleAction("member-a", "owner")).ok, false);
+  assert.equal(records.business_members[0].role, "marketing");
+  assert.equal((await actions.updateMemberRoleAction("member-b", "admin")).ok, false);
+  assert.equal(records.business_members[1].role, "owner");
   assert.equal((await actions.revokeInvitationAction("invite-a")).persisted, true);
   assert.equal((await actions.revokeInvitationAction("invite-a")).ok, false);
   assert.equal((await actions.inviteUserAction({ email: "new@example.com", role: "viewer" })).persisted, true);
@@ -88,4 +136,14 @@ test("ambiguous business, missing session, permission and connection fail closed
   assert.equal((await actions.updateMemberRoleAction("member-a", "admin")).ok, false);
   assert.equal((await actions.revokeInvitationAction("invite-a")).ok, false);
   connected = true;
+});
+
+test("role update database failures never claim persistence", async () => {
+  ctx = context;
+  rpcError = true;
+  assert.deepEqual(
+    await actions.updateMemberRoleAction("member-a", "employee"),
+    { ok: false, persisted: false, error: "role_update_failed" },
+  );
+  rpcError = false;
 });
