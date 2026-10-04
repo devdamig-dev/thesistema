@@ -11,13 +11,18 @@ import { recalcRecipesForIngredient } from "@/lib/recipes/recalc";
 import { logActivity } from "@/lib/data/activity";
 import { createNotification } from "@/lib/data/notifications";
 import { getCurrentUserContext } from "@/lib/data/auth";
+import { applyAdminBranchScope } from "@/lib/data/branch-scope";
 import { assertPermission } from "@/lib/permissions/server-action";
 
 type ActionResult<T = unknown> =
   | ({ ok: true; persisted: boolean } & T)
   | { ok: false; persisted: boolean; error: string };
 
-type BusinessContext = { business_id: string; org_id: string };
+type BusinessContext = {
+  business_id: string;
+  org_id: string;
+  assigned_branch_ids: string[] | null;
+};
 
 function refresh() {
   revalidatePath("/facturas");
@@ -42,7 +47,17 @@ async function resolveBusiness(db: any): Promise<BusinessContext | null> {
     .eq("id", userCtx.businessId)
     .maybeSingle();
   const biz = bizRes.data as { organization_id: string } | null;
-  return biz ? { business_id: userCtx.businessId, org_id: biz.organization_id } : null;
+  return biz
+    ? {
+        business_id: userCtx.businessId,
+        org_id: biz.organization_id,
+        assigned_branch_ids: userCtx.assignedBranchIds,
+      }
+    : null;
+}
+
+function scopeInvoiceQuery(query: any, ctx: BusinessContext) {
+  return applyAdminBranchScope(query, ctx.assigned_branch_ids);
 }
 
 async function logStage(
@@ -290,12 +305,13 @@ export async function approveInvoiceAction(
   const ctx = await resolveBusiness(db);
   if (!ctx) return { ok: false, persisted: false, error: "no_business" };
 
-  const invoiceRes = await db
+  let invoiceQuery = db
     .from("invoices")
     .select("*")
     .eq("id", invoiceId)
-    .eq("business_id", ctx.business_id)
-    .maybeSingle();
+    .eq("business_id", ctx.business_id);
+  invoiceQuery = scopeInvoiceQuery(invoiceQuery, ctx);
+  const invoiceRes = await invoiceQuery.maybeSingle();
   const invoice = invoiceRes.data as any;
   if (!invoice) return { ok: false, persisted: false, error: "invoice_not_found" };
   if (invoice.status === "approved" || invoice.status === "sent_to_accountant") {
@@ -347,18 +363,21 @@ export async function approveInvoiceAction(
     });
 
     if (ingredientId) {
-      const branchRes = await db
-        .from("branches")
-        .select("id")
-        .eq("business_id", ctx.business_id)
-        .eq("is_main", true)
-        .limit(1)
-        .maybeSingle();
-      const branch = branchRes.data as { id: string } | null;
-      if (branch) {
+      let stockBranchId = invoice.branch_id as string | null;
+      if (!stockBranchId) {
+        const branchRes = await db
+          .from("branches")
+          .select("id")
+          .eq("business_id", ctx.business_id)
+          .eq("is_main", true)
+          .limit(1)
+          .maybeSingle();
+        stockBranchId = (branchRes.data as { id: string } | null)?.id ?? null;
+      }
+      if (stockBranchId) {
         await db.from("stock_movements").insert({
           ingredient_id: ingredientId,
-          branch_id: branch.id,
+          branch_id: stockBranchId,
           reason: "purchase",
           qty: Number(item.qty_numeric ?? item.qty ?? 0),
           ref_type: "purchase",
@@ -430,13 +449,13 @@ export async function rejectInvoiceAction(invoiceId: string): Promise<ActionResu
   const ctx = await resolveBusiness(db);
   if (!ctx) return { ok: false, persisted: false, error: "no_business" };
 
-  const res = await db
+  let rejectQuery = db
     .from("invoices")
     .update({ status: "rejected" })
     .eq("id", invoiceId)
-    .eq("business_id", ctx.business_id)
-    .select("id")
-    .maybeSingle();
+    .eq("business_id", ctx.business_id);
+  rejectQuery = scopeInvoiceQuery(rejectQuery, ctx);
+  const res = await rejectQuery.select("id").maybeSingle();
   if (res.error) return { ok: false, persisted: false, error: res.error.message };
   if (!res.data) return { ok: false, persisted: false, error: "invoice_not_found" };
   refresh();
@@ -466,12 +485,13 @@ export async function getInvoiceAttachmentUrlAction(
   const ctx = await resolveBusiness(db);
   if (!ctx) return { ok: false, persisted: false, error: "no_business" };
 
-  const res = await db
+  let invoiceQuery = db
     .from("invoices")
     .select("storage_path, storage_bucket, file_mime")
     .eq("id", invoiceId)
-    .eq("business_id", ctx.business_id)
-    .maybeSingle();
+    .eq("business_id", ctx.business_id);
+  invoiceQuery = scopeInvoiceQuery(invoiceQuery, ctx);
+  const res = await invoiceQuery.maybeSingle();
   const row = res.data as
     | { storage_path: string | null; storage_bucket: string | null; file_mime: string | null }
     | null;
@@ -510,12 +530,13 @@ export async function updateInvoiceItemAction(
   const item = itemRes.data as { invoice_id: string } | null;
   if (!item) return { ok: false, persisted: false, error: "item_not_found" };
 
-  const ownedInvoice = await db
+  let ownedInvoiceQuery = db
     .from("invoices")
     .select("id")
     .eq("id", item.invoice_id)
-    .eq("business_id", ctx.business_id)
-    .maybeSingle();
+    .eq("business_id", ctx.business_id);
+  ownedInvoiceQuery = scopeInvoiceQuery(ownedInvoiceQuery, ctx);
+  const ownedInvoice = await ownedInvoiceQuery.maybeSingle();
   if (!ownedInvoice.data) return { ok: false, persisted: false, error: "item_not_found" };
 
   if (patch.matched_ingredient_id) {
