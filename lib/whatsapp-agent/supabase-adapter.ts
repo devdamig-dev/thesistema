@@ -141,13 +141,25 @@ export async function savePending(
   return { ...operation, id: res.data.id };
 }
 
-export async function clearPending(db: Db, id: string): Promise<void> {
-  const res = await db
+export async function consumePending(
+  db: Db,
+  id: string,
+  actor: AgentActor,
+  requireUnexpired = false,
+): Promise<boolean> {
+  // UPDATE's predicate is rechecked after taking the row lock. Two messages
+  // racing on one confirmation cannot both receive a returned row.
+  let query = db
     .from("whatsapp_agent_pending_operations")
     .update({ consumed_at: new Date().toISOString() })
-    .eq("id", id);
-
+    .eq("id", id)
+    .eq("business_id", actor.businessId)
+    .eq("member_id", actor.memberId)
+    .is("consumed_at", null);
+  if (requireUnexpired) query = query.gt("expires_at", new Date().toISOString());
+  const res = await query.select("id").maybeSingle();
   if (res.error) throw res.error;
+  return Boolean(res.data);
 }
 
 const sanitized = (value: unknown): unknown => {

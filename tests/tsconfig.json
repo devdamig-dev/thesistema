@@ -17,6 +17,7 @@
     "../lib/whatsapp-agent/types.ts",
     "../lib/permissions/**/*.ts",
     "../app/actions/team.ts",
-    "../lib/data/team.ts"
+    "../lib/data/team.ts",
+    "../lib/whatsapp-agent/supabase-adapter.ts"
   ]
 }

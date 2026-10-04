@@ -25,7 +25,7 @@ export type ToolDefinition = {
 export type ToolCall = { name: string; arguments: Record<string, unknown> };
 
 export type AgentReply = {
-  status: "completed" | "needs_input" | "needs_confirmation" | "rejected" | "duplicate" | "failed";
+  status: "completed" | "needs_input" | "needs_confirmation" | "rejected" | "duplicate" | "failed" | "cancelled";
   text: string;
   tool?: string;
   data?: unknown;
@@ -53,7 +53,8 @@ export interface AgentDependencies {
   interpret(text: string, tools: ToolDefinition[], pending?: PendingOperation | null): Promise<ToolCall | null>;
   getPending(actor: AgentActor): Promise<PendingOperation | null>;
   savePending(operation: Omit<PendingOperation, "id">): Promise<PendingOperation>;
-  clearPending(id: string): Promise<void>;
+  /** Atomically consumes an unconsumed row scoped to the actor. Only the winner returns true. */
+  consumePending(id: string, actor: AgentActor, requireUnexpired?: boolean): Promise<boolean>;
   execute(actor: AgentActor, call: ToolCall): Promise<unknown>;
   audit(event: AgentAuditEvent): Promise<void>;
   now(): Date;

@@ -2,6 +2,7 @@ import { getMissingArguments } from "./interpreter";
 import { getTool, toolsForActor } from "./registry";
 import type { AgentDependencies, AgentReply, IncomingAgentMessage } from "./types";
 
+const CANCELLATION = /^(no|cancelar|cancel[aá]|cancelo|no confirmar)[.!\s]*$/i;
 const CONFIRMATION = /^(s[ií]|confirmo|dale|ok|confirmar)[.!\s]*$/i;
 const labels: Record<string, string> = {
   paymentMethod: "medio de pago",
@@ -88,8 +89,21 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
   const available = toolsForActor(actor);
   let pending = await deps.getPending(actor);
   if (pending && new Date(pending.expiresAt) <= deps.now()) {
-    await deps.clearPending(pending.id);
+    await deps.consumePending(pending.id, actor);
     pending = null;
+  }
+
+  if (pending && CANCELLATION.test(input.text)) {
+    try {
+      const consumed = await deps.consumePending(pending.id, actor, true);
+      if (!consumed) {
+        return { status: "rejected", text: "Ese pedido ya no está pendiente. No se canceló ninguna operación." };
+      }
+    } catch {
+      return { status: "failed", text: "No pude cancelar el pedido. Intentá nuevamente." };
+    }
+    await safeAudit(deps, { actor, input, tool: pending.toolCall.name, error: "operation_cancelled" });
+    return { status: "cancelled", text: "Pedido cancelado. No se realizó ningún cambio.", tool: pending.toolCall.name };
   }
 
   let confirmed = false;
@@ -97,7 +111,7 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
     if (!CONFIRMATION.test(input.text)) {
       return {
         status: "needs_confirmation",
-        text: "La operación sigue pendiente. Respondé “Sí” para confirmarla.",
+        text: "La operación sigue pendiente. Respondé “Sí” para confirmarla o “Cancelar” para descartarla.",
         tool: pending.toolCall.name,
       };
     }
@@ -162,7 +176,7 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
     });
     return {
       status: "needs_confirmation",
-      text: `Voy a ejecutar “${tool.description}”. ¿Confirmás?`,
+      text: `Voy a ejecutar “${tool.description}”. Respondé “Sí” para confirmar o “Cancelar” para descartar.`,
       tool: tool.name,
     };
   }
@@ -171,7 +185,10 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
   // de auditoría o respuesta no pueda re-ejecutar la misma operación.
   if (confirmed && pending?.kind === "confirmation") {
     try {
-      await deps.clearPending(pending.id);
+      const consumed = await deps.consumePending(pending.id, actor, true);
+      if (!consumed) {
+        return { status: "rejected", text: "Ese pedido venció o ya fue atendido. No se ejecutó nuevamente.", tool: tool.name };
+      }
       pending = null;
     } catch {
       return {
@@ -208,7 +225,7 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
   let cleanupOk = true;
   if (pending) {
     try {
-      await deps.clearPending(pending.id);
+      await deps.consumePending(pending.id, actor);
     } catch {
       cleanupOk = false;
     }

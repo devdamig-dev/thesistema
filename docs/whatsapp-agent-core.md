@@ -21,7 +21,9 @@ Sin estos pasos el core sigue siendo comprobable por tests y por el endpoint int
 ## Seguridad y operación
 
 - `provider_message_id` es único y evita ejecutar dos veces un reintento de Meta.
-- Las confirmaciones sensibles duran 10 minutos; las aclaraciones, 15 minutos.
+- Las confirmaciones sensibles duran 10 minutos; las aclaraciones, 15 minutos. Se puede responder `No` o `Cancelar` para descartar el pedido.
+- Antes de ejecutar una operación sensible, `consumePending` hace un UPDATE condicionado por id, negocio, miembro, `consumed_at IS NULL` y vigencia. Sólo el mensaje que recibe una fila puede ejecutar; dos confirmaciones diferentes no pueden consumir el mismo pedido. Una cancelación compite por esa misma fila y no afirma haber cancelado si la confirmación ya ganó.
+- El consumo previo al write garantiza como máximo un intento por confirmación. Si el proceso falla después de consumirla, el pedido debe iniciarse de nuevo; no hay reintento automático de writes sensibles.
 - Los argumentos no aceptan `business_id`; el tenant procede exclusivamente del actor resuelto.
 - Auditoría, mensajes procesados y estado conversacional son tablas server-owned con RLS habilitada y sin grants a `authenticated`/`anon`.
 - Los logs sanitizan claves con nombres de token, secreto, password o authorization.
@@ -29,3 +31,9 @@ Sin estos pasos el core sigue siendo comprobable por tests y por el endpoint int
 ## Alcance conocido
 
 El router incluido es determinístico y cubre las frases MVP. La interfaz `interpret` permite incorporar después un proveedor de modelo con tool calling sin acoplar registry, executor ni transporte. Las compras requieren un proveedor existente y piden medio de pago; los pagos de deuda exigen una coincidencia única del acreedor y confirmación explícita.
+
+## Próximos incrementos
+
+1. Validación tipada de argumentos y preview de los valores concretos antes de confirmar (acreedor, monto y medio de pago).
+2. Resolución de identidad por teléfono que rechace coincidencias ambiguas y errores de consulta.
+3. Prueba end-to-end con un negocio y número Meta autorizados, incluyendo permisos de rol y sucursal.
