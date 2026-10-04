@@ -5,20 +5,12 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isDatabaseMode } from "@/lib/env";
 import type { Role } from "@/lib/permissions";
 import { logActivity } from "@/lib/data/activity";
-import { assertPermission } from "@/lib/permissions/server-action";
+import { getCurrentUserContext } from "@/lib/data/auth";
+import { hasPermission } from "@/lib/permissions";
 
 type Result =
   | { ok: true; persisted: boolean; id?: string; inviteUrl?: string }
   | { ok: false; persisted: false; error: string };
-
-async function resolveBusinessId(db: any): Promise<string | null> {
-  const res = await db
-    .from("business_members")
-    .select("business_id")
-    .limit(1)
-    .maybeSingle();
-  return (res.data as { business_id: string } | null)?.business_id ?? null;
-}
 
 function refresh() {
   revalidatePath("/ajustes/equipo");
@@ -26,27 +18,28 @@ function refresh() {
 
 /**
  * Invita un usuario al business actual. Crea una fila en
- * user_invitations con un token. El envío del mail por ahora queda
- * mock — el token quedó en la fila y puede compartirse manualmente.
+ * user_invitations con un token y devuelve el enlace para compartir.
  */
 export async function inviteUserAction(payload: {
   email: string;
   role: Role;
 }): Promise<Result> {
-  const guard = await assertPermission("settings.team");
-  if (guard) return guard;
+  const ctx = await getCurrentUserContext();
+  if (!hasPermission(ctx.role, "settings.team")) {
+    return { ok: false, persisted: false, error: "forbidden" };
+  }
+  if (isDatabaseMode() && (!ctx.isAuthenticated || !ctx.userId || !ctx.businessId)) {
+    return { ok: false, persisted: false, error: "no_business" };
+  }
   if (!isDatabaseMode()) {
     refresh();
     return { ok: true, persisted: false };
   }
   const supabase = createSupabaseServerClient();
-  if (!supabase) return { ok: true, persisted: false };
+  if (!supabase) return { ok: false, persisted: false, error: "connection_unavailable" };
   const db = supabase as any;
-  const businessId = await resolveBusinessId(db);
-  if (!businessId) return { ok: false, persisted: false, error: "no_business" };
-
-  const me = await supabase.auth.getUser();
-  const invitedBy = me.data?.user?.id ?? null;
+  const businessId = ctx.businessId!;
+  const invitedBy = ctx.userId;
 
   const res = await db
     .from("user_invitations")
@@ -66,7 +59,7 @@ export async function inviteUserAction(payload: {
   await logActivity({
     businessId,
     actorId: invitedBy,
-    actorRole: "admin",
+    actorRole: ctx.role,
     action: "team.invited",
     targetType: "user_invitations",
     targetId: row.id,
@@ -90,21 +83,30 @@ export async function updateMemberRoleAction(
   memberId: string,
   role: Role,
 ): Promise<Result> {
-  const guard = await assertPermission("settings.team");
-  if (guard) return guard;
+  const ctx = await getCurrentUserContext();
+  if (!hasPermission(ctx.role, "settings.team")) {
+    return { ok: false, persisted: false, error: "forbidden" };
+  }
+  if (isDatabaseMode() && (!ctx.isAuthenticated || !ctx.userId || !ctx.businessId)) {
+    return { ok: false, persisted: false, error: "no_business" };
+  }
   if (!isDatabaseMode()) {
     refresh();
     return { ok: true, persisted: false };
   }
   const supabase = createSupabaseServerClient();
-  if (!supabase) return { ok: true, persisted: false };
+  if (!supabase) return { ok: false, persisted: false, error: "connection_unavailable" };
   const db = supabase as any;
 
-  const { error } = await db
+  const { data, error } = await db
     .from("business_members")
     .update({ role })
-    .eq("id", memberId);
+    .eq("id", memberId)
+    .eq("business_id", ctx.businessId)
+    .select("id")
+    .maybeSingle();
   if (error) return { ok: false, persisted: false, error: error.message };
+  if (!data) return { ok: false, persisted: false, error: "not_found" };
 
   refresh();
   return { ok: true, persisted: true, id: memberId };
@@ -114,20 +116,30 @@ export async function updateMemberRoleAction(
  * Revoca una invitación pendiente.
  */
 export async function revokeInvitationAction(invitationId: string): Promise<Result> {
-  const guard = await assertPermission("settings.team");
-  if (guard) return guard;
+  const ctx = await getCurrentUserContext();
+  if (!hasPermission(ctx.role, "settings.team")) {
+    return { ok: false, persisted: false, error: "forbidden" };
+  }
+  if (isDatabaseMode() && (!ctx.isAuthenticated || !ctx.userId || !ctx.businessId)) {
+    return { ok: false, persisted: false, error: "no_business" };
+  }
   if (!isDatabaseMode()) {
     refresh();
     return { ok: true, persisted: false };
   }
   const supabase = createSupabaseServerClient();
-  if (!supabase) return { ok: true, persisted: false };
+  if (!supabase) return { ok: false, persisted: false, error: "connection_unavailable" };
   const db = supabase as any;
-  const { error } = await db
+  const { data, error } = await db
     .from("user_invitations")
     .update({ status: "revoked" })
-    .eq("id", invitationId);
+    .eq("id", invitationId)
+    .eq("business_id", ctx.businessId)
+    .eq("status", "pending")
+    .select("id")
+    .maybeSingle();
   if (error) return { ok: false, persisted: false, error: error.message };
+  if (!data) return { ok: false, persisted: false, error: "not_found" };
   refresh();
   return { ok: true, persisted: true };
 }
