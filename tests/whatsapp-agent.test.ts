@@ -108,3 +108,31 @@ test("cancellation and confirmation racing on a pending operation have only one 
   const cancelled = replies.some(reply => reply.status === "cancelled");
   assert.equal(h.executions.length, cancelled ? 0 : 1);
 });
+
+test("purchase examples extract the real supplier and Argentine money amounts", async () => {
+  for (const text of ["Registrá una compra de $180.000 a Don José.", "Registrá una compra a Don José por $180.000.", "Registrá una compra de Don José por 180 mil."]) {
+    const call = await interpretHeuristically(text, [...WHATSAPP_TOOLS]);
+    assert.equal(call?.arguments.supplier, "Don José", text);
+    assert.equal(call?.arguments.amount, 180000, text);
+  }
+});
+
+test("stock quantities preserve kilos and decimal quantities without money scaling", async () => {
+  for (const [text, quantity, ingredient] of [
+    ["Sumá 20 kg de carne al stock.", 20, "carne"],
+    ["Agregá 2,5 kilos de queso al stock.", 2.5, "queso"],
+    ["Sumá 2.5 kg de carne al stock.", 2.5, "carne"],
+    ["Sumá 20 unidades de pan al stock.", 20, "pan"],
+  ] as const) {
+    const call = await interpretHeuristically(text, [...WHATSAPP_TOOLS]);
+    assert.equal(call?.arguments.quantity, quantity, text);
+    assert.equal(call?.arguments.ingredient, ingredient, text);
+  }
+});
+
+test("numeric clarifications parse Argentine amounts and leave invalid input missing", async () => {
+  const pending: PendingOperation = { id: "clarify", actor, kind: "clarification", toolCall: { name: "purchases.create", arguments: { supplier: "Don José", paymentMethod: "Efectivo" } }, expiresAt: "2099-01-01T00:00:00Z" };
+  assert.equal((await interpretHeuristically("$180.000,50", [...WHATSAPP_TOOLS], pending))?.arguments.amount, 180000.5);
+  assert.equal((await interpretHeuristically("180k", [...WHATSAPP_TOOLS], pending))?.arguments.amount, 180000);
+  assert.equal((await interpretHeuristically("No sé", [...WHATSAPP_TOOLS], pending))?.arguments.amount, undefined);
+});
