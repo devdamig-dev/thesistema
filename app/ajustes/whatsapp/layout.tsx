@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { MessageSquareText, Phone, Users } from "lucide-react";
+import { MessageSquareText, Phone, Users, ShieldCheck } from "lucide-react";
 import { isDatabaseMode } from "@/lib/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentUserContext } from "@/lib/data/auth";
@@ -31,6 +31,13 @@ export default async function WhatsappSettingsLayout({ children }: { children: R
     whatsapp_connected_at: string | null;
   } | null;
 
+  const conversationsResult = await supabase
+    .from("whatsapp_authorized_conversations")
+    .select("id,display_name,conversation_type,enabled,branch_id,branches(name)")
+    .eq("business_id", ctx.businessId)
+    .order("created_at", { ascending: true });
+
+  const conversations = conversationsResult.error ? [] : (conversationsResult.data ?? []);
   const connected = Boolean(row?.whatsapp_connected);
   const phone = row?.whatsapp_phone?.trim() || null;
   const connectedAt = row?.whatsapp_connected_at
@@ -84,6 +91,29 @@ export default async function WhatsappSettingsLayout({ children }: { children: R
               </div>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" /> Conversaciones autorizadas</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-ink-muted">Thesistema solo procesa mensajes de las conversaciones que autorices acá. El resto de tus chats se ignora.</p>
+          {conversations.length ? conversations.map((conversation: any) => (
+            <div key={conversation.id} className="flex items-center justify-between rounded-xl border border-line p-4">
+              <div>
+                <div className="text-sm font-semibold text-ink">{conversation.display_name || (conversation.conversation_type === "group" ? "Grupo autorizado" : "Chat autorizado")}</div>
+                <div className="mt-1 text-xs text-ink-muted">{conversation.conversation_type === "group" ? "Grupo" : "Chat privado"}{conversation.branches?.name ? ` · ${conversation.branches.name}` : " · Todas las sucursales"}</div>
+              </div>
+              <Badge tone={conversation.enabled ? "success" : "default"}>{conversation.enabled ? "Activo" : "Pausado"}</Badge>
+            </div>
+          )) : (
+            <div className="rounded-xl border border-dashed border-line p-5 text-sm text-ink-muted">
+              {connected ? "Todavía no hay conversaciones autorizadas. Cuando Meta exponga una conversación compatible, vas a poder seleccionarla y asignarla a una sucursal desde acá." : "Primero conectá WhatsApp Business. Después vas a poder elegir qué conversación puede usar Thesistema."}
+            </div>
+          )}
+          <p className="text-xs text-ink-subtle">Autorizar una conversación no autoriza automáticamente a sus participantes: cada persona mantiene sus permisos de equipo.</p>
         </CardContent>
       </Card>
 
