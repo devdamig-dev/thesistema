@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, ExternalLink, FileText, Loader2, Upload, XCircle } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
@@ -28,16 +28,26 @@ export type DatabaseInvoiceRow = {
   confidence: number;
 };
 
-export function DatabaseInvoicesView({ rows }: { rows: DatabaseInvoiceRow[] }) {
+type InvoiceBranchOption = { id: string; name: string; isMain: boolean };
+
+export function DatabaseInvoicesView({
+  rows,
+  branches,
+}: {
+  rows: DatabaseInvoiceRow[];
+  branches: InvoiceBranchOption[];
+}) {
   const router = useRouter();
   const { toast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
   const [pending, startTransition] = useTransition();
+  const [branchId, setBranchId] = useState(branches.length === 1 ? branches[0].id : "");
 
   function upload(files: FileList | null) {
     if (!files?.length) return;
     const formData = new FormData();
     formData.append("file", files[0]);
+    formData.append("branch_id", branchId);
     startTransition(async () => {
       const result = await uploadInvoiceAction(formData);
       if (result.ok) {
@@ -108,7 +118,29 @@ export function DatabaseInvoicesView({ rows }: { rows: DatabaseInvoiceRow[] }) {
         description="En producción se muestran únicamente comprobantes persistidos. Podés seguir cargando archivos y revisando su estado sin mezclar datos demo."
         actions={
           <>
-            <Button size="sm" variant="primary" onClick={() => inputRef.current?.click()} disabled={pending}>
+            <label className="flex items-center gap-2 text-xs text-ink-muted">
+              <span>Sucursal</span>
+              <select
+                value={branchId}
+                onChange={(event) => setBranchId(event.target.value)}
+                className="h-9 min-w-40 rounded-lg border border-line bg-bg px-3 text-sm text-ink outline-none focus:border-brand-500"
+                disabled={pending || branches.length === 0}
+                aria-label="Sucursal de la factura"
+              >
+                <option value="">Elegí una sucursal</option>
+                {branches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>
+                    {branch.name}{branch.isMain ? " · Principal" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => inputRef.current?.click()}
+              disabled={pending || !branchId}
+            >
               {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               {pending ? "Procesando…" : "Subir factura"}
             </Button>
@@ -134,8 +166,12 @@ export function DatabaseInvoicesView({ rows }: { rows: DatabaseInvoiceRow[] }) {
         <Card>
           <CardHeader><CardTitle>Sin facturas registradas</CardTitle></CardHeader>
           <CardContent className="space-y-4 text-sm text-ink-muted">
-            <p>Todavía no hay comprobantes reales para este negocio. Subí una foto o PDF para probar el circuito OCR de punta a punta.</p>
-            <Button variant="ghost" onClick={() => inputRef.current?.click()} disabled={pending}>
+            <p>
+              {branches.length === 0
+                ? "No tenés una sucursal habilitada para cargar comprobantes."
+                : "Todavía no hay comprobantes reales para este negocio. Elegí la sucursal y subí una foto o PDF para probar el circuito OCR de punta a punta."}
+            </p>
+            <Button variant="ghost" onClick={() => inputRef.current?.click()} disabled={pending || !branchId}>
               <Upload className="h-4 w-4" /> Subir primera factura
             </Button>
           </CardContent>

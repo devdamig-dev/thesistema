@@ -23,6 +23,10 @@ type BusinessContext = {
   assigned_branch_ids: string[] | null;
 };
 
+const BRANCH_REQUIRED_ERROR = "Elegí una sucursal habilitada para cargar la factura.";
+const BRANCH_FORBIDDEN_ERROR = "No tenés acceso a la sucursal seleccionada.";
+const BRANCH_LOOKUP_ERROR = "No pudimos validar la sucursal. Intentá nuevamente.";
+
 function refresh() {
   revalidatePath("/facturas");
   revalidatePath("/compras");
@@ -58,6 +62,38 @@ async function resolveBusiness(db: any): Promise<BusinessContext | null> {
 
 function scopeInvoiceQuery(query: any, ctx: BusinessContext) {
   return applyAdminBranchScope(query, ctx.assigned_branch_ids);
+}
+
+async function resolveUploadBranch(
+  db: any,
+  ctx: BusinessContext,
+  requestedBranchId: FormDataEntryValue | null,
+): Promise<{ ok: true; branchId: string } | { ok: false; error: string }> {
+  if (typeof requestedBranchId !== "string" || !requestedBranchId.trim()) {
+    return { ok: false, error: BRANCH_REQUIRED_ERROR };
+  }
+  const branchId = requestedBranchId.trim();
+
+  if (
+    ctx.assigned_branch_ids !== null
+    && !ctx.assigned_branch_ids.includes(branchId)
+  ) {
+    return { ok: false, error: BRANCH_FORBIDDEN_ERROR };
+  }
+
+  const branch = await db
+    .from("branches")
+    .select("id")
+    .eq("id", branchId)
+    .eq("business_id", ctx.business_id)
+    .maybeSingle();
+  if (branch.error) {
+    console.error("[invoices] branch lookup failed", branch.error);
+    return { ok: false, error: BRANCH_LOOKUP_ERROR };
+  }
+  if (!branch.data) return { ok: false, error: BRANCH_FORBIDDEN_ERROR };
+
+  return { ok: true, branchId };
 }
 
 async function logStage(
@@ -144,6 +180,8 @@ export async function uploadInvoiceAction(
 
   const ctx = await resolveBusiness(adminDb);
   if (!ctx) return { ok: false, persisted: false, error: "no_business" };
+  const branch = await resolveUploadBranch(adminDb, ctx, formData.get("branch_id"));
+  if (!branch.ok) return { ok: false, persisted: false, error: branch.error };
 
   const ext = (file.name.split(".").pop() ?? "bin").toLowerCase();
   const fileId = randomUUID();
@@ -160,6 +198,8 @@ export async function uploadInvoiceAction(
     .from("invoices")
     .insert({
       business_id: ctx.business_id,
+      branch_id: branch.branchId,
+      created_by: ctx.actor_id,
       number: `TEMP-${fileId.slice(0, 8)}`,
       type: "B",
       invoice_date: new Date().toISOString().slice(0, 10),
@@ -184,7 +224,11 @@ export async function uploadInvoiceAction(
   }
   const invoiceId = invoice.id;
 
-  await logStage(adminDb, invoiceId, "upload", true, { storagePath, bytes: bytes.byteLength });
+  await logStage(adminDb, invoiceId, "upload", true, {
+    storagePath,
+    bytes: bytes.byteLength,
+    branch_id: branch.branchId,
+  });
   const processingUpdate = await adminDb
     .from("invoices")
     .update({ status: "processing", processing_started_at: new Date().toISOString() })
