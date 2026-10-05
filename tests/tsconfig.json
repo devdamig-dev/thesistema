@@ -20,6 +20,7 @@
     "../app/actions/invitations.ts",
     "../app/actions/exports.ts",
     "../app/actions/invoices.ts",
+    "../app/actions/purchases-page.ts",
     "../lib/data/team.ts",
     "../lib/whatsapp-agent/supabase-adapter.ts",
     "../lib/ocr/**/*.ts",

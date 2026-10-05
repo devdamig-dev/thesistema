@@ -296,17 +296,38 @@ export async function executeTool(db: Db, actor: AgentActor, call: ToolCall): Pr
   }
 
   if (call.name === "purchases.list") {
-    const res = await db
+    let query = db
       .from("purchases")
-      .select("id,purchased_at,total,payment_method,supplier_id")
+      .select("id,branch_id,purchased_at,total,payment_method,supplier_id")
       .eq("business_id", actor.businessId)
       .order("purchased_at", { ascending: false })
       .limit(50);
+    if (actor.branchIds !== null) {
+      query = actor.branchIds.length > 0
+        ? query.in("branch_id", actor.branchIds)
+        : query.in("branch_id", ["00000000-0000-0000-0000-000000000000"]);
+    }
+    const res = await query;
     if (res.error) throw res.error;
     return res.data;
   }
 
   if (call.name === "purchases.create") {
+    let branchId: string | null = null;
+    if (actor.branchIds !== null) {
+      if (actor.branchIds.length !== 1) throw new Error("purchase_branch_ambiguous");
+      branchId = actor.branchIds[0];
+    } else {
+      const branch = await db.from("branches").select("id")
+        .eq("business_id", actor.businessId)
+        .order("is_main", { ascending: false })
+        .order("created_at", { ascending: true })
+        .limit(1).maybeSingle();
+      if (branch.error) throw branch.error;
+      branchId = branch.data?.id ?? null;
+    }
+    if (!branchId) throw new Error("purchase_branch_not_found");
+
     const supplier = await db
       .from("suppliers")
       .select("id")
@@ -321,6 +342,7 @@ export async function executeTool(db: Db, actor: AgentActor, call: ToolCall): Pr
       .from("purchases")
       .insert({
         business_id: actor.businessId,
+        branch_id: branchId,
         supplier_id: supplier.data.id,
         purchased_at: a.purchasedAt ?? new Date().toISOString().slice(0, 10),
         total: Number(a.amount),

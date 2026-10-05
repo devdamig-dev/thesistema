@@ -190,6 +190,7 @@ export default function ComprasPage() {
                     <thead className="border-y border-line bg-bg-subtle/60 text-left text-[11px] uppercase tracking-wider text-ink-subtle">
                       <tr>
                         <th className="px-5 py-2.5 font-medium">Fecha</th>
+                        <th className="px-5 py-2.5 font-medium">Sucursal</th>
                         <th className="px-5 py-2.5 font-medium">Proveedor</th>
                         <th className="px-5 py-2.5 font-medium">Insumo</th>
                         <th className="px-5 py-2.5 text-right font-medium">Cant.</th>
@@ -201,6 +202,7 @@ export default function ComprasPage() {
                       {recentPurchases.map((p, i) => (
                         <tr key={`${p.fecha}-${p.proveedor}-${i}`} className="border-b border-line/60 last:border-0 hover:bg-bg-subtle">
                           <td className="px-5 py-3 text-ink-muted">{p.fecha}</td>
+                          <td className="px-5 py-3 text-ink-muted">{(p as { sucursal?: string }).sucursal ?? "—"}</td>
                           <td className="px-5 py-3 text-ink">{p.proveedor}</td>
                           <td className="px-5 py-3 text-ink-muted">{p.insumo}</td>
                           <td className="px-5 py-3 text-right tabular-nums text-ink-muted">{p.cantidad}</td>
@@ -278,6 +280,7 @@ export default function ComprasPage() {
         <PurchaseForm
           pending={pending}
           suppliers={databaseData?.suppliers ?? []}
+          branches={databaseData?.branches ?? []}
           onCancel={() => setPurchaseDrawerOpen(false)}
           onCreateSupplier={() => {
             setPurchaseDrawerOpen(false);
@@ -330,15 +333,17 @@ function SupplierForm({ pending, onCancel, onSubmit }: { pending: boolean; onCan
   );
 }
 
-function PurchaseForm({ pending, suppliers, onCancel, onCreateSupplier, onSubmit }: {
+function PurchaseForm({ pending, suppliers, branches, onCancel, onCreateSupplier, onSubmit }: {
   pending: boolean;
   suppliers: Array<{ id: string; name: string; category: string | null }>;
+  branches: Array<{ id: string; name: string }>;
   onCancel: () => void;
   onCreateSupplier: () => void;
   onSubmit: (input: PurchaseInput) => void;
 }) {
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
   const [supplierId, setSupplierId] = useState(suppliers[0]?.id ?? "");
+  const [branchId, setBranchId] = useState(branches[0]?.id ?? "");
   const [purchasedAt, setPurchasedAt] = useState(today);
   const [paymentMethod, setPaymentMethod] = useState("Transferencia");
   const [description, setDescription] = useState("");
@@ -348,26 +353,34 @@ function PurchaseForm({ pending, suppliers, onCancel, onCreateSupplier, onSubmit
   const [error, setError] = useState("");
   const total = Number(qty.replace(",", ".")) * Number(unitPrice.replace(",", "."));
 
+  useEffect(() => {
+    if (!supplierId && suppliers[0]) setSupplierId(suppliers[0].id);
+  }, [supplierId, suppliers]);
+  useEffect(() => {
+    if (!branchId && branches[0]) setBranchId(branches[0].id);
+  }, [branchId, branches]);
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const parsedQty = Number(qty.replace(",", "."));
     const parsedUnitPrice = Number(unitPrice.replace(",", "."));
     if (!supplierId) return setError("Elegí un proveedor.");
+    if (!branchId) return setError("Elegí una sucursal.");
     if (!description.trim()) return setError("Ingresá el insumo o concepto comprado.");
     if (!Number.isFinite(parsedQty) || parsedQty <= 0) return setError("Ingresá una cantidad mayor a cero.");
     if (!unit.trim()) return setError("Ingresá la unidad.");
     if (!Number.isFinite(parsedUnitPrice) || parsedUnitPrice < 0) return setError("Ingresá un precio unitario válido.");
     setError("");
-    onSubmit({ supplierId, purchasedAt, paymentMethod, description, qty: parsedQty, unit, unitPrice: parsedUnitPrice });
+    onSubmit({ branchId, supplierId, purchasedAt, paymentMethod, description, qty: parsedQty, unit, unitPrice: parsedUnitPrice });
   }
 
-  if (suppliers.length === 0) {
+  if (suppliers.length === 0 || branches.length === 0) {
     return (
       <div className="space-y-4">
-        <div className="rounded-xl border border-dashed border-line p-5 text-sm text-ink-muted">Para registrar una compra primero necesitás un proveedor.</div>
+        <div className="rounded-xl border border-dashed border-line p-5 text-sm text-ink-muted">{branches.length === 0 ? "No tenés una sucursal disponible para registrar compras." : "Para registrar una compra primero necesitás un proveedor."}</div>
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onCancel}>Cancelar</Button>
-          <Button variant="primary" onClick={onCreateSupplier}><Truck className="h-4 w-4" /> Nuevo proveedor</Button>
+          {branches.length > 0 && <Button variant="primary" onClick={onCreateSupplier}><Truck className="h-4 w-4" /> Nuevo proveedor</Button>}
         </div>
       </div>
     );
@@ -375,6 +388,11 @@ function PurchaseForm({ pending, suppliers, onCancel, onCreateSupplier, onSubmit
 
   return (
     <form className="space-y-4" onSubmit={submit}>
+      <Field label="Sucursal *">
+        <select className={inputClass} value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+          {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+        </select>
+      </Field>
       <Field label="Proveedor *">
         <select className={inputClass} value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
           {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}{supplier.category ? ` · ${supplier.category}` : ""}</option>)}
