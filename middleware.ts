@@ -37,7 +37,9 @@ function isAuthPublicPath(pathname: string): boolean {
     pathname === "/login" ||
     pathname === "/logout" ||
     pathname === "/ayuda" ||
-    pathname === "/restablecer-contrasena"
+    pathname === "/restablecer-contrasena" ||
+    pathname === "/privacidad" ||
+    pathname === "/eliminacion-de-datos"
   );
 }
 
