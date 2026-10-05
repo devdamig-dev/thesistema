@@ -79,6 +79,47 @@ async function logStage(
   });
 }
 
+async function markInvoiceFailed(
+  db: any,
+  invoiceId: string,
+  businessId: string,
+  error: string,
+): Promise<boolean> {
+  const update = await db
+    .from("invoices")
+    .update({ status: "failed", processing_error: error })
+    .eq("id", invoiceId)
+    .eq("business_id", businessId)
+    .select("id")
+    .maybeSingle();
+  if (update.error || !update.data) {
+    console.error("[invoices] could not persist failed state", update.error ?? "invoice_not_found");
+    return false;
+  }
+  await logStage(db, invoiceId, "error", false, undefined, error);
+  return true;
+}
+
+async function removeUploadedObject(db: any, storagePath: string) {
+  const cleanup = await db.storage.from("invoices").remove([storagePath]);
+  if (cleanup.error) {
+    console.error("[invoices] could not remove orphaned upload", cleanup.error);
+  }
+}
+
+async function finalizationWasCommitted(db: any, invoiceId: string): Promise<boolean> {
+  const log = await db
+    .from("invoice_processing_logs")
+    .select("id, data")
+    .eq("invoice_id", invoiceId)
+    .eq("stage", "matching")
+    .eq("ok", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return !log.error && Boolean((log.data as { data?: { atomic?: boolean } } | null)?.data?.atomic);
+}
+
 export async function uploadInvoiceAction(
   formData: FormData,
 ): Promise<ActionResult<{ invoice_id?: string; summary?: any }>> {
@@ -138,16 +179,24 @@ export async function uploadInvoiceAction(
     .maybeSingle();
   const invoice = invoiceInsert.data as { id: string } | null;
   if (!invoice) {
+    await removeUploadedObject(adminDb, storagePath);
     return { ok: false, persisted: false, error: invoiceInsert.error?.message ?? "invoice_insert_failed" };
   }
   const invoiceId = invoice.id;
 
   await logStage(adminDb, invoiceId, "upload", true, { storagePath, bytes: bytes.byteLength });
-  await adminDb
+  const processingUpdate = await adminDb
     .from("invoices")
     .update({ status: "processing", processing_started_at: new Date().toISOString() })
     .eq("id", invoiceId)
-    .eq("business_id", ctx.business_id);
+    .eq("business_id", ctx.business_id)
+    .select("id")
+    .maybeSingle();
+  if (processingUpdate.error || !processingUpdate.data) {
+    const error = processingUpdate.error?.message ?? "processing_state_failed";
+    await markInvoiceFailed(adminDb, invoiceId, ctx.business_id, error);
+    return { ok: false, persisted: true, error };
+  }
 
   let ocrText = "";
   try {
@@ -169,92 +218,69 @@ export async function uploadInvoiceAction(
       ocrResult.error,
       ocrResult.durationMs,
     );
-    await adminDb
+    const ocrUpdate = await adminDb
       .from("invoices")
       .update({ ocr_text: ocrText, ocr_provider: ocrResult.provider })
       .eq("id", invoiceId)
-      .eq("business_id", ctx.business_id);
+      .eq("business_id", ctx.business_id)
+      .select("id")
+      .maybeSingle();
+    if (ocrUpdate.error || !ocrUpdate.data) {
+      const error = ocrUpdate.error?.message ?? "ocr_persistence_failed";
+      await markInvoiceFailed(adminDb, invoiceId, ctx.business_id, error);
+      return { ok: false, persisted: true, error };
+    }
     if (ocrResult.error || !ocrText) {
-      await adminDb
-        .from("invoices")
-        .update({ status: "failed", processing_error: ocrResult.error ?? "empty_ocr" })
-        .eq("id", invoiceId)
-        .eq("business_id", ctx.business_id);
-      return { ok: false, persisted: true, error: ocrResult.error ?? "empty_ocr" };
+      const error = ocrResult.error ?? "empty_ocr";
+      await markInvoiceFailed(adminDb, invoiceId, ctx.business_id, error);
+      return { ok: false, persisted: true, error };
     }
   } catch (error: any) {
-    await logStage(adminDb, invoiceId, "ocr", false, undefined, error?.message);
-    await adminDb
-      .from("invoices")
-      .update({ status: "failed", processing_error: error?.message })
-      .eq("id", invoiceId)
-      .eq("business_id", ctx.business_id);
-    return { ok: false, persisted: true, error: error?.message ?? "ocr_failed" };
+    const message = error?.message ?? "ocr_failed";
+    await markInvoiceFailed(adminDb, invoiceId, ctx.business_id, message);
+    return { ok: false, persisted: true, error: message };
   }
 
   const extraction = await extractInvoiceFromText(ocrText);
-  await logStage(
-    adminDb,
-    invoiceId,
-    "ai",
-    extraction.source !== "failed",
-    { source: extraction.source, items: extraction.items.length, confidence: extraction.confidence },
-    extraction.error,
-  );
-
-  let supplierId: string | null = null;
-  if (extraction.supplier) {
-    const sup = await adminDb
-      .from("suppliers")
-      .select("id")
-      .eq("business_id", ctx.business_id)
-      .ilike("name", extraction.supplier)
-      .limit(1)
-      .maybeSingle();
-    supplierId = (sup.data as { id: string } | null)?.id ?? null;
-    if (!supplierId) {
-      const created = await adminDb
-        .from("suppliers")
-        .insert({ business_id: ctx.business_id, name: extraction.supplier, tax_id: extraction.tax_id })
-        .select("id")
-        .maybeSingle();
-      supplierId = (created.data as { id: string } | null)?.id ?? null;
-    }
+  if (extraction.source === "failed") {
+    const error = extraction.error ?? "invoice_extraction_failed";
+    await markInvoiceFailed(adminDb, invoiceId, ctx.business_id, error);
+    return { ok: false, persisted: true, error };
   }
-
-  await adminDb
-    .from("invoices")
-    .update({
-      supplier_id: supplierId,
-      number: extraction.invoice_number ?? `TEMP-${fileId.slice(0, 8)}`,
-      type: extraction.invoice_type ?? "B",
-      tax_id: extraction.tax_id ?? null,
-      invoice_date: extraction.invoice_date ?? new Date().toISOString().slice(0, 10),
-      payment_method: extraction.payment_method ?? "Pendiente",
-      subtotal: extraction.subtotal ?? 0,
-      tax: extraction.tax ?? 0,
-      total: extraction.total ?? 0,
-      confidence: extraction.confidence,
-      ai_provider: extraction.source,
-      status: extraction.confidence >= 0.7 ? "extracted" : "needs_review",
-      processing_completed_at: new Date().toISOString(),
-    })
-    .eq("id", invoiceId)
-    .eq("business_id", ctx.business_id);
 
   const ingredientsRes = await adminDb
     .from("ingredients")
     .select("id, name")
     .eq("business_id", ctx.business_id);
+  if (ingredientsRes.error) {
+    const error = ingredientsRes.error.message ?? "ingredients_query_failed";
+    await markInvoiceFailed(adminDb, invoiceId, ctx.business_id, error);
+    return { ok: false, persisted: true, error };
+  }
   const ingredients = ((ingredientsRes.data as { id: string; name: string }[] | null) ?? []) as IngredientCandidate[];
   const matched = matchAllItems(extraction.items, ingredients);
 
-  for (const item of matched) {
-    await adminDb.from("invoice_items").insert({
-      invoice_id: invoiceId,
+  const finalization = await adminDb.rpc("finalize_invoice_extraction_atomic", {
+    p_invoice_id: invoiceId,
+    p_business_id: ctx.business_id,
+    p_actor_id: ctx.actor_id,
+    p_invoice_data: {
+      supplier: extraction.supplier ?? null,
+      tax_id: extraction.tax_id ?? null,
+      invoice_type: extraction.invoice_type ?? "B",
+      invoice_number: extraction.invoice_number ?? `TEMP-${fileId.slice(0, 8)}`,
+      invoice_date: extraction.invoice_date ?? new Date().toISOString().slice(0, 10),
+      due_date: extraction.due_date ?? null,
+      payment_method: extraction.payment_method ?? "Pendiente",
+      subtotal: extraction.subtotal ?? 0,
+      tax: extraction.tax ?? 0,
+      total: extraction.total ?? 0,
+      confidence: extraction.confidence,
+      source: extraction.source,
+    },
+    p_items: matched.map((item) => ({
       description: item.description,
-      qty: String(item.qty),
-      qty_numeric: item.qty,
+      qty: item.qty,
       unit: item.unit,
       unit_price: item.unit_price,
       total: item.total,
@@ -262,14 +288,23 @@ export async function uploadInvoiceAction(
       match_score: item.match.score,
       suggested_ingredient_id: item.match.suggestedId ?? null,
       matched_ingredient_id: item.match.status === "matched" ? item.match.suggestedId ?? null : null,
-    });
-  }
-  await logStage(adminDb, invoiceId, "matching", true, {
-    items: matched.length,
-    matched: matched.filter((m) => m.match.status === "matched").length,
-    ambiguous: matched.filter((m) => m.match.status === "ambiguous").length,
-    unmatched: matched.filter((m) => m.match.status === "unmatched").length,
+    })),
   });
+  const finalized = finalization.data as {
+    ok?: boolean;
+    error?: string;
+    already_finalized?: boolean;
+    item_count?: number;
+  } | null;
+  if (finalization.error || !finalized?.ok) {
+    // PostgREST can lose the response after PostgreSQL committed. Confirm the
+    // atomic matching log before changing a successfully finalized invoice to failed.
+    if (!(await finalizationWasCommitted(adminDb, invoiceId))) {
+      const error = finalized?.error ?? finalization.error?.message ?? "invoice_finalization_failed";
+      await markInvoiceFailed(adminDb, invoiceId, ctx.business_id, error);
+      return { ok: false, persisted: true, error };
+    }
+  }
 
   refresh();
   return {
