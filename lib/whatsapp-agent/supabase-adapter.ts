@@ -5,6 +5,18 @@ import type { AgentActor, AgentAuditEvent, IncomingAgentMessage, PendingOperatio
 type Db = SupabaseClient<any, "public", any>;
 const normalizePhone = (value: string) => value.replace(/\D/g, "");
 
+export async function resolveAuthorizedConversation(db: Db, input: IncomingAgentMessage) {
+  const provider = input.provider ?? "meta";
+  const conversationId = input.providerConversationId?.trim();
+  if (!conversationId) return null;
+  const res = await db.from("whatsapp_authorized_conversations")
+    .select("id,business_id,branch_id,provider,provider_conversation_id,conversation_type,display_name")
+    .eq("provider", provider).eq("provider_conversation_id", conversationId).eq("enabled", true).limit(2);
+  if (res.error) throw res.error;
+  if (res.data?.length !== 1) return null;
+  return res.data[0];
+}
+
 export async function resolveActor(db: Db, input: IncomingAgentMessage): Promise<AgentActor | null> {
   const recipient = normalizePhone(input.recipientPhone);
   const sender = normalizePhone(input.senderPhone);
