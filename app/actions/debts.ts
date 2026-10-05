@@ -6,19 +6,11 @@ import { isDatabaseMode } from "@/lib/env";
 import { assertPermission } from "@/lib/permissions/server-action";
 import { createNotification } from "@/lib/data/notifications";
 import { logActivity } from "@/lib/data/activity";
+import { getCurrentUserContext } from "@/lib/data/auth";
 
 type Result =
   | { ok: true; persisted: boolean; debt_id?: string; payment_id?: string }
   | { ok: false; persisted: false; error: string };
-
-async function resolveBusinessId(db: any): Promise<string | null> {
-  const res = await db
-    .from("business_members")
-    .select("business_id")
-    .limit(1)
-    .maybeSingle();
-  return (res.data as { business_id: string } | null)?.business_id ?? null;
-}
 
 function refresh() {
   revalidatePath("/deudas");
@@ -30,6 +22,7 @@ function refresh() {
    ============================================================================ */
 
 export async function registerDebtAction(payload: {
+  branch_id: string;
   creditor: string;
   concept?: string;
   original_amount: number;
@@ -55,8 +48,17 @@ export async function registerDebtAction(payload: {
     };
   }
   const db = supabase as any;
-  const businessId = await resolveBusinessId(db);
+  const ctx = await getCurrentUserContext();
+  const businessId = ctx.businessId;
   if (!businessId) return { ok: false, persisted: false, error: "No pudimos identificar el negocio activo." };
+  if (!payload.branch_id) return { ok: false, persisted: false, error: "Elegí una sucursal." };
+  if (ctx.assignedBranchIds !== null && !ctx.assignedBranchIds.includes(payload.branch_id)) {
+    return { ok: false, persisted: false, error: "La sucursal seleccionada no está asignada a tu usuario." };
+  }
+  const branchRes = await db.from("branches").select("id").eq("id", payload.branch_id).eq("business_id", businessId).maybeSingle();
+  if (branchRes.error || !branchRes.data?.id) {
+    return { ok: false, persisted: false, error: "La sucursal seleccionada no está disponible." };
+  }
 
   const creditor = payload.creditor.trim();
   const originalAmount = Number(payload.original_amount);
@@ -73,6 +75,7 @@ export async function registerDebtAction(payload: {
     .from("debts")
     .insert({
       business_id: businessId,
+      branch_id: payload.branch_id,
       creditor,
       concept: payload.concept?.trim() || undefined,
       original_amount: originalAmount,
@@ -83,6 +86,7 @@ export async function registerDebtAction(payload: {
       category: payload.category ?? "supplier",
       period: payload.period?.trim() || undefined,
       organism: payload.organism?.trim() || undefined,
+      created_by: ctx.userId,
     })
     .select("id")
     .maybeSingle();

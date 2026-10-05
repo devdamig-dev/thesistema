@@ -586,6 +586,7 @@ export type Database = {
         Row: Timestamps & {
           id: string;
           business_id: string;
+          branch_id: string;
           creditor: string;
           supplier_id: string | null;
           concept: string | null;

@@ -12,7 +12,7 @@ const schemas: Record<string, ToolSchema> = {
   "purchases.list": {},
   "purchases.create": { supplier: "string", amount: "positiveNumber", paymentMethod: "paymentMethod", purchasedAt: "date" },
   "debts.list": {},
-  "debts.create": { creditor: "string", amount: "positiveNumber", concept: "string", category: "debtCategory", dueDate: "date" },
+  "debts.create": { creditor: "string", amount: "positiveNumber", concept: "string", category: "debtCategory", dueDate: "date", branchId: "string" },
   "debts.registerPayment": { creditor: "string", amount: "positiveNumber", paymentMethod: "paymentMethod", paidAt: "date" },
   "stock.getLowStock": {},
   "stock.addMovement": { ingredient: "string", quantity: "positiveNumber", operation: "stockOperation", branchId: "string" },

@@ -217,9 +217,12 @@ const branchQuery = (query: any, actor: AgentActor) =>
 
 async function resolveBranchId(db: Db, actor: AgentActor, requested?: string): Promise<string> {
   if (actor.branchIds) {
-    const candidate = requested ?? actor.branchIds[0];
-    if (!candidate || !actor.branchIds.includes(candidate)) throw new Error("branch_not_allowed");
-    return candidate;
+    if (requested) {
+      if (!actor.branchIds.includes(requested)) throw new Error("branch_not_allowed");
+      return requested;
+    }
+    if (actor.branchIds.length !== 1) throw new Error("branch_ambiguous");
+    return actor.branchIds[0];
   }
 
   if (requested) {
@@ -234,28 +237,18 @@ async function resolveBranchId(db: Db, actor: AgentActor, requested?: string): P
     return res.data.id;
   }
 
-  const main = await db
+  const branches = await db
     .from("branches")
     .select("id")
     .eq("business_id", actor.businessId)
-    .eq("is_main", true)
-    .limit(1)
-    .maybeSingle();
-
-  if (main.error) throw main.error;
-  if (main.data?.id) return main.data.id;
-
-  const fallback = await db
-    .from("branches")
-    .select("id")
-    .eq("business_id", actor.businessId)
+    .order("is_main", { ascending: false })
     .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .limit(2);
 
-  if (fallback.error) throw fallback.error;
-  if (!fallback.data?.id) throw new Error("branch_not_found");
-  return fallback.data.id;
+  if (branches.error) throw branches.error;
+  if (!branches.data?.length) throw new Error("branch_not_found");
+  if (branches.data.length !== 1) throw new Error("branch_ambiguous");
+  return branches.data[0].id;
 }
 
 export async function executeTool(db: Db, actor: AgentActor, call: ToolCall): Promise<unknown> {
@@ -357,21 +350,25 @@ export async function executeTool(db: Db, actor: AgentActor, call: ToolCall): Pr
   }
 
   if (call.name === "debts.list") {
-    const res = await db
+    let query = db
       .from("debts")
       .select("id,creditor,concept,pending_amount,due_date,status")
       .eq("business_id", actor.businessId)
       .neq("status", "settled")
       .order("due_date");
+    query = branchQuery(query, actor);
+    const res = await query;
     if (res.error) throw res.error;
     return res.data;
   }
 
   if (call.name === "debts.create") {
+    const branchId = await resolveBranchId(db, actor, a.branchId);
     const res = await db
       .from("debts")
       .insert({
         business_id: actor.businessId,
+        branch_id: branchId,
         creditor: a.creditor,
         original_amount: Number(a.amount),
         pending_amount: Number(a.amount),
@@ -387,13 +384,15 @@ export async function executeTool(db: Db, actor: AgentActor, call: ToolCall): Pr
   }
 
   if (call.name === "debts.registerPayment") {
-    const debt = await db
+    let query = db
       .from("debts")
       .select("id,pending_amount")
       .eq("business_id", actor.businessId)
       .ilike("creditor", a.creditor)
       .neq("status", "settled")
       .limit(2);
+    query = branchQuery(query, actor);
+    const debt = await query;
 
     if (debt.error) throw debt.error;
     if (debt.data?.length !== 1) throw new Error("debt_not_unambiguous");
