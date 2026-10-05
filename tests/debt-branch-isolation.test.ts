@@ -86,11 +86,16 @@ test("debt creation persists its authorized branch and actor", async () => {
 test("debt migration and WhatsApp adapter enforce branch scope", () => {
   const migration = readFileSync("supabase/migrations/20261005095540_debt_branch_isolation.sql", "utf8");
   const adapter = readFileSync("lib/whatsapp-agent/supabase-adapter.ts", "utf8");
-  assert.match(migration, /alter column branch_id set not null/);
+  assert.doesNotMatch(migration, /alter column branch_id set not null/);
+  assert.match(migration, /Historical multi-branch debts may remain unscoped/);
+  assert.match(migration, /debt_branch_required/);
   assert.match(migration, /can_access_business_branch\(business_id, branch_id\)/);
   assert.match(migration, /debt_payments branch scoped read/);
   assert.match(adapter, /if \(call\.name === "debts\.list"\)[\s\S]*branchQuery\(query, actor\)/);
   assert.match(adapter, /if \(call\.name === "debts\.create"\)[\s\S]*branch_id: branchId/);
+  assert.match(adapter, /if \(branches\.data\.length !== 1\) throw new Error\("branch_ambiguous"\)/);
+  const validation = readFileSync("lib/whatsapp-agent/validation.ts", "utf8");
+  assert.match(validation, /"debts\.create": \{[^\n]*branchId: "string"/);
 });
 
 test("Inbox propagates the extraction branch to purchases and debts", () => {
