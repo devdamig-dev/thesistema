@@ -194,6 +194,9 @@ export async function POST(request: NextRequest) {
         recipientPhone: incoming.recipient_phone ?? "",
         senderName: incoming.sender_name,
         text: incoming.raw,
+        provider: "meta",
+        providerConversationId: incoming.provider_conversation_id ?? incoming.sender_phone,
+        conversationType: incoming.conversation_type,
       });
       if (agentReply.status !== "rejected") {
         if (agentReply.status !== "duplicate") {
@@ -282,6 +285,8 @@ function normalizeIncoming(payload: any): {
   recipient_phone: string | null;
   sender_phone: string | null;
   provider_message_id: string | null;
+  provider_conversation_id: string | null;
+  conversation_type: "direct" | "group";
 } {
   if (typeof payload?.text === "string") {
     return {
@@ -292,6 +297,8 @@ function normalizeIncoming(payload: any): {
       recipient_phone: payload.to ?? payload.recipient ?? payload.business_phone ?? null,
       sender_phone: payload.from ?? null,
       provider_message_id: payload.message_id ?? null,
+      provider_conversation_id: payload.conversation_id ?? payload.from ?? null,
+      conversation_type: payload.conversation_type === "group" ? "group" : "direct",
     };
   }
 
@@ -306,5 +313,7 @@ function normalizeIncoming(payload: any): {
     recipient_phone: change?.metadata?.display_phone_number ?? null,
     sender_phone: message?.from ?? null,
     provider_message_id: message?.id ?? null,
+    provider_conversation_id: message?.context?.group_id ?? message?.from ?? null,
+    conversation_type: message?.context?.group_id ? "group" : "direct",
   };
 }
