@@ -35,6 +35,8 @@ export const PUBLIC_PATHS = [
   "/logout",
   "/sin-permisos",
   "/onboarding",
+  "/privacidad",
+  "/eliminacion-de-datos",
 ];
 export const SETTINGS_PREFIX = "/ajustes";
 
