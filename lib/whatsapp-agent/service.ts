@@ -1,12 +1,14 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { runAgent } from "./core";
 import { interpretHeuristically } from "./interpreter";
-import { audit, claimMessage, consumePending, executeTool, getPending, resolveActor, savePending } from "./supabase-adapter";
+import { audit, claimMessage, consumePending, executeTool, getPending, resolveActor, savePending, resolveAuthorizedConversation } from "./supabase-adapter";
 import type { IncomingAgentMessage } from "./types";
 
 /** Transport-agnostic entry point used by Meta and by the internal test endpoint. */
 export async function processWhatsAppAgentMessage(input: IncomingAgentMessage) {
   const db = createSupabaseAdminClient();
+  const conversation = await resolveAuthorizedConversation(db, input);
+  if (!conversation) return { status: "ignored" as const, text: "" };
   return runAgent(input, {
     resolveActor: (message) => resolveActor(db, message),
     claimMessage: (message, actor) => claimMessage(db, message, actor),
