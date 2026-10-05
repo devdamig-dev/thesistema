@@ -114,12 +114,13 @@ export async function claimMessage(
   throw res.error;
 }
 
-export async function getPending(db: Db, actor: AgentActor): Promise<PendingOperation | null> {
+export async function getPending(db: Db, actor: AgentActor, conversationId?: string): Promise<PendingOperation | null> {
   const res = await db
     .from("whatsapp_agent_pending_operations")
     .select("id,kind,tool_name,arguments,expires_at")
     .eq("business_id", actor.businessId)
     .eq("member_id", actor.memberId)
+    .eq("conversation_id", conversationId ?? "00000000-0000-0000-0000-000000000000")
     .is("consumed_at", null)
     .order("created_at", { ascending: false })
     .limit(1)
@@ -140,6 +141,7 @@ export async function getPending(db: Db, actor: AgentActor): Promise<PendingOper
 export async function savePending(
   db: Db,
   operation: Omit<PendingOperation, "id">,
+  conversationId?: string,
 ): Promise<PendingOperation> {
   const consume = await db
     .from("whatsapp_agent_pending_operations")
@@ -155,6 +157,7 @@ export async function savePending(
     .insert({
       business_id: operation.actor.businessId,
       member_id: operation.actor.memberId,
+      conversation_id: conversationId,
       kind: operation.kind,
       tool_name: operation.toolCall.name,
       arguments: operation.toolCall.arguments,
@@ -172,6 +175,7 @@ export async function consumePending(
   id: string,
   actor: AgentActor,
   requireUnexpired = false,
+  conversationId?: string,
 ): Promise<boolean> {
   // UPDATE's predicate is rechecked after taking the row lock. Two messages
   // racing on one confirmation cannot both receive a returned row.
@@ -181,6 +185,7 @@ export async function consumePending(
     .eq("id", id)
     .eq("business_id", actor.businessId)
     .eq("member_id", actor.memberId)
+    .eq("conversation_id", conversationId ?? "00000000-0000-0000-0000-000000000000")
     .is("consumed_at", null);
   if (requireUnexpired) query = query.gt("expires_at", new Date().toISOString());
   const res = await query.select("id").maybeSingle();
