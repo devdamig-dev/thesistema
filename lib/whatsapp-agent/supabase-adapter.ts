@@ -357,21 +357,25 @@ export async function executeTool(db: Db, actor: AgentActor, call: ToolCall): Pr
   }
 
   if (call.name === "debts.list") {
-    const res = await db
+    let query = db
       .from("debts")
       .select("id,creditor,concept,pending_amount,due_date,status")
       .eq("business_id", actor.businessId)
       .neq("status", "settled")
       .order("due_date");
+    query = branchQuery(query, actor);
+    const res = await query;
     if (res.error) throw res.error;
     return res.data;
   }
 
   if (call.name === "debts.create") {
+    const branchId = await resolveBranchId(db, actor, a.branchId);
     const res = await db
       .from("debts")
       .insert({
         business_id: actor.businessId,
+        branch_id: branchId,
         creditor: a.creditor,
         original_amount: Number(a.amount),
         pending_amount: Number(a.amount),
@@ -387,13 +391,15 @@ export async function executeTool(db: Db, actor: AgentActor, call: ToolCall): Pr
   }
 
   if (call.name === "debts.registerPayment") {
-    const debt = await db
+    let query = db
       .from("debts")
       .select("id,pending_amount")
       .eq("business_id", actor.businessId)
       .ilike("creditor", a.creditor)
       .neq("status", "settled")
       .limit(2);
+    query = branchQuery(query, actor);
+    const debt = await query;
 
     if (debt.error) throw debt.error;
     if (debt.data?.length !== 1) throw new Error("debt_not_unambiguous");

@@ -7,6 +7,7 @@ import { SectionHeader } from "@/components/ui/section-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { mapDebt } from "@/lib/data/mappers";
 import DeudasClient from "./deudas-client";
+import { getCurrentUserContext } from "@/lib/data/auth";
 
 const EMPTY_KPIS = { totalDeuda: 0, vencidas: 0, proximoVencimiento: "—", impactoMensual: 0 };
 
@@ -14,16 +15,25 @@ export default async function DeudasPage() {
   if (isDatabaseMode()) {
     const supabase = createSupabaseServerClient() as any;
     if (!supabase) return <DebtsUnavailable message="No pudimos conectar con la información financiera del negocio." />;
+    const ctx = await getCurrentUserContext();
+    if (!ctx.businessId) return <DebtsUnavailable message="No pudimos identificar el negocio activo." />;
 
-    const debtsRes = await supabase
-      .from("debts")
-      .select("*")
-      .order("status")
-      .order("due_date", { ascending: true, nullsFirst: false });
+    let branchesQuery = supabase.from("branches").select("id,name").eq("business_id", ctx.businessId).order("is_main", { ascending: false }).order("created_at");
+    if (ctx.assignedBranchIds !== null) {
+      branchesQuery = ctx.assignedBranchIds.length > 0
+        ? branchesQuery.in("id", ctx.assignedBranchIds)
+        : branchesQuery.in("id", ["00000000-0000-0000-0000-000000000000"]);
+    }
+
+    const [debtsRes, branchesRes] = await Promise.all([
+      supabase.from("debts").select("*").eq("business_id", ctx.businessId).order("status").order("due_date", { ascending: true, nullsFirst: false }),
+      branchesQuery,
+    ]);
 
     if (debtsRes.error) {
       return <DebtsUnavailable message="No pudimos cargar las deudas en este momento." />;
     }
+    if (branchesRes.error) return <DebtsUnavailable message="No pudimos cargar las sucursales disponibles." />;
 
     const rows = (debtsRes.data ?? []) as any[];
     let payments: any[] = [];
@@ -57,13 +67,13 @@ export default async function DeudasPage() {
       impactoMensual: Math.round(totalDeuda / 6),
     } : EMPTY_KPIS;
 
-    return <ErrorBoundaryCard module="Deudas"><DeudasClient items={items} kpis={kpis} /></ErrorBoundaryCard>;
+    return <ErrorBoundaryCard module="Deudas"><DeudasClient items={items} kpis={kpis} branches={branchesRes.data ?? []} /></ErrorBoundaryCard>;
   }
 
   const [items, kpis] = await Promise.all([debtsRepo.list(), debtsRepo.kpis()]);
   return (
     <ErrorBoundaryCard module="Deudas">
-      <DeudasClient items={items?.length ? items : fallbackDebts} kpis={kpis ?? fallbackKpis} />
+      <DeudasClient items={items?.length ? items : fallbackDebts} kpis={kpis ?? fallbackKpis} branches={[{ id: "demo", name: "Principal" }]} />
     </ErrorBoundaryCard>
   );
 }

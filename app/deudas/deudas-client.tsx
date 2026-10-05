@@ -76,6 +76,7 @@ type Filter =
 type DebtDbCategory = "supplier" | "tax" | "loan" | "rent" | "utility" | "payroll" | "other";
 
 type NewDebtPayload = {
+  branch_id: string;
   creditor: string;
   concept?: string;
   original_amount: number;
@@ -122,9 +123,11 @@ function daysUntil(dmy?: string): number | null {
 export default function DeudasClient({
   items,
   kpis,
+  branches,
 }: {
   items: Debt[];
   kpis: { totalDeuda: number; vencidas: number; proximoVencimiento: string; impactoMensual: number };
+  branches: Array<{ id: string; name: string }>;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -296,7 +299,7 @@ export default function DeudasClient({
               size="sm"
               variant="primary"
               onClick={() => setCreateOpen(true)}
-              disabled={pending}
+              disabled={pending || branches.length === 0}
             >
               <Plus className="h-4 w-4" />
               Registrar deuda
@@ -489,6 +492,7 @@ export default function DeudasClient({
         width="max-w-xl"
       >
         <NewDebtForm
+          branches={branches}
           pending={pending}
           onCancel={() => setCreateOpen(false)}
           onSubmit={handleCreateDebt}
@@ -626,15 +630,18 @@ function DebtDetail({
 }
 
 function NewDebtForm({
+  branches,
   pending,
   onCancel,
   onSubmit,
 }: {
+  branches: Array<{ id: string; name: string }>;
   pending: boolean;
   onCancel: () => void;
   onSubmit: (payload: NewDebtPayload) => void;
 }) {
   const [creditor, setCreditor] = useState("");
+  const [branchId, setBranchId] = useState(branches.length === 1 ? branches[0].id : "");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState<DebtCategory>("proveedor");
   const [dueDate, setDueDate] = useState("");
@@ -655,6 +662,10 @@ function NewDebtForm({
       setError("Ingresá el acreedor.");
       return;
     }
+    if (!branchId) {
+      setError("Elegí una sucursal.");
+      return;
+    }
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       setError("Ingresá un monto mayor a cero.");
       return;
@@ -666,6 +677,7 @@ function NewDebtForm({
 
     setError("");
     onSubmit({
+      branch_id: branchId,
       creditor: normalizedCreditor,
       original_amount: parsedAmount,
       category: CATEGORY_TO_DB[category],
@@ -683,6 +695,12 @@ function NewDebtForm({
   return (
     <form onSubmit={submit} className="space-y-5 p-6">
       <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Sucursal" required>
+          <select className={inputClass} value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+            <option value="">Elegí una sucursal</option>
+            {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+          </select>
+        </Field>
         <Field label="Acreedor" required>
           <input className={inputClass} value={creditor} onChange={(e) => setCreditor(e.target.value)} placeholder="Ej. Proveedor Norte" />
         </Field>

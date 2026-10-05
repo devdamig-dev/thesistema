@@ -37,6 +37,7 @@ type ExtractionRow = {
   status: string;
   summary: string | null;
   target_entity: string | null;
+  branch_id: string | null;
 };
 
 /* ============================================================================
@@ -92,6 +93,7 @@ function refreshPaths() {
 async function createPurchase(
   db: any,
   businessId: string,
+  branchId: string,
   fields: ExtractedPurchase,
 ): Promise<string | null> {
   // 1) Resolver o crear supplier
@@ -120,6 +122,7 @@ async function createPurchase(
     .from("purchases")
     .insert({
       business_id: businessId,
+      branch_id: branchId,
       supplier_id: supplierId,
       purchased_at: new Date().toISOString().slice(0, 10),
       total: fields.total_amount ?? 0,
@@ -304,6 +307,7 @@ async function createDailyClosure(
 async function createDebt(
   db: any,
   businessId: string,
+  branchId: string,
   fields: ExtractedDebtCreated,
 ): Promise<string | null> {
   if (!fields.creditor || fields.original_amount == null) return null;
@@ -323,6 +327,7 @@ async function createDebt(
     .from("debts")
     .insert({
       business_id: businessId,
+      branch_id: branchId,
       creditor: fields.creditor,
       supplier_id: supplierId,
       concept: fields.concept,
@@ -339,6 +344,7 @@ async function createDebt(
 async function createDebtPayment(
   db: any,
   businessId: string,
+  branchId: string,
   fields: ExtractedDebtPayment,
 ): Promise<string | null> {
   if (fields.amount == null) return null;
@@ -348,6 +354,7 @@ async function createDebtPayment(
     .from("debts")
     .select("id, pending_amount")
     .eq("business_id", businessId)
+    .eq("branch_id", branchId)
     .neq("status", "settled")
     .ilike("creditor", `%${fields.creditor}%`)
     .order("due_date", { ascending: true, nullsFirst: false })
@@ -444,13 +451,14 @@ export async function approveExtractionAction(extractionId: string): Promise<Act
   if (!businessId) {
     return { ok: false, persisted: false, error: "no_business" };
   }
-  const branchId = await resolveBranchId(db, businessId);
+  const branchId = extraction.branch_id ?? await resolveBranchId(db, businessId);
+  if (!branchId) return { ok: false, persisted: false, error: "no_branch" };
 
   let targetRecordId: string | null = null;
 
   switch (extraction.type as MovementType) {
     case "purchase":
-      targetRecordId = await createPurchase(db, businessId, extraction.fields as ExtractedPurchase);
+      targetRecordId = await createPurchase(db, businessId, branchId, extraction.fields as ExtractedPurchase);
       break;
     case "sale":
       targetRecordId = await createSale(db, businessId, branchId, extraction.fields as ExtractedSale);
@@ -468,10 +476,10 @@ export async function approveExtractionAction(extractionId: string): Promise<Act
       targetRecordId = await createDailyClosure(db, businessId, branchId, extraction.fields as ExtractedDailyClosure);
       break;
     case "debt_created":
-      targetRecordId = await createDebt(db, businessId, extraction.fields as ExtractedDebtCreated);
+      targetRecordId = await createDebt(db, businessId, branchId, extraction.fields as ExtractedDebtCreated);
       break;
     case "debt_payment":
-      targetRecordId = await createDebtPayment(db, businessId, extraction.fields as ExtractedDebtPayment);
+      targetRecordId = await createDebtPayment(db, businessId, branchId, extraction.fields as ExtractedDebtPayment);
       break;
     case "supplier_price_change":
     case "unknown":
