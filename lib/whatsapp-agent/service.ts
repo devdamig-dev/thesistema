@@ -9,13 +9,14 @@ export async function processWhatsAppAgentMessage(input: IncomingAgentMessage) {
   const db = createSupabaseAdminClient();
   const conversation = await resolveAuthorizedConversation(db, input);
   if (!conversation) return { status: "ignored" as const, text: "" };
+  const conversationId = conversation.id;
   return runAgent(input, {
     resolveActor: (message) => resolveActor(db, message),
     claimMessage: (message, actor) => claimMessage(db, message, actor),
     interpret: interpretHeuristically,
-    getPending: (actor) => getPending(db, actor),
-    savePending: (operation) => savePending(db, operation),
-    consumePending: (id, actor, requireUnexpired) => consumePending(db, id, actor, requireUnexpired),
+    getPending: (actor) => getPending(db, actor, conversationId),
+    savePending: (operation) => savePending(db, operation, conversationId),
+    consumePending: (id, actor, requireUnexpired) => consumePending(db, id, actor, requireUnexpired, conversationId),
     execute: (actor, call) => executeTool(db, actor, call),
     audit: (event) => audit(db, event),
     now: () => new Date(),
