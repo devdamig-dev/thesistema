@@ -518,3 +518,45 @@ export async function updateInvoiceItemAction(
   const guard = await assertPermission("invoices.approve");
   if (guard) return guard;
   if (!isDatabaseMode()) {
+    refresh();
+    return { ok: true, persisted: false };
+  }
+
+  const db = createSupabaseAdminClient() as any;
+  const ctx = await resolveBusiness(db);
+  if (!ctx) return { ok: false, persisted: false, error: "no_business" };
+
+  const itemRes = await db.from("invoice_items").select("invoice_id").eq("id", itemId).maybeSingle();
+  const item = itemRes.data as { invoice_id: string } | null;
+  if (!item) return { ok: false, persisted: false, error: "item_not_found" };
+
+  let ownedInvoiceQuery = db
+    .from("invoices")
+    .select("id")
+    .eq("id", item.invoice_id)
+    .eq("business_id", ctx.business_id);
+  ownedInvoiceQuery = scopeInvoiceQuery(ownedInvoiceQuery, ctx);
+  const ownedInvoice = await ownedInvoiceQuery.maybeSingle();
+  if (!ownedInvoice.data) return { ok: false, persisted: false, error: "item_not_found" };
+
+  if (patch.matched_ingredient_id) {
+    const ingredient = await db
+      .from("ingredients")
+      .select("id")
+      .eq("id", patch.matched_ingredient_id)
+      .eq("business_id", ctx.business_id)
+      .maybeSingle();
+    if (!ingredient.data) return { ok: false, persisted: false, error: "ingredient_not_found" };
+  }
+
+  const update: Record<string, unknown> = { ...patch };
+  if (patch.qty != null) update.qty_numeric = patch.qty;
+  if (patch.matched_ingredient_id !== undefined) {
+    update.match_status = patch.matched_ingredient_id ? "manual" : "unmatched";
+  }
+
+  const res = await db.from("invoice_items").update(update).eq("id", itemId).eq("invoice_id", item.invoice_id);
+  if (res.error) return { ok: false, persisted: false, error: res.error.message };
+  refresh();
+  return { ok: true, persisted: true };
+}
