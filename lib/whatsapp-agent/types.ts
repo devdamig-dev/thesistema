@@ -25,7 +25,7 @@ export type ToolDefinition = {
 export type ToolCall = { name: string; arguments: Record<string, unknown> };
 
 export type AgentReply = {
-  status: "completed" | "needs_input" | "needs_confirmation" | "rejected" | "duplicate" | "failed" | "cancelled";
+  status: "completed" | "needs_input" | "needs_confirmation" | "rejected" | "duplicate" | "failed" | "cancelled" | "ignored";
   text: string;
   tool?: string;
   data?: unknown;
@@ -37,6 +37,9 @@ export type IncomingAgentMessage = {
   recipientPhone: string;
   text: string;
   senderName?: string;
+  provider?: "meta" | "internal";
+  providerConversationId?: string;
+  conversationType?: "direct" | "group";
 };
 
 export type PendingOperation = {
