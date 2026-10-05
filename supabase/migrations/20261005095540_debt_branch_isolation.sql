@@ -13,15 +13,6 @@ set branch_id = branch.branch_id
 from unique_business_branch branch
 where debt.branch_id is null and branch.business_id = debt.business_id;
 
-do $$
-begin
-  if exists (select 1 from public.debts where branch_id is null) then
-    raise exception 'Cannot enable debt branch isolation: debts without an unambiguous branch remain';
-  end if;
-end;
-$$;
-
-alter table public.debts alter column branch_id set not null;
 alter table public.debts
   drop constraint if exists debts_branch_id_fkey,
   add constraint debts_branch_id_fkey foreign key (branch_id) references public.branches(id) on delete restrict;
@@ -29,6 +20,15 @@ alter table public.debts
 create or replace function public.enforce_debt_branch_business()
 returns trigger language plpgsql set search_path = '' as $$
 begin
+  -- Historical multi-branch debts may remain unscoped until an owner/admin maps
+  -- them explicitly. New writes and any attempt to scope/update them fail closed.
+  if new.branch_id is null then
+    if tg_op = 'INSERT' or old.branch_id is not null then
+      raise exception 'debt_branch_required' using errcode = '23502';
+    end if;
+    return new;
+  end if;
+
   if not exists (
     select 1 from public.branches branch
     where branch.id = new.branch_id and branch.business_id = new.business_id
