@@ -14,6 +14,7 @@ export type PurchasesPageRow = {
   cantidad: string;
   variacion: number;
   monto: number;
+  sucursal: string;
 };
 
 export type SupplierSummaryRow = {
@@ -30,10 +31,13 @@ export type SupplierOption = {
   category: string | null;
 };
 
+export type BranchOption = { id: string; name: string };
+
 export type PurchasesPageData = {
   recentPurchases: PurchasesPageRow[];
   topSuppliers: SupplierSummaryRow[];
   suppliers: SupplierOption[];
+  branches: BranchOption[];
   supplierCount: number;
   orderCount: number;
   totalMonth: number;
@@ -48,6 +52,7 @@ export type SupplierInput = {
 };
 
 export type PurchaseInput = {
+  branchId: string;
   supplierId: string;
   purchasedAt: string;
   paymentMethod: string;
@@ -74,16 +79,28 @@ export async function getPurchasesPageDataAction(): Promise<
     timeZone: "America/Argentina/Buenos_Aires",
   }).slice(0, 7) + "-01";
 
-  const [recentRes, monthRes, suppliersRes] = await Promise.all([
+  let branchesQuery = supabase
+    .from("branches")
+    .select("id, name")
+    .eq("business_id", ctx.businessId)
+    .order("is_main", { ascending: false })
+    .order("created_at");
+  if (ctx.assignedBranchIds !== null) {
+    branchesQuery = ctx.assignedBranchIds.length > 0
+      ? branchesQuery.in("id", ctx.assignedBranchIds)
+      : branchesQuery.in("id", ["00000000-0000-0000-0000-000000000000"]);
+  }
+
+  const [recentRes, monthRes, suppliersRes, branchesRes] = await Promise.all([
     supabase
       .from("purchases")
-      .select("id, supplier_id, purchased_at, total")
+      .select("id, branch_id, supplier_id, purchased_at, total, branches(name)")
       .eq("business_id", ctx.businessId)
       .order("purchased_at", { ascending: false })
       .limit(50),
     supabase
       .from("purchases")
-      .select("id, supplier_id, purchased_at, total")
+      .select("id, branch_id, supplier_id, purchased_at, total, branches(name)")
       .eq("business_id", ctx.businessId)
       .gte("purchased_at", monthStart)
       .order("purchased_at", { ascending: false }),
@@ -92,22 +109,27 @@ export async function getPurchasesPageDataAction(): Promise<
       .select("id, name, category")
       .eq("business_id", ctx.businessId)
       .order("name"),
+    branchesQuery,
   ]);
 
   if (recentRes.error) return { ok: false, error: "No pudimos cargar las compras recientes." };
   if (monthRes.error) return { ok: false, error: "No pudimos cargar las compras del mes." };
   if (suppliersRes.error) return { ok: false, error: "No pudimos cargar los proveedores." };
+  if (branchesRes.error) return { ok: false, error: "No pudimos cargar las sucursales disponibles." };
 
   type PurchaseDbRow = {
     id: string;
+    branch_id: string;
     supplier_id: string | null;
     purchased_at: string;
     total: number | string | null;
+    branches: { name: string } | Array<{ name: string }> | null;
   };
 
   const purchases = (recentRes.data ?? []) as PurchaseDbRow[];
   const monthPurchases = (monthRes.data ?? []) as PurchaseDbRow[];
   const suppliers = (suppliersRes.data ?? []) as SupplierOption[];
+  const branches = (branchesRes.data ?? []) as BranchOption[];
   const supplierMap = new Map(suppliers.map((s) => [s.id, s]));
   const purchaseIds = purchases.map((p) => p.id);
 
@@ -138,6 +160,7 @@ export async function getPurchasesPageDataAction(): Promise<
     const supplier = purchase.supplier_id ? supplierMap.get(purchase.supplier_id) : undefined;
     const item = firstItemByPurchase.get(purchase.id);
     const qty = Number(item?.qty ?? 0);
+    const branch = Array.isArray(purchase.branches) ? purchase.branches[0] : purchase.branches;
     return {
       fecha: new Intl.DateTimeFormat("es-AR", {
         day: "2-digit",
@@ -150,6 +173,7 @@ export async function getPurchasesPageDataAction(): Promise<
       cantidad: item ? `${qty || 0}${item.unit ? ` ${item.unit}` : ""}` : "—",
       variacion: 0,
       monto: Number(purchase.total ?? 0),
+      sucursal: branch?.name ?? "Sucursal no disponible",
     };
   });
 
@@ -179,6 +203,7 @@ export async function getPurchasesPageDataAction(): Promise<
       recentPurchases,
       topSuppliers,
       suppliers,
+      branches,
       supplierCount: suppliers.length,
       orderCount: monthPurchases.length,
       totalMonth: monthPurchases.reduce((sum, purchase) => sum + Number(purchase.total ?? 0), 0),
@@ -238,6 +263,7 @@ export const createSupplierAction = withPermission<[SupplierInput], MutationResu
 );
 
 function validatePurchase(input: PurchaseInput): string | null {
+  if (!input.branchId) return "Elegí una sucursal.";
   if (!input.supplierId) return "Elegí un proveedor.";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.purchasedAt)) return "Ingresá una fecha válida.";
   if (!input.paymentMethod.trim()) return "Elegí un medio de pago.";
@@ -268,6 +294,15 @@ export const createPurchaseAction = withPermission<[PurchaseInput], MutationResu
       .maybeSingle();
     if (supplierRes.error || !supplierRes.data?.id) return { ok: false, persisted: false, error: "El proveedor seleccionado no está disponible." };
 
+    if (ctx.assignedBranchIds !== null && !ctx.assignedBranchIds.includes(input.branchId)) {
+      return { ok: false, persisted: false, error: "La sucursal seleccionada no está asignada a tu usuario." };
+    }
+    const branchRes = await db.from("branches").select("id,name")
+      .eq("id", input.branchId).eq("business_id", ctx.businessId).maybeSingle();
+    if (branchRes.error || !branchRes.data?.id) {
+      return { ok: false, persisted: false, error: "La sucursal seleccionada no está disponible." };
+    }
+
     const qty = Number(input.qty);
     const unitPrice = Number(input.unitPrice);
     const total = Math.round(qty * unitPrice * 100) / 100;
@@ -276,6 +311,7 @@ export const createPurchaseAction = withPermission<[PurchaseInput], MutationResu
       .from("purchases")
       .insert({
         business_id: ctx.businessId,
+        branch_id: input.branchId,
         supplier_id: input.supplierId,
         purchased_at: input.purchasedAt,
         total,
@@ -314,6 +350,8 @@ export const createPurchaseAction = withPermission<[PurchaseInput], MutationResu
       summary: `Compra registrada · ${supplierRes.data.name}`,
       data: {
         supplier_id: input.supplierId,
+        branch_id: input.branchId,
+        branch_name: branchRes.data.name,
         purchased_at: input.purchasedAt,
         payment_method: input.paymentMethod.trim(),
         description: input.description.trim(),

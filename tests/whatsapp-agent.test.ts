@@ -59,6 +59,15 @@ test("expired confirmation is never executed", async () => { const expired: Pend
 test("missing argument creates clarification context", async () => { const h = harness(); const reply = await runAgent(input("Registrá una compra de $180.000 a Don José"), h.deps); assert.equal(reply.status, "needs_input"); assert.match(reply.text, /medio de pago/); assert.equal(h.pending()?.kind, "clarification"); });
 test("duplicate webhook is idempotent", async () => { const h = harness({ duplicate: true }); assert.equal((await runAgent(input("ventas de hoy"), h.deps)).status, "duplicate"); assert.equal(h.executions.length, 0); });
 test("tool failure is audited without reporting success", async () => { const h = harness({ fail: true }); const reply = await runAgent(input("ventas de hoy"), h.deps); assert.equal(reply.status, "failed"); assert.equal(h.audits[0].error, "database down"); });
+test("ambiguous purchase branch fails closed with a clear WhatsApp response", async () => {
+  const h = harness();
+  h.deps.interpret = async () => ({ name: "purchases.create", arguments: { supplier: "Don José", amount: 1000, paymentMethod: "Transferencia" } });
+  h.deps.execute = async () => { throw new Error("purchase_branch_ambiguous"); };
+  const reply = await runAgent(input("Registrá la compra"), h.deps);
+  assert.equal(reply.status, "failed");
+  assert.match(reply.text, /más de una sucursal/);
+  assert.equal(h.audits[0].error, "purchase_branch_ambiguous");
+});
 test("successful action is audited with tenant, tool and sanitized arguments", async () => { const h = harness(); await runAgent(input("ventas de hoy"), h.deps); assert.equal(h.audits[0].actor.businessId, "business-a"); assert.equal(h.audits[0].tool, "sales.getToday"); assert.deepEqual(h.audits[0].arguments, {}); });
 
 test("two distinct simultaneous confirmations execute the sensitive operation once", async () => {

@@ -250,7 +250,11 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
     });
     return {
       status: "failed",
-      text: "No pude completar la operación. No se realizó ningún cambio.",
+      text: message === "purchase_branch_ambiguous"
+        ? "Tenés más de una sucursal asignada. No registré la compra porque falta definir en cuál corresponde."
+        : message === "purchase_branch_not_found"
+          ? "No encontré una sucursal habilitada para registrar la compra. No se realizó ningún cambio."
+          : "No pude completar la operación. No se realizó ningún cambio.",
       tool: tool.name,
     };
   }

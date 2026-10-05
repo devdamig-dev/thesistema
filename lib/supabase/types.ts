@@ -234,6 +234,7 @@ export type Database = {
         Row: Timestamps & {
           id: string;
           business_id: string;
+          branch_id: string;
           supplier_id: string | null;
           purchased_at: string;
           total: number;
@@ -243,6 +244,7 @@ export type Database = {
         };
         Insert: Partial<Database["public"]["Tables"]["purchases"]["Row"]> & {
           business_id: string;
+          branch_id: string;
           purchased_at: string;
           total: number;
           payment_method: string;
