@@ -24,6 +24,7 @@
     "../app/actions/debts.ts",
     "../lib/data/team.ts",
     "../lib/whatsapp-agent/supabase-adapter.ts",
+    "../lib/whatsapp-agent/service.ts",
     "../lib/ocr/**/*.ts",
     "../lib/env.ts"
   ]

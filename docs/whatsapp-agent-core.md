@@ -4,7 +4,7 @@
 
 El transporte oficial de Meta normaliza el webhook y entrega el mensaje a un core independiente. El core resuelve el actor por teléfono, negocio receptor, membership, rol, módulos y sucursales; sólo entonces ofrece tools del registro. El modelo nunca recibe acceso a SQL ni un `business_id` elegible.
 
-Flujo: `Meta webhook → resolveActor → toolsForActor → interpret → validate → confirmationGate → execute → audit → Meta Cloud API`.
+Flujo: `Meta webhook → resolveActor → authorizedConversation → branchScope → toolsForActor → interpret → validate → confirmationGate → execute → audit → Meta Cloud API`.
 
 El endpoint `POST /api/internal/whatsapp-agent` permite probar exactamente el mismo core sin Meta. Requiere `x-agent-secret: $WHATSAPP_AGENT_INTERNAL_SECRET` y un JSON con `sender_phone`, `recipient_phone`, `text` y, opcionalmente, `message_id`.
 
@@ -28,6 +28,8 @@ Sin estos pasos el core sigue siendo comprobable por tests y por el endpoint int
 - Cada tool valida claves permitidas, tipos, números finitos/positivos, fechas ISO reales, períodos máximos de 366 días y enums antes de guardar contexto o ejecutar. Los argumentos desconocidos se rechazan.
 - Un pago de deuda requiere acreedor, monto y medio de pago concretos. La confirmación muestra los tres valores antes de aceptar “Sí”; no se completa silenciosamente con valores por defecto.
 - La identidad telefónica falla cerrado si cualquier consulta de integración, negocio, perfil, membership, módulos o sucursales devuelve error. Un teléfono sólo autoriza cuando coincide con exactamente un negocio receptor, un perfil activo y una membership; las coincidencias ambiguas se rechazan.
+- Cada mensaje debe pertenecer a una conversación activa del mismo negocio resuelto por el número receptor. Si la conversación está asociada a una sucursal, ese alcance reduce también las tools de actores sin restricción; nunca amplía los permisos de un miembro.
+- Mensajes procesados, confirmaciones y auditoría guardan la conversación autorizada. Iniciar una aclaración o confirmación en otro chat no consume el estado pendiente de la conversación original.
 - Ajustes → IA muestra un catálogo derivado del mismo `WHATSAPP_TOOLS`: disponibilidad por módulo y permiso del rol, acciones sensibles y estado real del canal. No mantiene una lista paralela ni expone tools stub.
 - Auditoría, mensajes procesados y estado conversacional son tablas server-owned con RLS habilitada y sin grants a `authenticated`/`anon`.
 - Los logs sanitizan claves con nombres de token, secreto, password o authorization.

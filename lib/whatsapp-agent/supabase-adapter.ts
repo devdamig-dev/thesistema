@@ -5,6 +5,36 @@ import type { AgentActor, AgentAuditEvent, IncomingAgentMessage, PendingOperatio
 type Db = SupabaseClient<any, "public", any>;
 const normalizePhone = (value: string) => value.replace(/\D/g, "");
 
+export type AuthorizedConversation = {
+  id: string;
+  business_id: string;
+  branch_id: string | null;
+  provider: string;
+  provider_conversation_id: string;
+  conversation_type: "direct" | "group";
+  display_name: string | null;
+};
+
+export async function resolveAuthorizedConversation(
+  db: Db,
+  input: IncomingAgentMessage,
+  businessId: string,
+): Promise<AuthorizedConversation | null> {
+  const provider = input.provider ?? "meta";
+  const conversationId = input.providerConversationId?.trim();
+  if (!conversationId) return null;
+  const res = await db.from("whatsapp_authorized_conversations")
+    .select("id,business_id,branch_id,provider,provider_conversation_id,conversation_type,display_name")
+    .eq("business_id", businessId)
+    .eq("provider", provider)
+    .eq("provider_conversation_id", conversationId)
+    .eq("enabled", true)
+    .limit(2);
+  if (res.error) throw res.error;
+  if (res.data?.length !== 1) return null;
+  return res.data[0];
+}
+
 export async function resolveActor(db: Db, input: IncomingAgentMessage): Promise<AgentActor | null> {
   const recipient = normalizePhone(input.recipientPhone);
   const sender = normalizePhone(input.senderPhone);
@@ -87,11 +117,13 @@ export async function claimMessage(
   db: Db,
   input: IncomingAgentMessage,
   actor: AgentActor,
+  conversationId?: string,
 ): Promise<boolean> {
   const res = await db.from("whatsapp_agent_messages").insert({
     provider_message_id: input.messageId,
     business_id: actor.businessId,
     member_id: actor.memberId,
+    conversation_id: conversationId,
     sender_phone: actor.phone,
     recipient_phone: normalizePhone(input.recipientPhone),
     message: input.text,
@@ -102,12 +134,13 @@ export async function claimMessage(
   throw res.error;
 }
 
-export async function getPending(db: Db, actor: AgentActor): Promise<PendingOperation | null> {
+export async function getPending(db: Db, actor: AgentActor, conversationId?: string): Promise<PendingOperation | null> {
   const res = await db
     .from("whatsapp_agent_pending_operations")
     .select("id,kind,tool_name,arguments,expires_at")
     .eq("business_id", actor.businessId)
     .eq("member_id", actor.memberId)
+    .eq("conversation_id", conversationId ?? "00000000-0000-0000-0000-000000000000")
     .is("consumed_at", null)
     .order("created_at", { ascending: false })
     .limit(1)
@@ -128,12 +161,14 @@ export async function getPending(db: Db, actor: AgentActor): Promise<PendingOper
 export async function savePending(
   db: Db,
   operation: Omit<PendingOperation, "id">,
+  conversationId?: string,
 ): Promise<PendingOperation> {
   const consume = await db
     .from("whatsapp_agent_pending_operations")
     .update({ consumed_at: new Date().toISOString() })
     .eq("business_id", operation.actor.businessId)
     .eq("member_id", operation.actor.memberId)
+    .eq("conversation_id", conversationId ?? "00000000-0000-0000-0000-000000000000")
     .is("consumed_at", null);
 
   if (consume.error) throw consume.error;
@@ -143,6 +178,7 @@ export async function savePending(
     .insert({
       business_id: operation.actor.businessId,
       member_id: operation.actor.memberId,
+      conversation_id: conversationId,
       kind: operation.kind,
       tool_name: operation.toolCall.name,
       arguments: operation.toolCall.arguments,
@@ -160,6 +196,7 @@ export async function consumePending(
   id: string,
   actor: AgentActor,
   requireUnexpired = false,
+  conversationId?: string,
 ): Promise<boolean> {
   // UPDATE's predicate is rechecked after taking the row lock. Two messages
   // racing on one confirmation cannot both receive a returned row.
@@ -169,6 +206,7 @@ export async function consumePending(
     .eq("id", id)
     .eq("business_id", actor.businessId)
     .eq("member_id", actor.memberId)
+    .eq("conversation_id", conversationId ?? "00000000-0000-0000-0000-000000000000")
     .is("consumed_at", null);
   if (requireUnexpired) query = query.gt("expires_at", new Date().toISOString());
   const res = await query.select("id").maybeSingle();
@@ -187,11 +225,12 @@ const sanitized = (value: unknown): unknown => {
   );
 };
 
-export async function audit(db: Db, event: AgentAuditEvent): Promise<void> {
+export async function audit(db: Db, event: AgentAuditEvent, conversationId?: string): Promise<void> {
   const res = await db.from("whatsapp_agent_audit_logs").insert({
     business_id: event.actor.businessId,
     user_id: event.actor.userId,
     member_id: event.actor.memberId,
+    conversation_id: conversationId,
     phone: event.actor.phone,
     message_id: event.input.messageId,
     message: event.input.text,
