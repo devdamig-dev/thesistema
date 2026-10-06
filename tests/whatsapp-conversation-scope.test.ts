@@ -66,5 +66,10 @@ test("migration and settings preserve tenant and conversation isolation contract
   assert.doesNotMatch(settings, /createSupabaseAdminClient/);
   assert.match(migration, /for select to authenticated[\s\S]*is_admin_of_business\(business_id\)/);
   assert.match(migration, /grant select on public\.whatsapp_authorized_conversations to authenticated/);
+  assert.match(migration, /whatsapp_authorized_conversations_branch_id_idx/);
+  assert.match(migration, /whatsapp_authorized_conversations_created_by_idx/);
+  assert.match(migration, /whatsapp_agent_messages_conversation_id_idx/);
+  assert.match(migration, /whatsapp_agent_pending_operations_conversation_id_idx/);
+  assert.match(migration, /whatsapp_agent_audit_logs_conversation_id_idx/);
   assert.match(settings, /whatsapp_authorized_conversations[\s\S]*\.eq\("business_id", ctx\.businessId\)/);
 });

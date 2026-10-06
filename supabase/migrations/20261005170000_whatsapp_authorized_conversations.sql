@@ -15,6 +15,8 @@ create table if not exists public.whatsapp_authorized_conversations (
  unique(business_id, provider, provider_conversation_id)
 );
 create index if not exists whatsapp_authorized_conversations_business_enabled on public.whatsapp_authorized_conversations(business_id,enabled);
+create index if not exists whatsapp_authorized_conversations_branch_id_idx on public.whatsapp_authorized_conversations(branch_id);
+create index if not exists whatsapp_authorized_conversations_created_by_idx on public.whatsapp_authorized_conversations(created_by);
 create or replace function public.enforce_whatsapp_conversation_branch_business() returns trigger language plpgsql set search_path='' as $$
 begin
  if new.branch_id is not null and not exists(select 1 from public.branches b where b.id=new.branch_id and b.business_id=new.business_id) then
@@ -37,3 +39,6 @@ grant select,insert,update,delete on public.whatsapp_authorized_conversations to
 alter table public.whatsapp_agent_messages add column if not exists conversation_id uuid references public.whatsapp_authorized_conversations(id) on delete set null;
 alter table public.whatsapp_agent_pending_operations add column if not exists conversation_id uuid references public.whatsapp_authorized_conversations(id) on delete cascade;
 alter table public.whatsapp_agent_audit_logs add column if not exists conversation_id uuid references public.whatsapp_authorized_conversations(id) on delete set null;
+create index if not exists whatsapp_agent_messages_conversation_id_idx on public.whatsapp_agent_messages(conversation_id);
+create index if not exists whatsapp_agent_pending_operations_conversation_id_idx on public.whatsapp_agent_pending_operations(conversation_id);
+create index if not exists whatsapp_agent_audit_logs_conversation_id_idx on public.whatsapp_agent_audit_logs(conversation_id);
