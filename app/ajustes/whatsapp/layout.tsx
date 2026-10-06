@@ -16,6 +16,7 @@ export default async function WhatsappSettingsLayout({ children }: { children: R
 
   const ctx = await getCurrentUserContext();
   if (!ctx.businessId) return <Unavailable />;
+  if (!ctx.userId || !["owner", "admin"].includes(ctx.role)) return <Unavailable />;
 
   const result = await supabase
     .from("businesses")

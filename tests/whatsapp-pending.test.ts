@@ -10,7 +10,7 @@ const original = loader._load;
 loader._load = function(name: string, ...args: any[]) {
   return name === "@/lib/permissions" ? { permissionsFor } : original.call(this, name, ...args);
 };
-const { consumePending, resolveActor } = require("../lib/whatsapp-agent/supabase-adapter");
+const { consumePending, resolveActor, resolveAuthorizedConversation } = require("../lib/whatsapp-agent/supabase-adapter");
 loader._load = original;
 
 const actor: AgentActor = { userId: "u", memberId: "m", businessId: "b", phone: "5491111111111", name: "Ana", role: "owner", enabledModules: ["debts"], branchIds: null };
@@ -24,6 +24,7 @@ test("adapter sends a scoped conditional UPDATE and only one racing request wins
     assert.equal(url.searchParams.get("id"), "eq.pending-1");
     assert.equal(url.searchParams.get("business_id"), "eq.b");
     assert.equal(url.searchParams.get("member_id"), "eq.m");
+    assert.equal(url.searchParams.get("conversation_id"), "eq.conversation-a");
     assert.equal(url.searchParams.get("consumed_at"), "is.null");
     assert.match(url.searchParams.get("expires_at")!, /^gt\.\d{4}-/);
     assert.equal(url.searchParams.get("select"), "id");
@@ -32,7 +33,10 @@ test("adapter sends a scoped conditional UPDATE and only one racing request wins
     consumed = true;
     return new Response(JSON.stringify(data), { status: 200, headers: { "Content-Type": "application/json" } });
   } } });
-  assert.deepEqual(await Promise.all([consumePending(db, "pending-1", actor, true), consumePending(db, "pending-1", actor, true)]), [true, false]);
+  assert.deepEqual(await Promise.all([
+    consumePending(db, "pending-1", actor, true, "conversation-a"),
+    consumePending(db, "pending-1", actor, true, "conversation-a"),
+  ]), [true, false]);
 });
 
 test("adapter propagates database failures instead of authorizing execution", async () => {
@@ -149,4 +153,51 @@ test("missing or duplicated membership cannot authorize the sender", async () =>
     const rows = { ...validIdentityRows, business_members: memberships };
     assert.equal(await resolveActor(identityDb(rows), identityInput), null);
   }
+});
+
+test("authorized conversations are resolved inside the actor business only", async () => {
+  const db = createClient("https://agent.test", "test-key", { global: { fetch: async (request) => {
+    const url = new URL(String(request));
+    assert.equal(url.pathname, "/rest/v1/whatsapp_authorized_conversations");
+    assert.equal(url.searchParams.get("business_id"), "eq.business-a");
+    assert.equal(url.searchParams.get("provider"), "eq.meta");
+    assert.equal(url.searchParams.get("provider_conversation_id"), "eq.group-1");
+    assert.equal(url.searchParams.get("enabled"), "eq.true");
+    assert.equal(url.searchParams.get("limit"), "2");
+    return new Response(JSON.stringify([{
+      id: "conversation-a",
+      business_id: "business-a",
+      branch_id: "branch-a",
+      provider: "meta",
+      provider_conversation_id: "group-1",
+      conversation_type: "group",
+      display_name: "Operaciones",
+    }]), { status: 200, headers: { "Content-Type": "application/json" } });
+  } } });
+
+  const conversation = await resolveAuthorizedConversation(db, {
+    ...identityInput,
+    provider: "meta",
+    providerConversationId: "group-1",
+  }, "business-a");
+  assert.equal(conversation?.id, "conversation-a");
+  assert.equal(conversation?.business_id, "business-a");
+});
+
+test("missing, duplicated, or failed conversation lookup never authorizes processing", async () => {
+  for (const response of [
+    new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } }),
+    new Response(JSON.stringify([{ id: "a" }, { id: "b" }]), { status: 200, headers: { "Content-Type": "application/json" } }),
+  ]) {
+    const db = createClient("https://agent.test", "test-key", { global: { fetch: async () => response.clone() } });
+    assert.equal(await resolveAuthorizedConversation(db, { ...identityInput, providerConversationId: "group-1" }, "business-a"), null);
+  }
+
+  const failedDb = createClient("https://agent.test", "test-key", { global: { fetch: async () =>
+    new Response(JSON.stringify({ code: "XX000", message: "lookup failed" }), { status: 500, headers: { "Content-Type": "application/json" } })
+  } });
+  await assert.rejects(
+    resolveAuthorizedConversation(failedDb, { ...identityInput, providerConversationId: "group-1" }, "business-a"),
+    (error: any) => error.code === "XX000",
+  );
 });
