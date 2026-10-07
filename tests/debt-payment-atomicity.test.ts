@@ -6,7 +6,12 @@ const migration = readFileSync(
   "supabase/migrations/20261007034647_atomic_debt_payments.sql",
   "utf8",
 );
+const settlementMigration = readFileSync(
+  "supabase/migrations/20261007045000_atomic_manual_debt_settlement.sql",
+  "utf8",
+);
 const actions = readFileSync("app/actions/debts.ts", "utf8");
+const client = readFileSync("app/deudas/deudas-client.tsx", "utf8");
 const inbox = readFileSync("app/actions/inbox.ts", "utf8");
 const adapter = readFileSync("lib/whatsapp-agent/supabase-adapter.ts", "utf8");
 
@@ -38,4 +43,20 @@ test("atomic registration validates actor, business, amount, date and method", (
   assert.match(migration, /p_amount > v_debt\.pending_amount/);
   assert.match(migration, /p_paid_at < date '2000-01-01'/);
   assert.match(migration, /length\(p_payment_method\) > 80/);
+});
+
+test("manual settlement writes one locked ledger adjustment instead of rewriting debt state", () => {
+  assert.match(settlementMigration, /create or replace function public\.settle_debt_atomic/);
+  assert.match(settlementMigration, /from public\.debts debt[\s\S]*for update/);
+  assert.match(settlementMigration, /v_adjustment := v_debt\.original_amount - v_paid/);
+  assert.match(settlementMigration, /insert into public\.debt_payments/);
+  assert.match(settlementMigration, /'Ajuste manual'/);
+  assert.match(settlementMigration, /settle_debt_atomic[\s\S]*security invoker/);
+  assert.match(actions, /db\.rpc\("settle_debt_atomic"/);
+  assert.doesNotMatch(actions, /markDebtAsSettledAction[\s\S]*\.from\("debts"\)[\s\S]*\.update/);
+});
+
+test("manual settlement confirmation names creditor, amount and ledger method", () => {
+  assert.match(client, /debt\.acreedor[\s\S]*formatARS\(debt\.saldoPendiente\)/);
+  assert.match(client, /Ajuste manual/);
 });

@@ -230,47 +230,57 @@ export async function markDebtAsSettledAction(debtId: string): Promise<Result> {
     };
   }
   const db = supabase as any;
-
-  // Leer info antes para la notificación
-  const debtRes = await db
-    .from("debts")
-    .select("business_id, creditor")
-    .eq("id", debtId)
-    .maybeSingle();
-  const debt = debtRes.data as { business_id: string; creditor: string } | null;
-
-  const { error } = await db
-    .from("debts")
-    .update({
-      status: "settled",
-      pending_amount: 0,
-      settled_at: new Date().toISOString().slice(0, 10),
-    })
-    .eq("id", debtId);
-  if (error) {
-    return { ok: false, persisted: false, error: error.message };
+  const ctx = await getCurrentUserContext();
+  if (!ctx.businessId || !ctx.userId) {
+    return { ok: false, persisted: false, error: "No pudimos identificar el negocio activo." };
   }
 
-  if (debt) {
-    await logActivity({
-      businessId: debt.business_id,
-      action: "debt.settled.manual",
-      targetType: "debts",
-      targetId: debtId,
-      summary: `Deuda marcada como saldada · ${debt.creditor}`,
-    });
-    await createNotification({
-      businessId: debt.business_id,
-      tone: "success",
-      priority: "low",
-      category: "debt",
-      title: `Deuda saldada · ${debt.creditor}`,
-      detail: "Marcada manualmente como saldada.",
-      href: "/deudas",
-      source: "debts",
-    });
+  const settlementRes = await db.rpc("settle_debt_atomic", {
+    p_debt_id: debtId,
+    p_business_id: ctx.businessId,
+    p_actor_id: ctx.userId,
+    p_paid_at: new Date().toISOString().slice(0, 10),
+    p_notes: "Cancelación manual confirmada desde Deudas",
+  });
+  const settlement = settlementRes.data as {
+    ok: boolean;
+    error?: string;
+    payment_id?: string;
+    creditor?: string;
+    amount?: number;
+  } | null;
+  if (settlementRes.error || !settlement?.ok || !settlement.payment_id) {
+    const messages: Record<string, string> = {
+      debt_not_found: "No encontramos la deuda seleccionada.",
+      debt_already_settled: "La deuda ya está saldada.",
+      concurrent_payment: "El saldo cambió mientras confirmabas. Revisalo e intentá nuevamente.",
+      invalid_paid_at: "La fecha de cancelación no es válida.",
+      permission_denied: "No tenés permiso para cancelar esta deuda.",
+    };
+    return { ok: false, persisted: false, error: messages[settlement?.error ?? ""] ?? "No pudimos cancelar la deuda." };
   }
+
+  const creditor = settlement.creditor ?? "Acreedor";
+  const amount = Number(settlement.amount ?? 0);
+  await logActivity({
+    businessId: ctx.businessId,
+    action: "debt.settled.manual",
+    targetType: "debt_payments",
+    targetId: settlement.payment_id,
+    summary: `Deuda saldada con ajuste manual · ${creditor} · $${amount.toLocaleString("es-AR")}`,
+    data: { debt_id: debtId, payment_id: settlement.payment_id, amount, payment_method: "Ajuste manual" },
+  });
+  await createNotification({
+    businessId: ctx.businessId,
+    tone: "success",
+    priority: "low",
+    category: "debt",
+    title: `Deuda saldada · ${creditor}`,
+    detail: `Ajuste manual de $${amount.toLocaleString("es-AR")} registrado en el historial.`,
+    href: "/deudas",
+    source: "debts",
+  });
 
   refresh();
-  return { ok: true, persisted: true };
+  return { ok: true, persisted: true, payment_id: settlement.payment_id };
 }

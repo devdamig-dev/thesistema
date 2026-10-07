@@ -240,14 +240,16 @@ export default function DeudasClient({
   }
 
   function handleMarkAsSettled(debt: Debt) {
-    if (!confirm(`¿Marcar la deuda con ${debt.acreedor} como saldada?`)) return;
+    if (!confirm(
+      `¿Saldar la deuda con ${debt.acreedor} por ${formatARS(debt.saldoPendiente)}?\n\nSe registrará el movimiento como “Ajuste manual” en el historial.`,
+    )) return;
     startTransition(async () => {
       const result = await markDebtAsSettledAction(debt.id);
       if (result.ok && result.persisted) {
         toast({
           tone: "success",
           title: "Deuda saldada",
-          description: "La movimos al historial.",
+          description: "Registramos el ajuste manual y la movimos al historial.",
         });
         setOpen(false);
         router.refresh();
