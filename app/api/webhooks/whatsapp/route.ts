@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
       }
       if (reply.status === "duplicate") { duplicates += 1; continue; }
       // Core claims provider_message_id atomically before any operation. A Meta retry cannot create a second operation or Inbox copy.
-      const saved = await db.from("whatsapp_messages").insert({ business_id: integration.business_id, sender_name: message.senderName, sender_role: "Equipo", channel: "text", raw: message.text, preview: message.text.slice(0, 120), received_at: new Date(message.sentAt).toISOString() });
+      const saved = await db.from("whatsapp_messages").insert({ business_id: integration.business_id, branch_id: conversation.branch_id, sender_name: message.senderName, sender_role: "Equipo", channel: "text", raw: message.text, preview: message.text.slice(0, 120), received_at: new Date(message.sentAt).toISOString() });
       if (saved.error) await logActivity({ businessId: integration.business_id, actorRole: "system", action: "whatsapp.message_log_failed", summary: "No se pudo guardar la copia del mensaje; la auditoría del agente conserva el resultado", data: { message_id: message.messageId } });
       if (reply.text.trim()) {
         try { await sendMetaTextReply(integration.business_id, message.senderPhone, reply.text); }

@@ -5,7 +5,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, MessageSquareText } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { parseSignupEvent, signupOptions, type PhoneChoice, type SignupMode } from "@/lib/whatsapp/signup";
+import { ConnectionError, parseSignupEvent, signupOptions, type PhoneChoice, type SignupMode } from "@/lib/whatsapp/signup";
+
+import { connectionRecovery } from "@/lib/whatsapp/connection-recovery";
 
 type FbLoginResponse = { authResponse?: { code?: string }; status?: string };
 type FbApi = { init: (options: Record<string, unknown>) => void; login: (callback: (response: FbLoginResponse) => void, options: Record<string, unknown>) => void };
@@ -40,7 +42,7 @@ export function WhatsAppConnectButton({ appId, configId, apiVersion, businessApp
     try {
       const response = await fetch("/api/integrations/whatsapp/complete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: abort.signal });
       const result = await response.json().catch(() => null);
-      if (!response.ok || result?.ok !== true) throw new Error(result?.error || "No pudimos completar la conexión. Actualizá la página para comprobar su estado.");
+      if (!response.ok || result?.ok !== true) throw new ConnectionError(typeof result?.code === "string" ? result.code : "connection_failed", result?.error || "No pudimos completar la conexión. Actualizá la página para comprobar su estado.", response.status, connectionRecovery(result?.code, result?.recovery));
       return result;
     } finally { clearTimeout(timer); }
   }, []);
@@ -151,8 +153,18 @@ export function WhatsAppConnectButton({ appId, configId, apiVersion, businessApp
       const result = await api({ action: "connect", sessionId: session.current, phoneNumberId: selected });
       setPhase("linked"); setStatus(result.message); session.current = null; router.refresh();
     } catch (error) {
-      // Keep the selection so a platform setup fix can be retried while authorization is valid.
-      setPhase("choosing");
+      const recovery = error instanceof ConnectionError ? error.recovery : "check_status";
+      if (recovery === "retry_selection") {
+        setPhase("choosing");
+      } else {
+        // A consumed/expired authorization cannot be retried. A timeout has an
+        // unknown outcome: refresh persisted state without repeating the write.
+        session.current = null;
+        setChoices([]);
+        setSelected("");
+        setPhase("error");
+        if (recovery !== "restart") router.refresh();
+      }
       setStatus(error instanceof Error && error.name !== "AbortError" ? error.message : "La respuesta demoró demasiado. Actualizá la página para comprobar si la cuenta quedó vinculada antes de reintentar.");
     }
   }
@@ -161,7 +173,16 @@ export function WhatsAppConnectButton({ appId, configId, apiVersion, businessApp
     const id = session.current;
     if (id) {
       try { await api({ action: "cancel", sessionId: id }); }
-      catch (error) { setStatus(error instanceof Error ? error.message : "No pudimos cancelar esta autorización."); return; }
+      catch (error) {
+        if (error instanceof ConnectionError && error.code === "session_unavailable") {
+          clearTimers(); controller.current?.abort(); active.current = false; attempt.current += 1;
+          session.current = null; payload.current = {}; setChoices([]); setSelected(""); setPhase("error");
+          setStatus("Esta autorización ya no está disponible. Revisá el estado actualizado antes de iniciar otra conexión.");
+          router.refresh();
+          return;
+        }
+        setStatus(error instanceof Error ? error.message : "No pudimos cancelar esta autorización."); return;
+      }
     }
     clearTimers(); controller.current?.abort(); active.current = false; attempt.current += 1;
     session.current = null; payload.current = {}; setChoices([]); setPhase("idle");

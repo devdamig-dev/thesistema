@@ -59,7 +59,14 @@ export async function connectSelection(actor: ConnectionActor, sessionId: string
     await store.persist(sessionId, actor, phone);
   } catch (error) {
     await store.discard(sessionId, actor).catch(() => {});
-    throw error;
+    // The claim may already have reached Meta or committed in the database.
+    // Never offer the consumed selection again or claim that it was rolled back.
+    throw new ConnectionError(
+      error instanceof ConnectionError ? error.code : "connection_attempt_failed",
+      "No pudimos confirmar el resultado de la vinculación. Revisá el estado actualizado antes de iniciar una nueva autorización. Tu cuenta de WhatsApp no fue eliminada ni migrada.",
+      error instanceof ConnectionError ? error.status : 502,
+      "check_status",
+    );
   }
   return { ok: true as const, phase: "linked" as const, phone: phone.phone, message: "Cuenta vinculada. Autorizá una conversación del equipo y enviá un mensaje para verificar el recorrido completo." };
 }

@@ -1,3 +1,5 @@
+import type { ConnectionRecovery } from "./connection-recovery";
+
 export type SignupMode = "business_app" | "cloud_api";
 export type ConnectionActor = { userId: string; businessId: string; role: string };
 export type PhoneChoice = {
@@ -10,7 +12,7 @@ export type PhoneChoice = {
 };
 
 export class ConnectionError extends Error {
-  constructor(public code: string, message: string, public status = 400) {
+  constructor(public code: string, message: string, public status = 400, public recovery?: ConnectionRecovery) {
     super(message);
     this.name = "ConnectionError";
   }

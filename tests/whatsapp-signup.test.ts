@@ -160,3 +160,23 @@ test("Meta signature is mandatory, payload-bound and constant-time verified", ()
   assert.equal(validMetaSignature(raw, null, secret), false);
   assert.equal(validMetaSignature(raw, "sha256=bad", secret), false);
 });
+
+
+test("post-claim subscription and persistence failures require a status check, not reused selection", async () => {
+  for (const stage of ["subscribe", "persist"] as const) {
+    const f = fixture(); const result = await prepare(f);
+    if (stage === "subscribe") f.graph.subscribe = async () => { throw new ConnectionError("meta_unavailable", "temporary", 502); };
+    else f.store.persist = async () => { throw new Error("database unavailable"); };
+    await assert.rejects(connectSelection(actor, result.sessionId, phone.id, f.graph, f.store), (error: unknown) => error instanceof ConnectionError && error.recovery === "check_status");
+    assert.equal(f.session().access_token, null);
+    await assert.rejects(connectSelection(actor, result.sessionId, phone.id, f.graph, f.store), (error: unknown) => error instanceof ConnectionError && error.code === "session_unavailable");
+    assert.equal(f.writes(), 0);
+  }
+});
+test("lost persistence response does not claim rollback or replay an already committed connection", async () => {
+  const f = fixture(); const result = await prepare(f); const persist = f.store.persist;
+  f.store.persist = async (...args) => { await persist(...args); throw new Error("response lost"); };
+  await assert.rejects(connectSelection(actor, result.sessionId, phone.id, f.graph, f.store), (error: unknown) => error instanceof ConnectionError && error.recovery === "check_status");
+  await assert.rejects(connectSelection(actor, result.sessionId, phone.id, f.graph, f.store));
+  assert.equal(f.writes(), 1); assert.equal(f.subscriptions(), 1);
+});

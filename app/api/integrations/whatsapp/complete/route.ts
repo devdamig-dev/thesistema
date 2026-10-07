@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     if (input.action === "prepare") return json(await prepareConnection(actor, input, graph, store));
     return json(await connectSelection(actor, input.sessionId, input.phoneNumberId, graph, store));
   } catch (error) {
-    if (error instanceof ConnectionError) return json({ ok: false, code: error.code, error: error.message }, error.status);
-    return json({ ok: false, code: "connection_failed", error: "No pudimos completar la conexión. No borres ni desvincules tu WhatsApp; actualizá la página y volvé a intentarlo." }, 502);
+    if (error instanceof ConnectionError) return json({ ok: false, code: error.code, error: error.message, recovery: error.recovery }, error.status);
+    return json({ ok: false, code: "connection_failed", recovery: "check_status", error: "No pudimos completar la conexión. No borres ni desvincules tu WhatsApp; actualizá la página y volvé a intentarlo." }, 502);
   }
 }
