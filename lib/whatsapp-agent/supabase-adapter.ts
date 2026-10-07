@@ -437,18 +437,18 @@ export async function executeTool(db: Db, actor: AgentActor, call: ToolCall): Pr
     if (debt.data?.length !== 1) throw new Error("debt_not_unambiguous");
 
     const amount = Number(a.amount ?? debt.data[0].pending_amount);
-    const res = await db
-      .from("debt_payments")
-      .insert({
-        debt_id: debt.data[0].id,
-        amount,
-        payment_method: a.paymentMethod ?? "Transferencia",
-        paid_at: new Date().toISOString().slice(0, 10),
-      })
-      .select("id")
-      .single();
+    const res = await db.rpc("register_debt_payment_atomic", {
+      p_debt_id: debt.data[0].id,
+      p_business_id: actor.businessId,
+      p_actor_id: actor.userId,
+      p_amount: amount,
+      p_payment_method: a.paymentMethod ?? "Transferencia",
+      p_paid_at: a.paidAt ?? new Date().toISOString().slice(0, 10),
+      p_notes: null,
+    });
 
     if (res.error) throw res.error;
+    if (!res.data?.ok) throw new Error(res.data?.error ?? "debt_payment_failed");
     return res.data;
   }
 
