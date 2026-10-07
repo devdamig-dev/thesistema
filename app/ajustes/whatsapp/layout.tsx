@@ -1,156 +1,71 @@
 import type { ReactNode } from "react";
-import { MessageSquareText, Phone, Users, ShieldCheck } from "lucide-react";
+import { MessageSquareText, Phone, ShieldCheck } from "lucide-react";
 import { isDatabaseMode } from "@/lib/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentUserContext } from "@/lib/data/auth";
+import { readWhatsAppConnectionStatus } from "@/lib/whatsapp/connection-store";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SectionHeader } from "@/components/ui/section-header";
 import { WhatsAppConnectButton } from "./connect-button";
+import { ConversationEditor, type MemberOption } from "./conversation-editor";
 
 export default async function WhatsappSettingsLayout({ children }: { children: ReactNode }) {
   if (!isDatabaseMode()) return <>{children}</>;
-
-  const supabase = await createSupabaseServerClient() as any;
-  if (!supabase) return <Unavailable />;
-
   const ctx = await getCurrentUserContext();
-  if (!ctx.businessId) return <Unavailable />;
-  if (!ctx.userId || !["owner", "admin"].includes(ctx.role)) return <Unavailable />;
-
-  const result = await supabase
-    .from("businesses")
-    .select("whatsapp_connected,whatsapp_phone,whatsapp_connected_at")
-    .eq("id", ctx.businessId)
-    .maybeSingle();
-
-  if (result.error) return <Unavailable />;
-
-  const row = result.data as {
-    whatsapp_connected: boolean | null;
-    whatsapp_phone: string | null;
-    whatsapp_connected_at: string | null;
-  } | null;
-
-  const conversationsResult = await supabase
-    .from("whatsapp_authorized_conversations")
-    .select("id,display_name,conversation_type,enabled,branch_id,branches(name)")
-    .eq("business_id", ctx.businessId)
-    .order("created_at", { ascending: true });
-
-  const conversations = conversationsResult.error ? [] : (conversationsResult.data ?? []);
-  const connected = Boolean(row?.whatsapp_connected);
-  const phone = row?.whatsapp_phone?.trim() || null;
-  const connectedAt = row?.whatsapp_connected_at
-    ? new Intl.DateTimeFormat("es-AR", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        timeZone: "America/Argentina/Buenos_Aires",
-      }).format(new Date(row.whatsapp_connected_at))
-    : null;
-
+  if (!ctx.isAuthenticated || !ctx.businessId || !ctx.userId || !["owner", "admin"].includes(ctx.role)) return <Unavailable />;
+  const db = await createSupabaseServerClient() as any;
+  if (!db) return <Unavailable />;
+  const [business, conversationsResult, membersResult, branchesResult] = await Promise.all([
+    db.from("businesses").select("whatsapp_connected,whatsapp_phone_number_id").eq("id", ctx.businessId).maybeSingle(),
+    db.from("whatsapp_authorized_conversations").select("id,display_name,conversation_type,enabled,branch_id,branches(name)").eq("business_id", ctx.businessId).order("created_at", { ascending: true }),
+    db.from("business_members").select("id,user_id").eq("business_id", ctx.businessId),
+    db.from("branches").select("id,name").eq("business_id", ctx.businessId).order("name"),
+  ]);
+  if (business.error || conversationsResult.error || membersResult.error || branchesResult.error) return <Unavailable />;
+  const userIds = (membersResult.data ?? []).map((member: { user_id: string }) => member.user_id);
+  const profiles = userIds.length ? await db.from("profiles").select("id,full_name,phone,active").in("id", userIds) : { data: [], error: null };
+  if (profiles.error) return <Unavailable />;
+  const members: MemberOption[] = (membersResult.data ?? []).map((member: { id: string; user_id: string }) => {
+    const profile = (profiles.data ?? []).find((profile: { id: string }) => profile.id === member.user_id);
+    return { id: member.id, name: profile?.full_name || "Persona del equipo", phone: profile?.phone || null, active: profile?.active === true };
+  });
+  // RLS + column grants expose status, never credentials, through the authenticated client.
+  const state = await readWhatsAppConnectionStatus(db, ctx.businessId).catch(() => null);
+  if (!state) return <Unavailable />;
+  const { integration, expired } = state;
+  const connected = Boolean(integration?.status === "connected" && !expired && business.data?.whatsapp_connected && business.data?.whatsapp_phone_number_id === integration.phone_number_id);
   const appId = process.env.NEXT_PUBLIC_META_APP_ID?.trim() || null;
   const configId = process.env.NEXT_PUBLIC_META_WHATSAPP_CONFIG_ID?.trim() || null;
+  const businessAppConfigId = process.env.NEXT_PUBLIC_META_WHATSAPP_BUSINESS_APP_CONFIG_ID?.trim() || configId;
   const apiVersion = process.env.NEXT_PUBLIC_META_GRAPH_VERSION?.trim() || "v25.0";
-
-  return (
-    <div className="space-y-6">
-      <SectionHeader
-        eyebrow="Ajustes · WhatsApp"
-        title="Conexión con WhatsApp Business"
-        description="Vinculá el número del negocio para recibir mensajes y procesarlos desde Thesistema."
-      />
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <MessageSquareText className="h-4 w-4" /> Estado de conexión
-          </CardTitle>
-          <Badge tone={connected ? "success" : "default"}>{connected ? "Conectado" : "Pendiente"}</Badge>
-        </CardHeader>
-        <CardContent>
-          {connected ? (
-            <div className="rounded-xl border border-success-500/25 bg-success-500/[0.06] p-5">
-              <div className="flex items-center gap-2 text-sm font-semibold text-ink">
-                <Phone className="h-4 w-4 text-success-400" /> {phone ?? "Número conectado"}
-              </div>
-              <p className="mt-1 text-xs text-ink-muted">
-                {connectedAt ? `Conectado el ${connectedAt}.` : "La conexión está activa."}
-              </p>
-            </div>
-          ) : (
-            <div className="rounded-xl border border-warn-500/25 bg-warn-500/[0.05] p-5">
-              <div className="text-sm font-semibold text-ink">Todavía no conectaste un número</div>
-              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-ink-muted">
-                La conexión se realiza con el flujo oficial de Meta. Thesistema sólo marcará este estado como conectado cuando Meta confirme el número y la integración quede registrada.
-              </p>
-              <div className="mt-4">
-                <WhatsAppConnectButton appId={appId} configId={configId} apiVersion={apiVersion} />
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" /> Conversaciones autorizadas</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-ink-muted">Thesistema solo procesa mensajes de las conversaciones que autorices acá. El resto de tus chats se ignora.</p>
-          {conversations.length ? conversations.map((conversation: any) => (
-            <div key={conversation.id} className="flex items-center justify-between rounded-xl border border-line p-4">
-              <div>
-                <div className="text-sm font-semibold text-ink">{conversation.display_name || (conversation.conversation_type === "group" ? "Grupo autorizado" : "Chat autorizado")}</div>
-                <div className="mt-1 text-xs text-ink-muted">{conversation.conversation_type === "group" ? "Grupo" : "Chat privado"}{conversation.branches?.name ? ` · ${conversation.branches.name}` : " · Todas las sucursales"}</div>
-              </div>
-              <Badge tone={conversation.enabled ? "success" : "default"}>{conversation.enabled ? "Activo" : "Pausado"}</Badge>
-            </div>
-          )) : (
-            <div className="rounded-xl border border-dashed border-line p-5 text-sm text-ink-muted">
-              {connected ? "Todavía no hay conversaciones autorizadas. Cuando Meta exponga una conversación compatible, vas a poder seleccionarla y asignarla a una sucursal desde acá." : "Primero conectá WhatsApp Business. Después vas a poder elegir qué conversación puede usar Thesistema."}
-            </div>
-          )}
-          <p className="text-xs text-ink-subtle">Autorizar una conversación no autoriza automáticamente a sus participantes: cada persona mantiene sus permisos de equipo.</p>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Users className="h-4 w-4" /> Acceso del equipo</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="rounded-xl border border-dashed border-line p-6 text-sm text-ink-muted">
-            {connected
-              ? "La administración de personas autorizadas se habilitará sobre el número conectado."
-              : "Primero conectá WhatsApp Business. Después vas a poder definir quiénes del equipo pueden operar por este canal."}
-          </div>
-        </CardContent>
-      </Card>
-
-      {children}
-    </div>
-  );
+  const conversations = conversationsResult.data ?? [];
+  const connectButton = <WhatsAppConnectButton appId={appId} configId={configId} businessAppConfigId={businessAppConfigId} apiVersion={apiVersion} />;
+  return <div className="space-y-6">
+    <SectionHeader eyebrow="Ajustes · WhatsApp" title="Tu WhatsApp, conectado a tu negocio" description="Autorizá tu cuenta en Meta, elegí el número y definí quiénes pueden operar por este canal." />
+    <Card>
+      <CardHeader><CardTitle className="flex items-center gap-2"><MessageSquareText className="h-4 w-4" />Estado de la vinculación</CardTitle><Badge tone="default">{connected ? "Cuenta vinculada" : expired ? "Renovar autorización" : "Pendiente"}</Badge></CardHeader>
+      <CardContent>{connected ? <div className="space-y-3 rounded-xl border border-line p-5">
+        <p className="flex items-center gap-2 text-sm font-semibold text-ink"><Phone className="h-4 w-4" />{integration.display_phone_number || "Número autorizado"}</p>
+        <p className="text-sm text-ink-muted">La vinculación está guardada. Para comprobar el recorrido completo, autorizá abajo una conversación y enviá un mensaje desde el WhatsApp de esa persona al número del negocio.</p>
+        <p className="text-xs text-ink-muted">La autorización de Meta no demuestra por sí sola que un mensaje ya haya llegado o recibido respuesta.</p>
+        <details className="pt-2"><summary className="cursor-pointer text-sm font-semibold text-ink">Renovar permisos de esta cuenta</summary><div className="mt-4">{connectButton}</div></details>
+      </div> : <div className="space-y-4">
+        <p className="text-sm text-ink-muted">{expired ? "La autorización de Meta venció. Volvé a autorizar el mismo número para recuperar la conexión." : "Elegí cómo usás WhatsApp. No necesitás copiar claves ni crear una aplicación de Meta para cada negocio."}</p>{connectButton}
+      </div>}</CardContent>
+    </Card>
+    <Card>
+      <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Conversaciones autorizadas</CardTitle></CardHeader>
+      <CardContent className="space-y-5">
+        <p className="text-sm text-ink-muted">Sólo se procesan chats directos que autorices y mensajes de personas activas del equipo. Autorizar un chat no amplía sus permisos sobre los módulos o las sucursales.</p>
+        {conversations.length ? <div className="space-y-2">{conversations.map((conversation: any) => <div key={conversation.id} className="flex items-center justify-between gap-3 rounded-xl border border-line p-4"><div><p className="text-sm font-semibold text-ink">{conversation.display_name || "Conversación autorizada"}</p><p className="text-xs text-ink-muted">{conversation.conversation_type === "group" ? "Grupo · no compatible con esta conexión" : "Chat directo"} · {conversation.branches?.name || "Según permisos del equipo"}</p></div><Badge tone={conversation.enabled && conversation.conversation_type === "direct" ? "success" : "default"}>{conversation.conversation_type === "group" ? "No compatible" : conversation.enabled ? "Autorizada" : "Pausada"}</Badge></div>)}</div> : <p className="rounded-xl border border-dashed border-line p-4 text-sm text-ink-muted">Todavía no autorizaste ninguna conversación. El agente no operará sobre otros chats.</p>}
+        <ConversationEditor connected={connected} members={members} branches={branchesResult.data ?? []} />
+        <p className="text-xs leading-relaxed text-ink-subtle">Esta conexión no importa grupos del celular ni convierte el historial sincronizado en órdenes nuevas. Por ahora el agente operativo recibe mensajes de texto.</p>
+      </CardContent>
+    </Card>
+    {children}
+  </div>;
 }
-
 function Unavailable() {
-  return (
-    <div className="space-y-6">
-      <SectionHeader
-        eyebrow="Ajustes · WhatsApp"
-        title="WhatsApp temporalmente no disponible"
-        description="No pudimos confirmar el estado de la conexión en este momento."
-      />
-      <Card>
-        <CardContent className="pt-6">
-          <div className="rounded-xl border border-danger-500/30 bg-danger-500/[0.06] p-4 text-sm text-danger-300">
-            Reintentá en unos minutos. Si el problema continúa, revisaremos la conexión del negocio.
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
+  return <div className="space-y-6"><SectionHeader eyebrow="Ajustes · WhatsApp" title="No pudimos comprobar la conexión" description="Reintentá en unos minutos o ingresá con una persona administradora del negocio." /><Card><CardContent className="pt-6"><p className="text-sm text-ink-muted">No se muestra un estado de conexión sin verificar los datos del negocio.</p></CardContent></Card></div>;
 }

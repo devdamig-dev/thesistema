@@ -8,10 +8,14 @@ Flujo: `Meta webhook → resolveActor → authorizedConversation → branchScope
 
 El endpoint `POST /api/internal/whatsapp-agent` permite probar exactamente el mismo core sin Meta. Requiere `x-agent-secret: $WHATSAPP_AGENT_INTERNAL_SECRET` y un JSON con `sender_phone`, `recipient_phone`, `text` y, opcionalmente, `message_id`.
 
-## Configuración pendiente en Meta
+## Configuración de la conexión oficial
+
+El contrato vigente y los límites del recorrido están documentados en [Conexión WhatsApp](./whatsapp-connection.md) y [Esquema de conexión](./whatsapp-connection-schema.md). No confundir una cuenta vinculada con una prueba de mensajes real completada.
+
+### Verificación de configuración externa
 
 1. Crear o seleccionar una app Business en Meta for Developers y agregar WhatsApp.
-2. Configurar Embedded Signup desde **Ajustes → WhatsApp** y completar `META_APP_ID`, `NEXT_PUBLIC_META_APP_ID`, `META_APP_SECRET`, `META_VERIFY_TOKEN` y `META_EMBEDDED_SIGNUP_CONFIG_ID`.
+2. Configurar Embedded Signup desde **Ajustes → WhatsApp** y completar `META_APP_ID`, `NEXT_PUBLIC_META_APP_ID`, `META_APP_SECRET`, `META_VERIFY_TOKEN` y `NEXT_PUBLIC_META_WHATSAPP_CONFIG_ID` (y `NEXT_PUBLIC_META_WHATSAPP_BUSINESS_APP_CONFIG_ID` si se separan los productos).
 3. Publicar `https://<dominio>/api/webhooks/whatsapp`, usar `META_VERIFY_TOKEN` como verify token y suscribir el campo `messages`.
 4. Conceder `whatsapp_business_management` y `whatsapp_business_messaging`; completar Business Verification y App Review para producción.
 5. Confirmar que el número queda en `whatsapp_integrations` con estado `connected`. El access token se mantiene server-only.
@@ -41,3 +45,10 @@ El router incluido es determinístico y cubre las frases MVP. La interfaz `inter
 ## Próximos incrementos
 
 1. Prueba end-to-end con un negocio y número Meta autorizados, incluyendo permisos de rol y sucursal.
+
+## Recuperación y aislamiento de la conexión
+
+- La copia de un mensaje en Bandeja conserva el `branch_id` de la conversación autorizada; no convierte una conversación de sucursal en un registro compartido.
+- Los fallos previos a reclamar la autorización pueden conservar la selección sólo si el error está clasificado como reintentable.
+- Un fallo posterior a reclamarla o una respuesta de persistencia perdida exige comprobar el estado almacenado: no se repite la operación ni se afirma rollback. La interfaz descarta la selección consumida y permite iniciar otra autorización.
+- Cancelar una autorización ya consumida no afirma una cancelación inexistente y permite salir del flujo sin recargar manualmente.
