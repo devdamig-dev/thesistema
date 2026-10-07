@@ -9,7 +9,7 @@
  * que envolvemos la API en try/catch para no romper renders RSC.
  */
 
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { env, isDatabaseMode } from "@/lib/env";
 import type { Database } from "./types";
@@ -19,22 +19,17 @@ export async function createSupabaseServerClient() {
   const store = await cookies();
   return createServerClient<Database>(env.supabaseUrl, env.supabaseAnonKey, {
     cookies: {
-      get(name: string) {
-        return store.get(name)?.value;
+      getAll() {
+        return store.getAll();
       },
-      set(name: string, value: string, options: CookieOptions) {
+      setAll(cookiesToSet) {
         try {
-          store.set({ name, value, ...options });
+          cookiesToSet.forEach(({ name, value, options }) => {
+            store.set(name, value, options);
+          });
         } catch {
           // Server Components no permiten escribir cookies — el middleware
           // se encarga de refrescar la sesión.
-        }
-      },
-      remove(name: string, options: CookieOptions) {
-        try {
-          store.set({ name, value: "", ...options });
-        } catch {
-          /* idem */
         }
       },
     },
