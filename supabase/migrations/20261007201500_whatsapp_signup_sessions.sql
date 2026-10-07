@@ -1,5 +1,5 @@
--- Server-owned, short-lived credentials. No client can read another signup or its token.
-create table if not exists public.whatsapp_signup_sessions (
+-- Versioned multi-account contract. Preserve any earlier whatsapp_signup_sessions draft unchanged.
+create table if not exists public.whatsapp_connection_sessions (
   id uuid primary key default gen_random_uuid(),
   business_id uuid not null references public.businesses(id) on delete cascade,
   user_id uuid not null references public.profiles(id) on delete cascade,
@@ -12,25 +12,24 @@ create table if not exists public.whatsapp_signup_sessions (
   consumed_at timestamptz,
   created_at timestamptz not null default now()
 );
-alter table public.whatsapp_signup_sessions enable row level security;
-revoke all on public.whatsapp_signup_sessions from public, anon, authenticated;
-grant select, insert, update, delete on public.whatsapp_signup_sessions to service_role;
-create index if not exists whatsapp_signup_sessions_business_idx on public.whatsapp_signup_sessions(business_id);
-create index if not exists whatsapp_signup_sessions_user_idx on public.whatsapp_signup_sessions(user_id);
-create index if not exists whatsapp_signup_sessions_expiry_idx on public.whatsapp_signup_sessions(expires_at);
+alter table public.whatsapp_connection_sessions enable row level security;
+revoke all on public.whatsapp_connection_sessions from public, anon, authenticated;
+grant select, insert, update, delete on public.whatsapp_connection_sessions to service_role;
+create index if not exists whatsapp_connection_sessions_business_idx on public.whatsapp_connection_sessions(business_id);
+create index if not exists whatsapp_connection_sessions_user_idx on public.whatsapp_connection_sessions(user_id);
+create index if not exists whatsapp_connection_sessions_expiry_idx on public.whatsapp_connection_sessions(expires_at);
 
 create or replace function public.complete_whatsapp_signup(
   p_session_id uuid, p_business_id uuid, p_actor_id uuid, p_phone_id text, p_display_phone text
 ) returns void language plpgsql security definer set search_path = public, pg_temp as $$
 declare
-  s public.whatsapp_signup_sessions%rowtype;
+  s public.whatsapp_connection_sessions%rowtype;
   selected jsonb;
   current_phone text;
   member_role text;
   actor_name text;
 begin
   if coalesce(auth.role(), '') <> 'service_role' then raise exception 'service_role_required'; end if;
-  -- Serialize connections to the business, including competing sessions.
   perform 1 from public.businesses where id = p_business_id for update;
   if not found then raise exception 'business_not_found'; end if;
   select m.role::text, p.full_name into member_role, actor_name
@@ -38,7 +37,7 @@ begin
     where m.business_id = p_business_id and m.user_id = p_actor_id and p.active = true
     and m.role::text in ('owner','admin');
   if not found then raise exception 'permission_denied'; end if;
-  select * into s from public.whatsapp_signup_sessions where id = p_session_id
+  select * into s from public.whatsapp_connection_sessions where id = p_session_id
     and business_id = p_business_id and user_id = p_actor_id for update;
   if not found or s.consumed_at is not null or s.claimed_at is null
     or s.expires_at <= now() or s.access_token is null
@@ -64,7 +63,7 @@ begin
     values(p_business_id, p_actor_id, actor_name, member_role, 'whatsapp.connected', 'whatsapp',
       'Cuenta de WhatsApp vinculada; prueba de mensajes pendiente',
       jsonb_build_object('phone_number_id',p_phone_id,'waba_id',selected->>'accountId','mode',s.mode,'signup_session_id',s.id));
-  update public.whatsapp_signup_sessions set consumed_at=now(), access_token=null, choices='[]'::jsonb where id=s.id;
+  update public.whatsapp_connection_sessions set consumed_at=now(), access_token=null, choices='[]'::jsonb where id=s.id;
 end $$;
 revoke all on function public.complete_whatsapp_signup(uuid,uuid,uuid,text,text) from public,anon,authenticated;
 grant execute on function public.complete_whatsapp_signup(uuid,uuid,uuid,text,text) to service_role;

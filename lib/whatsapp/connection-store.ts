@@ -2,31 +2,42 @@ import { ConnectionError, type ConnectionActor } from "./signup";
 import type { ConnectionStore, SignupSession } from "./connection-service";
 import type { GraphPhone } from "./graph";
 
-/** The database client must be server-owned. Every read and write is bound to actor + business. */
+// This schema is distinct from an earlier, externally applied single-account signup draft.
+export const CONNECTION_SESSION_TABLE = "whatsapp_connection_sessions";
+
+export async function readWhatsAppConnectionStatus(db: any, businessId: string) {
+  const result = await db.from("whatsapp_integrations").select("phone_number_id,display_phone_number,status,connected_at,token_expires_at").eq("business_id", businessId).maybeSingle();
+  if (result.error) throw new ConnectionError("connection_status_failed", "No pudimos comprobar la vinculación.", 503);
+  const integration = result.data;
+  const expiry = integration?.token_expires_at ? Date.parse(integration.token_expires_at) : null;
+  const expired = expiry !== null && (!Number.isFinite(expiry) || expiry <= Date.now());
+  return { integration, expired };
+}
+
+/** The mutation client must be server-owned. Reads and writes are bound to actor + business. */
 export function connectionStore(db: any): ConnectionStore {
   const scoped = (query: any, id: string, actor: ConnectionActor) => query.eq("id", id).eq("business_id", actor.businessId).eq("user_id", actor.userId);
   const failure = () => new ConnectionError("connection_storage_failed", "No pudimos guardar la conexión. Actualizá la página para comprobar su estado antes de reintentar.", 503);
   return {
     async create(session: SignupSession) {
-      // Remove expired credentials, not business data or existing integrations.
-      const cleanup = await db.from("whatsapp_signup_sessions").delete().lt("expires_at", new Date().toISOString());
+      const cleanup = await db.from(CONNECTION_SESSION_TABLE).delete().lt("expires_at", new Date().toISOString());
       if (cleanup.error) throw failure();
-      const result = await db.from("whatsapp_signup_sessions").insert(session);
+      const result = await db.from(CONNECTION_SESSION_TABLE).insert(session);
       if (result.error) throw failure();
     },
     async get(id: string, actor: ConnectionActor) {
-      const result = await scoped(db.from("whatsapp_signup_sessions").select("id,business_id,user_id,mode,access_token,token_expires_at,choices,expires_at,claimed_at,consumed_at"), id, actor).maybeSingle();
+      const result = await scoped(db.from(CONNECTION_SESSION_TABLE).select("id,business_id,user_id,mode,access_token,token_expires_at,choices,expires_at,claimed_at,consumed_at"), id, actor).maybeSingle();
       if (result.error) throw failure();
       return result.data as SignupSession | null;
     },
     async claim(id: string, actor: ConnectionActor) {
-      const result = await scoped(db.from("whatsapp_signup_sessions").update({ claimed_at: new Date().toISOString() }), id, actor)
+      const result = await scoped(db.from(CONNECTION_SESSION_TABLE).update({ claimed_at: new Date().toISOString() }), id, actor)
         .is("claimed_at", null).is("consumed_at", null).gt("expires_at", new Date().toISOString()).select("id").maybeSingle();
       if (result.error) throw failure();
       return Boolean(result.data);
     },
     async discard(id: string, actor: ConnectionActor) {
-      const result = await scoped(db.from("whatsapp_signup_sessions").update({ consumed_at: new Date().toISOString(), access_token: null, choices: [] }), id, actor).is("consumed_at", null);
+      const result = await scoped(db.from(CONNECTION_SESSION_TABLE).update({ consumed_at: new Date().toISOString(), access_token: null, choices: [] }), id, actor).is("consumed_at", null);
       if (result.error) throw failure();
     },
     async assertAvailable(actor: ConnectionActor, phoneId: string) {

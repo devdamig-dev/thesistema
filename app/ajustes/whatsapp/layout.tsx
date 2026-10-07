@@ -3,6 +3,7 @@ import { MessageSquareText, Phone, ShieldCheck } from "lucide-react";
 import { isDatabaseMode } from "@/lib/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentUserContext } from "@/lib/data/auth";
+import { readWhatsAppConnectionStatus } from "@/lib/whatsapp/connection-store";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SectionHeader } from "@/components/ui/section-header";
@@ -29,31 +30,39 @@ export default async function WhatsappSettingsLayout({ children }: { children: R
     const profile = (profiles.data ?? []).find((profile: { id: string }) => profile.id === member.user_id);
     return { id: member.id, name: profile?.full_name || "Persona del equipo", phone: profile?.phone || null, active: profile?.active === true };
   });
-  // Column grants expose status only; RLS enforces owner/admin and the business. Tokens have no client grant.
-  const result = await db.from("whatsapp_integrations").select("phone_number_id,display_phone_number,status,connected_at,token_expires_at").eq("business_id", ctx.businessId).maybeSingle();
-  if (result.error) return <Unavailable />;
-  const integration = result.data;
-  const expired = Boolean(integration?.token_expires_at && Date.parse(integration.token_expires_at) <= Date.now());
+  // RLS + column grants expose status, never credentials, through the authenticated client.
+  const state = await readWhatsAppConnectionStatus(db, ctx.businessId).catch(() => null);
+  if (!state) return <Unavailable />;
+  const { integration, expired } = state;
   const connected = Boolean(integration?.status === "connected" && !expired && business.data?.whatsapp_connected && business.data?.whatsapp_phone_number_id === integration.phone_number_id);
   const appId = process.env.NEXT_PUBLIC_META_APP_ID?.trim() || null;
   const configId = process.env.NEXT_PUBLIC_META_WHATSAPP_CONFIG_ID?.trim() || null;
   const businessAppConfigId = process.env.NEXT_PUBLIC_META_WHATSAPP_BUSINESS_APP_CONFIG_ID?.trim() || configId;
   const apiVersion = process.env.NEXT_PUBLIC_META_GRAPH_VERSION?.trim() || "v25.0";
   const conversations = conversationsResult.data ?? [];
+  const connectButton = <WhatsAppConnectButton appId={appId} configId={configId} businessAppConfigId={businessAppConfigId} apiVersion={apiVersion} />;
   return <div className="space-y-6">
     <SectionHeader eyebrow="Ajustes · WhatsApp" title="Tu WhatsApp, conectado a tu negocio" description="Autorizá tu cuenta en Meta, elegí el número y definí quiénes pueden operar por este canal." />
-    <Card><CardHeader><CardTitle className="flex items-center gap-2"><MessageSquareText className="h-4 w-4" />Estado de la vinculación</CardTitle><Badge tone="default">{connected ? "Cuenta vinculada" : expired ? "Renovar autorización" : "Pendiente"}</Badge></CardHeader><CardContent>
-      {connected ? <div className="space-y-3 rounded-xl border border-line p-5"><p className="flex items-center gap-2 text-sm font-semibold text-ink"><Phone className="h-4 w-4" />{integration.display_phone_number || "Número autorizado"}</p><p className="text-sm text-ink-muted">La vinculación está guardada. Para comprobar el recorrido completo, autorizá abajo una conversación y enviá un mensaje desde el WhatsApp de esa persona al número del negocio.</p><p className="text-xs text-ink-muted">La autorización de Meta no demuestra por sí sola que un mensaje ya haya llegado o recibido respuesta.</p><details className="pt-2"><summary className="cursor-pointer text-sm font-semibold text-ink">Renovar permisos de esta cuenta</summary><div className="mt-4"><WhatsAppConnectButton appId={appId} configId={configId} businessAppConfigId={businessAppConfigId} apiVersion={apiVersion} /></div></details></div> : <div className="space-y-4">
-        <p className="text-sm text-ink-muted">{expired ? "La autorización de Meta venció. Volvé a autorizar el mismo número para recuperar la conexión." : "Elegí cómo usás WhatsApp. No necesitás copiar claves ni crear una aplicación de Meta para cada negocio."}</p>
-        <WhatsAppConnectButton appId={appId} configId={configId} businessAppConfigId={businessAppConfigId} apiVersion={apiVersion} />
-      </div>}
-    </CardContent></Card>
-    <Card><CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Conversaciones autorizadas</CardTitle></CardHeader><CardContent className="space-y-5">
-      <p className="text-sm text-ink-muted">Sólo se procesan chats directos que autorices y mensajes de personas activas del equipo. Autorizar un chat no amplía sus permisos sobre los módulos o las sucursales.</p>
-      {conversations.length ? <div className="space-y-2">{conversations.map((conversation: any) => <div key={conversation.id} className="flex items-center justify-between gap-3 rounded-xl border border-line p-4"><div><p className="text-sm font-semibold text-ink">{conversation.display_name || "Conversación autorizada"}</p><p className="text-xs text-ink-muted">{conversation.conversation_type === "group" ? "Grupo · no compatible con esta conexión" : "Chat directo"} · {conversation.branches?.name || "Según permisos del equipo"}</p></div><Badge tone={conversation.enabled && conversation.conversation_type === "direct" ? "success" : "default"}>{conversation.enabled ? "Autorizada" : "Pausada"}</Badge></div>)}</div> : <p className="rounded-xl border border-dashed border-line p-4 text-sm text-ink-muted">Todavía no autorizaste ninguna conversación. El agente no operará sobre otros chats.</p>}
-      <ConversationEditor connected={connected} members={members} branches={branchesResult.data ?? []} />
-      <p className="text-xs leading-relaxed text-ink-subtle">Esta conexión no importa grupos del celular ni convierte el historial sincronizado en órdenes nuevas. Por ahora el agente operativo recibe mensajes de texto.</p>
-    </CardContent></Card>
+    <Card>
+      <CardHeader><CardTitle className="flex items-center gap-2"><MessageSquareText className="h-4 w-4" />Estado de la vinculación</CardTitle><Badge tone="default">{connected ? "Cuenta vinculada" : expired ? "Renovar autorización" : "Pendiente"}</Badge></CardHeader>
+      <CardContent>{connected ? <div className="space-y-3 rounded-xl border border-line p-5">
+        <p className="flex items-center gap-2 text-sm font-semibold text-ink"><Phone className="h-4 w-4" />{integration.display_phone_number || "Número autorizado"}</p>
+        <p className="text-sm text-ink-muted">La vinculación está guardada. Para comprobar el recorrido completo, autorizá abajo una conversación y enviá un mensaje desde el WhatsApp de esa persona al número del negocio.</p>
+        <p className="text-xs text-ink-muted">La autorización de Meta no demuestra por sí sola que un mensaje ya haya llegado o recibido respuesta.</p>
+        <details className="pt-2"><summary className="cursor-pointer text-sm font-semibold text-ink">Renovar permisos de esta cuenta</summary><div className="mt-4">{connectButton}</div></details>
+      </div> : <div className="space-y-4">
+        <p className="text-sm text-ink-muted">{expired ? "La autorización de Meta venció. Volvé a autorizar el mismo número para recuperar la conexión." : "Elegí cómo usás WhatsApp. No necesitás copiar claves ni crear una aplicación de Meta para cada negocio."}</p>{connectButton}
+      </div>}</CardContent>
+    </Card>
+    <Card>
+      <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Conversaciones autorizadas</CardTitle></CardHeader>
+      <CardContent className="space-y-5">
+        <p className="text-sm text-ink-muted">Sólo se procesan chats directos que autorices y mensajes de personas activas del equipo. Autorizar un chat no amplía sus permisos sobre los módulos o las sucursales.</p>
+        {conversations.length ? <div className="space-y-2">{conversations.map((conversation: any) => <div key={conversation.id} className="flex items-center justify-between gap-3 rounded-xl border border-line p-4"><div><p className="text-sm font-semibold text-ink">{conversation.display_name || "Conversación autorizada"}</p><p className="text-xs text-ink-muted">{conversation.conversation_type === "group" ? "Grupo · no compatible con esta conexión" : "Chat directo"} · {conversation.branches?.name || "Según permisos del equipo"}</p></div><Badge tone={conversation.enabled && conversation.conversation_type === "direct" ? "success" : "default"}>{conversation.conversation_type === "group" ? "No compatible" : conversation.enabled ? "Autorizada" : "Pausada"}</Badge></div>)}</div> : <p className="rounded-xl border border-dashed border-line p-4 text-sm text-ink-muted">Todavía no autorizaste ninguna conversación. El agente no operará sobre otros chats.</p>}
+        <ConversationEditor connected={connected} members={members} branches={branchesResult.data ?? []} />
+        <p className="text-xs leading-relaxed text-ink-subtle">Esta conexión no importa grupos del celular ni convierte el historial sincronizado en órdenes nuevas. Por ahora el agente operativo recibe mensajes de texto.</p>
+      </CardContent>
+    </Card>
     {children}
   </div>;
 }

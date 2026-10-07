@@ -6,7 +6,7 @@ import { rateLimit } from "@/lib/rate-limit";
 import { authorizeConnectionActor, ConnectionError, parseConnectionRequest, sameOrigin } from "@/lib/whatsapp/signup";
 import { WhatsAppGraph } from "@/lib/whatsapp/graph";
 import { prepareConnection, connectSelection } from "@/lib/whatsapp/connection-service";
-import { connectionStore } from "@/lib/whatsapp/connection-store";
+import { CONNECTION_SESSION_TABLE, connectionStore } from "@/lib/whatsapp/connection-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
     const input = parseConnectionRequest(body);
     const store = connectionStore(db);
     if (input.action === "cancel") {
-      const result = await db.from("whatsapp_signup_sessions")
+      const result = await db.from(CONNECTION_SESSION_TABLE)
         .update({ consumed_at: new Date().toISOString(), access_token: null, choices: [] })
         .eq("id", input.sessionId).eq("business_id", actor.businessId).eq("user_id", actor.userId)
         .is("claimed_at", null).is("consumed_at", null).select("id").maybeSingle();
@@ -45,7 +45,6 @@ export async function POST(request: NextRequest) {
     if (input.action === "prepare") return json(await prepareConnection(actor, input, graph, store));
     return json(await connectSelection(actor, input.sessionId, input.phoneNumberId, graph, store));
   } catch (error) {
-    // Never echo Graph payloads, tokens, database errors or authorization codes to a browser/log.
     if (error instanceof ConnectionError) return json({ ok: false, code: error.code, error: error.message }, error.status);
     return json({ ok: false, code: "connection_failed", error: "No pudimos completar la conexión. No borres ni desvincules tu WhatsApp; actualizá la página y volvé a intentarlo." }, 502);
   }
