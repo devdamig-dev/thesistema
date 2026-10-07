@@ -14,16 +14,21 @@ export type ExpenseRow = {
   monto: number;
   vencimiento: string | null;
   estado: string;
+  sucursal: string;
 };
+
+export type ExpenseBranch = { id: string; name: string };
 
 export type ExpensesPageData = {
   expenses: ExpenseRow[];
   totalFixed: number;
   totalVariable: number;
   grossMarginPct: number | null;
+  branches: ExpenseBranch[];
 };
 
 export type ExpenseInput = {
+  branchId: string;
   name: string;
   category: string;
   amount: number;
@@ -47,31 +52,50 @@ export async function getExpensesPageDataAction(): Promise<
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
   const monthStart = `${today.slice(0, 7)}-01`;
 
-  const [expensesRes, purchasesRes, balanceRes] = await Promise.all([
-    supabase
+  let expensesQuery = supabase
       .from("expenses")
-      .select("id,name,category,amount,due_date,status")
+      .select("id,name,category,amount,due_date,status,branch_id,branches(name)")
       .eq("business_id", ctx.businessId)
       .order("due_date", { ascending: true, nullsFirst: false })
-      .limit(1000),
-    supabase
+      .limit(1000);
+  let purchasesQuery = supabase
       .from("purchases")
       .select("total")
       .eq("business_id", ctx.businessId)
       .gte("purchased_at", monthStart)
-      .limit(5000),
-    supabase
+      .limit(5000);
+  let branchesQuery = supabase
+    .from("branches")
+    .select("id,name")
+    .eq("business_id", ctx.businessId)
+    .order("is_main", { ascending: false })
+    .order("created_at");
+  if (ctx.assignedBranchIds !== null) {
+    const branchIds = ctx.assignedBranchIds.length
+      ? ctx.assignedBranchIds
+      : ["00000000-0000-0000-0000-000000000000"];
+    expensesQuery = expensesQuery.in("branch_id", branchIds);
+    purchasesQuery = purchasesQuery.in("branch_id", branchIds);
+    branchesQuery = branchesQuery.in("id", branchIds);
+  }
+
+  const [expensesRes, purchasesRes, balanceRes, branchesRes] = await Promise.all([
+    expensesQuery,
+    purchasesQuery,
+    ctx.assignedBranchIds === null ? supabase
       .from("balance_snapshots")
       .select("gross_margin_pct")
       .eq("business_id", ctx.businessId)
       .order("period_month", { ascending: false })
       .limit(1)
-      .maybeSingle(),
+      .maybeSingle() : Promise.resolve({ data: null, error: null }),
+    branchesQuery,
   ]);
 
   if (expensesRes.error) return { ok: false, error: "No pudimos cargar los gastos." };
   if (purchasesRes.error) return { ok: false, error: "No pudimos cargar las compras del mes." };
   if (balanceRes.error) return { ok: false, error: "No pudimos cargar el último balance." };
+  if (branchesRes.error) return { ok: false, error: "No pudimos cargar las sucursales disponibles." };
 
   const expenses = ((expensesRes.data ?? []) as Array<{
     id: string;
@@ -80,6 +104,8 @@ export async function getExpensesPageDataAction(): Promise<
     amount: number | string;
     due_date: string | null;
     status: string;
+    branch_id: string;
+    branches: { name: string } | null;
   }>).map((row) => ({
     id: row.id,
     nombre: row.name,
@@ -87,6 +113,7 @@ export async function getExpensesPageDataAction(): Promise<
     monto: Number(row.amount ?? 0),
     vencimiento: row.due_date,
     estado: row.status,
+    sucursal: row.branches?.name ?? "Sucursal",
   }));
 
   const totalFixed = expenses.reduce((sum, row) => sum + row.monto, 0);
@@ -97,10 +124,11 @@ export async function getExpensesPageDataAction(): Promise<
   const balance = balanceRes.data as { gross_margin_pct: number | string | null } | null;
   const grossMarginPct = balance?.gross_margin_pct == null ? null : Number(balance.gross_margin_pct);
 
-  return { ok: true, data: { expenses, totalFixed, totalVariable, grossMarginPct } };
+  return { ok: true, data: { expenses, totalFixed, totalVariable, grossMarginPct, branches: branchesRes.data ?? [] } };
 }
 
 function validateExpense(input: ExpenseInput): string | null {
+  if (!input.branchId) return "Elegí una sucursal.";
   if (!input.name.trim()) return "Ingresá el concepto del gasto.";
   if (!input.category.trim()) return "Ingresá una categoría.";
   if (!Number.isFinite(Number(input.amount)) || Number(input.amount) <= 0) return "Ingresá un monto mayor a cero.";
@@ -121,10 +149,19 @@ export const createExpenseAction = withPermission<[ExpenseInput], ExpenseMutatio
     const db = createSupabaseServerClient() as any;
     if (!db) return { ok: false, persisted: false, error: "No pudimos conectar con tus datos." };
 
+    if (ctx.assignedBranchIds !== null && !ctx.assignedBranchIds.includes(input.branchId)) {
+      return { ok: false, persisted: false, error: "La sucursal seleccionada no está asignada a tu usuario." };
+    }
+    const branchRes = await db.from("branches").select("id").eq("id", input.branchId).eq("business_id", ctx.businessId).maybeSingle();
+    if (branchRes.error || !branchRes.data?.id) {
+      return { ok: false, persisted: false, error: "La sucursal seleccionada no está disponible." };
+    }
+
     const res = await db
       .from("expenses")
       .insert({
         business_id: ctx.businessId,
+        branch_id: input.branchId,
         name: input.name.trim(),
         category: input.category.trim(),
         amount: Number(input.amount),

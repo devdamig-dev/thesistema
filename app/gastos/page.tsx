@@ -95,6 +95,7 @@ export default function GastosPage() {
     monto: row.monto,
     vencimiento: null,
     estado: row.estado,
+    sucursal: "Principal",
   })), []);
 
   const expenses = IS_DATABASE ? databaseData?.expenses ?? [] : demoExpenses;
@@ -186,19 +187,20 @@ export default function GastosPage() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="border-y border-line bg-bg-subtle/60 text-left text-[11px] uppercase tracking-wider text-ink-subtle">
-                    <tr><th className="px-5 py-2.5 font-medium">Concepto</th><th className="px-5 py-2.5 font-medium">Categoría</th><th className="px-5 py-2.5 font-medium">Vencimiento</th><th className="px-5 py-2.5 font-medium">Estado</th><th className="px-5 py-2.5 text-right font-medium">Monto</th></tr>
+                    <tr><th className="px-5 py-2.5 font-medium">Concepto</th><th className="px-5 py-2.5 font-medium">Sucursal</th><th className="px-5 py-2.5 font-medium">Categoría</th><th className="px-5 py-2.5 font-medium">Vencimiento</th><th className="px-5 py-2.5 font-medium">Estado</th><th className="px-5 py-2.5 text-right font-medium">Monto</th></tr>
                   </thead>
                   <tbody>
                     {expenses.map((expense) => (
                       <tr key={expense.id} className="border-b border-line/60 last:border-0 hover:bg-bg-subtle">
                         <td className="px-5 py-3"><div className="flex items-center gap-2"><div className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-bg-subtle text-ink-muted"><Receipt className="h-3.5 w-3.5" /></div><span className="font-medium text-ink">{expense.nombre}</span></div></td>
+                        <td className="px-5 py-3 text-ink-muted">{expense.sucursal}</td>
                         <td className="px-5 py-3 text-ink-muted">{expense.categoria || "—"}</td>
                         <td className="px-5 py-3 text-ink-muted">{IS_DATABASE ? formatDueDate(expense.vencimiento) : fixedExpenses.find((row) => row.nombre === expense.nombre)?.vencimiento ?? "—"}</td>
                         <td className="px-5 py-3"><Badge tone={statusTone(expense.estado)}>{statusLabel(expense.estado)}</Badge></td>
                         <td className="px-5 py-3 text-right font-semibold tabular-nums text-ink">{formatARS(expense.monto)}</td>
                       </tr>
                     ))}
-                    <tr className="bg-bg-elevated/60"><td colSpan={4} className="px-5 py-3 text-right text-xs uppercase tracking-wider text-ink-subtle">Total mensual</td><td className="px-5 py-3 text-right text-base font-semibold tabular-nums text-brand-300">{formatARS(totalFijos)}</td></tr>
+                    <tr className="bg-bg-elevated/60"><td colSpan={5} className="px-5 py-3 text-right text-xs uppercase tracking-wider text-ink-subtle">Total mensual</td><td className="px-5 py-3 text-right text-base font-semibold tabular-nums text-brand-300">{formatARS(totalFijos)}</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -241,13 +243,14 @@ export default function GastosPage() {
         description="Registrá un costo recurrente del negocio."
         width="max-w-lg"
       >
-        <ExpenseForm pending={pending} onCancel={() => setDrawerOpen(false)} onSubmit={saveExpense} />
+        <ExpenseForm branches={databaseData?.branches ?? []} pending={pending} onCancel={() => setDrawerOpen(false)} onSubmit={saveExpense} />
       </Drawer>
     </div>
   );
 }
 
-function ExpenseForm({ pending, onCancel, onSubmit }: { pending: boolean; onCancel: () => void; onSubmit: (input: ExpenseInput) => void }) {
+function ExpenseForm({ branches, pending, onCancel, onSubmit }: { branches: ExpensesPageData["branches"]; pending: boolean; onCancel: () => void; onSubmit: (input: ExpenseInput) => void }) {
+  const [branchId, setBranchId] = useState(branches.length === 1 ? branches[0].id : "");
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
   const [amount, setAmount] = useState("");
@@ -258,15 +261,22 @@ function ExpenseForm({ pending, onCancel, onSubmit }: { pending: boolean; onCanc
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const parsedAmount = Number(amount.replace(",", "."));
+    if (!branchId) return setError("Elegí una sucursal.");
     if (!name.trim()) return setError("Ingresá el concepto del gasto.");
     if (!category.trim()) return setError("Ingresá una categoría.");
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) return setError("Ingresá un monto mayor a cero.");
     setError("");
-    onSubmit({ name: name.trim(), category: category.trim(), amount: parsedAmount, dueDate: dueDate || null, status });
+    onSubmit({ branchId, name: name.trim(), category: category.trim(), amount: parsedAmount, dueDate: dueDate || null, status });
   }
 
   return (
     <form onSubmit={submit} className="space-y-5 p-6">
+      <Field label="Sucursal" required>
+        <select className={inputClass} value={branchId} onChange={(event) => setBranchId(event.target.value)}>
+          <option value="">Seleccioná una sucursal</option>
+          {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+        </select>
+      </Field>
       <Field label="Concepto" required><input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} placeholder="Ej. Alquiler" /></Field>
       <Field label="Categoría" required><input className={inputClass} value={category} onChange={(event) => setCategory(event.target.value)} placeholder="Ej. Local" /></Field>
       <div className="grid grid-cols-2 gap-4">
