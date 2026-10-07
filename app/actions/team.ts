@@ -36,7 +36,7 @@ export async function inviteUserAction(payload: {
     refresh();
     return { ok: true, persisted: false };
   }
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "connection_unavailable" };
   const db = supabase as any;
   const businessId = ctx.businessId!;
@@ -111,7 +111,7 @@ export async function updateMemberRoleAction(
     refresh();
     return { ok: true, persisted: false };
   }
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "connection_unavailable" };
   const db = supabase as any;
 
@@ -185,7 +185,7 @@ export async function updateMemberBranchesAction(
     return { ok: false, persisted: false, error: "invalid_branches" };
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "connection_unavailable" };
   const db = supabase as any;
   const rpcRes = await db.rpc("replace_member_branch_assignments", {
@@ -240,7 +240,7 @@ export async function revokeInvitationAction(invitationId: string): Promise<Resu
     refresh();
     return { ok: true, persisted: false };
   }
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "connection_unavailable" };
   const db = supabase as any;
   const { data, error } = await db

@@ -15,7 +15,7 @@ type Tables = Database["public"]["Tables"];
  */
 export const databaseBusiness = {
   async getCurrent() {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     if (!supabase) return null;
 
     const ctx = await getCurrentUserContext();

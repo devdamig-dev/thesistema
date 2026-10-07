@@ -77,9 +77,9 @@ const DATABASE_UNAUTHENTICATED_CONTEXT: UserContext = {
 /** Roles "sin restricción" — ven TODAS las sucursales. */
 const UNRESTRICTED_ROLES: Role[] = ["owner", "admin", "manager", "accountant"];
 
-function readDemoRoleCookie(): Role | null {
+async function readDemoRoleCookie(): Promise<Role | null> {
   try {
-    const value = cookies().get("gp_demo_role")?.value;
+    const value = (await cookies()).get("gp_demo_role")?.value;
     if (!value) return null;
     return (VALID_ROLES as string[]).includes(value) ? (value as Role) : null;
   } catch {
@@ -92,14 +92,14 @@ export async function getCurrentUserContext(): Promise<UserContext> {
     // En demo, permitimos overridear el rol con la cookie gp_demo_role
     // (seteada vía /api/dev/role?as=...). Útil para QA del sidebar
     // adaptativo y el middleware guard.
-    const override = readDemoRoleCookie();
+    const override = await readDemoRoleCookie();
     if (override) {
       return { ...DEMO_CONTEXT, role: override };
     }
     return DEMO_CONTEXT;
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return DATABASE_UNAUTHENTICATED_CONTEXT;
   const db = supabase as any;
 

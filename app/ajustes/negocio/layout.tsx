@@ -11,7 +11,7 @@ import { BusinessBasicsForm } from "./business-basics-form";
 export default async function BusinessSettingsLayout({ children }: { children: ReactNode }) {
   if (!isDatabaseMode()) return <>{children}</>;
 
-  const supabase = createSupabaseServerClient() as any;
+  const supabase = await createSupabaseServerClient() as any;
   if (!supabase) return <Unavailable message="Supabase no está configurado. No mostramos datos demo del negocio." />;
 
   const ctx = await getCurrentUserContext();

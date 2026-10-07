@@ -24,7 +24,7 @@ export type CustomersPageData = {
 export async function getCustomersPageDataAction(): Promise<
   { ok: true; data: CustomersPageData } | { ok: false; error: string }
 > {
-  const supabase = createSupabaseServerClient() as any;
+  const supabase = await createSupabaseServerClient() as any;
   if (!supabase) return { ok: false, error: "Supabase no está disponible." };
 
   const ctx = await getCurrentUserContext();

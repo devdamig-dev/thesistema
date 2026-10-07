@@ -50,7 +50,7 @@ const EMPTY_GROWTH_SUMMARY = { clientesActivos: 0, clientesNuevos: 0, tasaRetorn
 // ---------- BUSINESS ----------
 export const business = {
   async getCurrent() {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     if (!supabase) return demo.business.getCurrent();
 
     // 1) Primer business del usuario (RLS filtra a los suyos).
@@ -124,7 +124,7 @@ export const dashboard = {
 // ---------- INBOX (Sprint 2 · real) ----------
 export const inbox = {
   async list() {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     if (!supabase) return demo.inbox.list();
     const db = supabase as any;
 
@@ -168,14 +168,14 @@ export const inbox = {
     // Por ahora las conversaciones bidireccionales viven en mock-data.
     // Cuando integremos respuestas reales del copiloto en Sprint 3,
     // las leemos de una nueva tabla `whatsapp_conversation_turns`.
-    return createSupabaseServerClient() ? [] : demo.inbox.getConversation(messageId);
+    return await createSupabaseServerClient() ? [] : demo.inbox.getConversation(messageId);
   },
 };
 
 // ---------- FACTURAS · DB con branch filtering ----------
 export const invoices = {
   async list() {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     if (!supabase) return demo.invoices.list();
     const db = supabase as any;
     const ctx = await getCurrentUserContext();
@@ -211,7 +211,7 @@ export const invoices = {
 // ---------- CIERRES · DB con branch filtering ----------
 export const closures = {
   async list() {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     if (!supabase) return demo.closures.list();
     const db = supabase as any;
     const ctx = await getCurrentUserContext();
@@ -236,7 +236,7 @@ export const closures = {
 // ---------- PRODUCTOS ----------
 export const products = {
   async list() {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     if (!supabase) return demo.products.list();
     const res = await supabase
       .from("products")
@@ -248,16 +248,16 @@ export const products = {
     if (res.error || !rows?.length) return [];
     return rows.map(mapProduct);
   },
-  async getRecipe(name: string) { return createSupabaseServerClient() ? [] : demo.products.getRecipe(name); },
-  async getCostHistory(name: string) { return createSupabaseServerClient() ? undefined : demo.products.getCostHistory(name); },
-  async getRecommendations(name: string) { return createSupabaseServerClient() ? [] : demo.products.getRecommendations(name); },
-  async getCostingAlerts() { return createSupabaseServerClient() ? [] : demo.products.getCostingAlerts(); },
-  async getIngredientCostHistory() { return createSupabaseServerClient() ? [] : demo.products.getIngredientCostHistory(); },
+  async getRecipe(name: string) { return await createSupabaseServerClient() ? [] : demo.products.getRecipe(name); },
+  async getCostHistory(name: string) { return await createSupabaseServerClient() ? undefined : demo.products.getCostHistory(name); },
+  async getRecommendations(name: string) { return await createSupabaseServerClient() ? [] : demo.products.getRecommendations(name); },
+  async getCostingAlerts() { return await createSupabaseServerClient() ? [] : demo.products.getCostingAlerts(); },
+  async getIngredientCostHistory() { return await createSupabaseServerClient() ? [] : demo.products.getIngredientCostHistory(); },
 };
 
 // ---------- VENTAS · DB con branch filtering ----------
 async function loadSalesRows(): Promise<Tables["sales"]["Row"][] | null> {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return null;
   const db = supabase as any;
   const ctx = await getCurrentUserContext();
@@ -299,10 +299,10 @@ export const sales = {
 // ---------- COMPRAS ----------
 export const purchases = {
   async list() {
-    return createSupabaseServerClient() ? [] : demo.purchases.list();
+    return await createSupabaseServerClient() ? [] : demo.purchases.list();
   },
   async topSuppliers() {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     if (!supabase) return demo.purchases.topSuppliers();
     const res = await supabase.from("suppliers").select("*").order("name");
     const rows = res.data as Tables["suppliers"]["Row"][] | null;
@@ -314,7 +314,7 @@ export const purchases = {
 // ---------- GASTOS ----------
 export const expenses = {
   async fixed() {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     if (!supabase) return demo.expenses.fixed();
     const res = await supabase
       .from("expenses")
@@ -325,7 +325,7 @@ export const expenses = {
     return rows.map(mapExpense);
   },
   async breakEven() {
-    if (!createSupabaseServerClient()) return demo.expenses.breakEven();
+    if (!await createSupabaseServerClient()) return demo.expenses.breakEven();
     return { costosFijos: 0, margenContribucion: 0, puntoEquilibrio: 0, ventaActual: 0 };
   },
 };
@@ -333,7 +333,7 @@ export const expenses = {
 // ---------- STOCK · DB con branch filtering ----------
 export const stock = {
   async list() {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     if (!supabase) return demo.stock.list();
     const db = supabase as any;
     const ctx = await getCurrentUserContext();
@@ -373,7 +373,7 @@ export const stock = {
 // ---------- EMPLEADOS ----------
 export const employees = {
   async list() {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     if (!supabase) return demo.employees.list();
     const res = await supabase
       .from("employees")
@@ -384,16 +384,16 @@ export const employees = {
     if (res.error || !rows?.length) return [];
     return rows.map(mapEmployee);
   },
-  async laborStats() { return createSupabaseServerClient() ? [] : demo.employees.laborStats(); },
-  async weeklyShifts() { return createSupabaseServerClient() ? [] : demo.employees.weeklyShifts(); },
-  async alerts() { return createSupabaseServerClient() ? [] : demo.employees.alerts(); },
-  async laborByDay() { return createSupabaseServerClient() ? [] : demo.employees.laborByDay(); },
+  async laborStats() { return await createSupabaseServerClient() ? [] : demo.employees.laborStats(); },
+  async weeklyShifts() { return await createSupabaseServerClient() ? [] : demo.employees.weeklyShifts(); },
+  async alerts() { return await createSupabaseServerClient() ? [] : demo.employees.alerts(); },
+  async laborByDay() { return await createSupabaseServerClient() ? [] : demo.employees.laborByDay(); },
 };
 
 // ---------- CLIENTES ----------
 export const customers = {
   async list() {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     if (!supabase) return demo.customers.list();
     const res = await supabase
       .from("customers")
@@ -407,18 +407,18 @@ export const customers = {
 
 // ---------- MARKETING (sprint próximo: tabla campaigns ya existe) ----------
 export const marketing = {
-  async summary() { return createSupabaseServerClient() ? EMPTY_GROWTH_SUMMARY : demo.marketing.summary(); },
-  async insights() { return createSupabaseServerClient() ? [] : demo.marketing.insights(); },
-  async campaigns() { return createSupabaseServerClient() ? [] : demo.marketing.campaigns(); },
-  async audiences() { return createSupabaseServerClient() ? [] : demo.marketing.audiences(); },
-  async bestHours() { return createSupabaseServerClient() ? [] : demo.marketing.bestHours(); },
-  async copies() { return createSupabaseServerClient() ? [] : demo.marketing.copies(); },
+  async summary() { return await createSupabaseServerClient() ? EMPTY_GROWTH_SUMMARY : demo.marketing.summary(); },
+  async insights() { return await createSupabaseServerClient() ? [] : demo.marketing.insights(); },
+  async campaigns() { return await createSupabaseServerClient() ? [] : demo.marketing.campaigns(); },
+  async audiences() { return await createSupabaseServerClient() ? [] : demo.marketing.audiences(); },
+  async bestHours() { return await createSupabaseServerClient() ? [] : demo.marketing.bestHours(); },
+  async copies() { return await createSupabaseServerClient() ? [] : demo.marketing.copies(); },
 };
 
 // ---------- DEUDAS (Sprint 3 · real con fallback) ----------
 export const debts = {
   async list() {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     if (!supabase) return demo.debts.list();
     const db = supabase as any;
     const dRes = await db
@@ -448,7 +448,7 @@ export const debts = {
     return rows.map((d) => mapDebt(d, byDebt.get(d.id) ?? []));
   },
   async kpis() {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     if (!supabase) return demo.debts.kpis();
     const db = supabase as any;
     const res = await db
@@ -480,7 +480,7 @@ export const debts = {
 // ---------- BALANCES (Sprint 3 · sigue demo, snapshots opcionales) ----------
 export const balances = {
   async snapshot() {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     if (!supabase) return demo.balances.snapshot();
     const db = supabase as any;
     // Si hay snapshot del mes en curso, usarlo. Si no, fallback demo.
@@ -509,16 +509,16 @@ export const balances = {
       resultadoNeto: row.net_result != null ? Number(row.net_result) : 0,
     };
   },
-  async monthly() { return createSupabaseServerClient() ? [] : demo.balances.monthly(); },
-  async recommendations() { return createSupabaseServerClient() ? [] : demo.balances.recommendations(); },
+  async monthly() { return await createSupabaseServerClient() ? [] : demo.balances.monthly(); },
+  async recommendations() { return await createSupabaseServerClient() ? [] : demo.balances.recommendations(); },
 };
 
 // ---------- REPORTES — recomendaciones IA reales si hay seed ----------
 export const reports = {
-  async insights() { return createSupabaseServerClient() ? [] : demo.reports.insights(); },
-  async suggestions() { return createSupabaseServerClient() ? [] : demo.reports.suggestions(); },
+  async insights() { return await createSupabaseServerClient() ? [] : demo.reports.insights(); },
+  async suggestions() { return await createSupabaseServerClient() ? [] : demo.reports.suggestions(); },
   async weeklyDecisions() {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     if (!supabase) return demo.reports.weeklyDecisions();
     const res = await supabase
       .from("ai_recommendations")

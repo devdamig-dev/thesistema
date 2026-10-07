@@ -20,7 +20,7 @@ export async function updateBusinessAction(payload: BusinessFormPayload) {
   if (!isDatabaseMode()) {
     return { ok: true as const, persisted: false };
   }
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: true as const, persisted: false };
 
   const memberRes = await supabase

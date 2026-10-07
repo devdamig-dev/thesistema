@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(destination);
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) {
     const destination = new URL("/login", url.origin);
     destination.searchParams.set("error", "database_config");

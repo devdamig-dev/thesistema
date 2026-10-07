@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import type { ReactElement } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -37,7 +38,7 @@ import { cn } from "@/lib/utils";
 
 type ReadFilter = "all" | "unread" | "read";
 
-const TONE_ICON: Record<Notification["tone"], JSX.Element> = {
+const TONE_ICON: Record<Notification["tone"], ReactElement> = {
   info: <Info className="h-4 w-4 text-ai-400" />,
   ai: <Sparkles className="h-4 w-4 text-ai-400" />,
   success: <CheckCircle2 className="h-4 w-4 text-success-400" />,

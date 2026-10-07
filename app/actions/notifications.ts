@@ -13,7 +13,7 @@ export async function markNotificationReadAction(notificationId: string) {
   if (!isDatabaseMode()) {
     return { ok: true as const, persisted: false };
   }
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: true as const, persisted: false };
   const db = supabase as any;
   const { error } = await db
@@ -31,7 +31,7 @@ export async function markAllNotificationsReadAction() {
   if (!isDatabaseMode()) {
     return { ok: true as const, persisted: false };
   }
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: true as const, persisted: false };
   const db = supabase as any;
   const { error } = await db
@@ -49,7 +49,7 @@ export async function archiveNotificationAction(notificationId: string) {
   if (!isDatabaseMode()) {
     return { ok: true as const, persisted: false };
   }
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: true as const, persisted: false };
   const db = supabase as any;
   const { error } = await db

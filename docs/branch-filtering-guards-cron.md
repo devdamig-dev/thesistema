@@ -58,7 +58,7 @@ const filtered = applyBranchFilter(query, "branch_id", branchIds);
 
 ## 2. Middleware guard
 
-`middleware.ts` ahora hace 3 chequeos:
+`proxy.ts` ahora hace 3 chequeos:
 
 1. **Auth** (database mode): refresca sesión Supabase. Sin sesión y ruta privada → `/login?next=<path>`.
 2. **Permiso de módulo** (database + demo): si la ruta requiere un `ModuleKey` que el rol no puede ver, redirige a `/?denied=<module>`.

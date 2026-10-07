@@ -43,7 +43,7 @@ type ExpenseMutationResult =
 export async function getExpensesPageDataAction(): Promise<
   { ok: true; data: ExpensesPageData } | { ok: false; error: string }
 > {
-  const supabase = createSupabaseServerClient() as any;
+  const supabase = await createSupabaseServerClient() as any;
   if (!supabase) return { ok: false, error: "No pudimos conectar con tus datos." };
 
   const ctx = await getCurrentUserContext();
@@ -146,7 +146,7 @@ export const createExpenseAction = withPermission<[ExpenseInput], ExpenseMutatio
     const validation = validateExpense(input);
     if (validation) return { ok: false, persisted: false, error: validation };
 
-    const db = createSupabaseServerClient() as any;
+    const db = await createSupabaseServerClient() as any;
     if (!db) return { ok: false, persisted: false, error: "No pudimos conectar con tus datos." };
 
     if (ctx.assignedBranchIds !== null && !ctx.assignedBranchIds.includes(input.branchId)) {

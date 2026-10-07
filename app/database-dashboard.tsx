@@ -24,7 +24,7 @@ function sumAmounts(rows: { amount?: number | string | null; total?: number | st
 
 export default async function DatabaseDashboard() {
   const ctx = await getCurrentUserContext();
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const db = supabase as any;
 
   const todayAR = new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });

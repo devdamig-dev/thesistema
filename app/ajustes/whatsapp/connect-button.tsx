@@ -1,7 +1,7 @@
 "use client";
 
 import Script from "next/script";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, MessageSquareText } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -41,7 +41,7 @@ export function WhatsAppConnectButton({ appId, configId, apiVersion }: Props) {
 
   const configured = Boolean(appId && configId);
 
-  async function completeIfReady() {
+  const completeIfReady = useCallback(async () => {
     const { code, wabaId, phoneNumberId } = signupData.current;
     if (!code || !wabaId || !phoneNumberId || completing.current) return;
 
@@ -67,7 +67,7 @@ export function WhatsAppConnectButton({ appId, configId, apiVersion }: Props) {
       setBusy(false);
       setStatus(error instanceof Error ? error.message : "No pudimos completar la conexión.");
     }
-  }
+  }, [router]);
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
@@ -103,7 +103,7 @@ export function WhatsAppConnectButton({ appId, configId, apiVersion }: Props) {
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, []);
+  }, [completeIfReady]);
 
   function initializeSdk() {
     if (!configured || !window.FB) return;

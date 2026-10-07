@@ -47,7 +47,7 @@ export default async function RootLayout({
   let whatsappConnected = false;
 
   if (databaseMode && ctx.isAuthenticated && ctx.businessId) {
-    const supabase = createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
     const db = supabase as any;
 
     if (db) {

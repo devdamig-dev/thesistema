@@ -19,7 +19,7 @@ export type ClosurePageRow = {
 export async function getClosuresPageDataAction(): Promise<
   { ok: true; data: ClosurePageRow[] } | { ok: false; error: string }
 > {
-  const supabase = createSupabaseServerClient() as any;
+  const supabase = await createSupabaseServerClient() as any;
   if (!supabase) return { ok: false, error: "Supabase no está disponible." };
 
   const ctx = await getCurrentUserContext();

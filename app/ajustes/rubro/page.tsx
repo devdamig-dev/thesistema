@@ -17,7 +17,7 @@ export default async function AjustesRubroPage() {
     return <IndustryLoadError message="No pudimos resolver el negocio asociado a tu sesión." />;
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) {
     return <IndustryLoadError message="Supabase no está disponible en este momento." />;
   }

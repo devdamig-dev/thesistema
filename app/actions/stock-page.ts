@@ -59,7 +59,7 @@ const EMPTY_DATA: StockPageData = {
 export async function getStockPageDataAction(): Promise<
   { ok: true; data: StockPageData } | { ok: false; error: string }
 > {
-  const supabase = createSupabaseServerClient() as any;
+  const supabase = await createSupabaseServerClient() as any;
   if (!supabase) return { ok: false, error: "No pudimos conectar con tus datos." };
 
   const ctx = await getCurrentUserContext();
@@ -191,7 +191,7 @@ export const adjustStockManualAction = withPermission<[ManualStockInput], Manual
       return { ok: false, persisted: false, error: "No tenés acceso a esa sucursal." };
     }
 
-    const db = createSupabaseServerClient() as any;
+    const db = await createSupabaseServerClient() as any;
     if (!db) return { ok: false, persisted: false, error: "No pudimos conectar con tus datos." };
 
     const [branchRes, ingredientRes] = await Promise.all([

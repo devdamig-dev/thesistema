@@ -1,5 +1,5 @@
 /**
- * Middleware de Next.
+ * Proxy de Next.
  *
  * En modo "demo" no interfiere — la app sigue 100% abierta.
  *
@@ -43,7 +43,7 @@ function isAuthPublicPath(pathname: string): boolean {
   );
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
   // Supabase Password Recovery vuelve a /login?recovery=1&code=... en PKCE.
