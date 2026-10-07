@@ -138,7 +138,7 @@ export function WhatsAppConnectButton({ appId, configId, apiVersion, businessApp
         // Some official completion events contain only an account; others arrive after the code.
         // If no event arrives, the server resolves accounts from the actual token grants.
         else timers.current.push(setTimeout(() => void prepare(generation), 1500));
-      }, signupOptions(selectedConfig));
+      }, signupOptions(selectedConfig, mode));
     } catch {
       clearTimers(); active.current = false; payload.current = {};
       setPhase("error"); setStatus("No se pudo abrir Meta. Permití la ventana emergente y volvé a intentarlo.");

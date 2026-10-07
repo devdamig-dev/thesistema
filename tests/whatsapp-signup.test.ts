@@ -38,10 +38,30 @@ test("signup DTO rejects tenant injection, malformed/null bodies and unrecognize
   for (const raw of [null, [], {}, { action: "prepare", mode: "business_app", code: "test", business_id: actor.businessId }, { action: "prepare", mode: "anything", code: "test" }, { action: "prepare", mode: "cloud_api", code: "test", wabaId: 123456 }]) assert.throws(() => parseConnectionRequest(raw));
   assert.equal(parseConnectionRequest({ action: "prepare", mode: "business_app", code: "test" }).action, "prepare");
 });
-test("Meta v4 is configuration-driven, without obsolete v2/v3 feature flags", () => {
-  assert.deepEqual(signupOptions("123456789").extras, {});
-  assert.equal(signupOptions("123456789").response_type, "code");
-  assert.throws(() => signupOptions("invalid"));
+test("Business App launch explicitly requests Coexistence, including with a v4 configuration", () => {
+  assert.deepEqual(signupOptions("123456789", "business_app"), {
+    config_id: "123456789",
+    response_type: "code",
+    override_default_response_type: true,
+    extras: { featureType: "whatsapp_business_app_onboarding" },
+  });
+});
+test("Cloud API launch keeps configuration-driven products and permissions without Coexistence", () => {
+  assert.deepEqual(signupOptions("123456789", "cloud_api"), {
+    config_id: "123456789",
+    response_type: "code",
+    override_default_response_type: true,
+    extras: {},
+  });
+  // Switching flows with the same config must not retain Business App launch options.
+  signupOptions("123456789", "business_app");
+  assert.deepEqual(signupOptions("123456789", "cloud_api").extras, {});
+});
+test("both signup modes preserve the selected configuration and reject malformed IDs", () => {
+  for (const mode of ["business_app", "cloud_api"] as const) {
+    assert.equal(signupOptions("222222222", mode).config_id, "222222222");
+    assert.throws(() => signupOptions("invalid", mode));
+  }
 });
 test("Business App completion accepts account-only event and rejects non-Meta origins", () => {
   const event = { type: "WA_EMBEDDED_SIGNUP", event: "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", data: { waba_id: phone.accountId } };
@@ -60,6 +80,24 @@ test("preparation discovers an account-only number without exposing tokens or ex
   assert.equal(f.writes(), 0); assert.equal(f.subscriptions(), 0);
   assert.equal(JSON.stringify(result).includes("unit-test-secret"), false);
   assert.equal(result.suggestedPhoneId, null);
+});
+test("account-only Business App completion discovers and revalidates a number before explicit connection", async () => {
+  const f = fixture();
+  const event = parseSignupEvent("https://web.facebook.com", {
+    type: "WA_EMBEDDED_SIGNUP", event: "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", data: { waba_id: phone.accountId },
+  });
+  assert.equal(event?.kind, "finish");
+  if (event?.kind !== "finish") assert.fail("expected account-only completion");
+  assert.equal(event.phoneNumberId, undefined);
+  const lookups: Array<{ accountId: string; mode: string }> = [];
+  f.graph.phones = async (accountId, _token, mode) => { lookups.push({ accountId, mode }); return [phone]; };
+  const result = await prepareConnection(actor, { action: "prepare", mode: "business_app", code: "authorized-test-code", wabaId: event.accountId }, f.graph, f.store);
+  assert.equal(result.suggestedPhoneId, null);
+  assert.equal(result.choices[0].selectable, true);
+  assert.equal(f.subscriptions(), 0); assert.equal(f.writes(), 0);
+  await connectSelection(actor, result.sessionId, phone.id, f.graph, f.store);
+  assert.deepEqual(lookups, [{ accountId: phone.accountId, mode: "business_app" }, { accountId: phone.accountId, mode: "business_app" }]);
+  assert.equal(f.subscriptions(), 1); assert.equal(f.writes(), 1);
 });
 test("multiple authorized phones require an explicit final selection", async () => {
   const f = fixture(); f.graph.phones = async () => [phone, { ...phone, id: "222222222" }];
@@ -124,6 +162,26 @@ test("Graph phone listing follows cursors on fixed origin, not attacker next URL
 });
 test("Graph does not promise coexistence for an unpaired or unregistered number", async () => {
   const graph = new WhatsAppGraph(config, (async () => response({ data: [{ id: phone.id, display_phone_number: phone.phone, platform_type: "ON_PREMISE", status: "CONNECTED", is_on_biz_app: true }] })) as typeof fetch);
+  assert.equal((await graph.phones(phone.accountId, "test-token", "business_app"))[0].selectable, false);
+});
+test("Graph enables Coexistence only for connected Cloud API numbers confirmed on the Business App", async () => {
+  const base = { id: phone.id, display_phone_number: phone.phone, platform_type: "CLOUD_API", status: "CONNECTED", is_on_biz_app: true };
+  for (const [overrides, selectable] of [
+    [{}, true],
+    [{ is_on_biz_app: false }, false],
+    [{ is_on_biz_app: undefined }, false],
+    [{ is_on_biz_app: "true" }, false],
+    [{ platform_type: "ON_PREMISE" }, false],
+    [{ platform_type: undefined }, false],
+    [{ status: "PENDING" }, false],
+  ] as const) {
+    const graph = new WhatsAppGraph(config, (async () => response({ data: [{ ...base, ...overrides }] })) as typeof fetch);
+    assert.equal((await graph.phones(phone.accountId, "test-token", "business_app"))[0].selectable, selectable, JSON.stringify(overrides));
+  }
+});
+test("an existing connected Cloud API number does not need to be on the Business App", async () => {
+  const graph = new WhatsAppGraph(config, (async () => response({ data: [{ id: phone.id, display_phone_number: phone.phone, platform_type: "CLOUD_API", status: "CONNECTED", is_on_biz_app: false }] })) as typeof fetch);
+  assert.equal((await graph.phones(phone.accountId, "test-token", "cloud_api"))[0].selectable, true);
   assert.equal((await graph.phones(phone.accountId, "test-token", "business_app"))[0].selectable, false);
 });
 test("Graph rejects tokens for another app, missing scopes and invalid/expired authorizations", async () => {
