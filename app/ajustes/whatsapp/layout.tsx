@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { MessageSquareText, Phone, ShieldCheck } from "lucide-react";
 import { isDatabaseMode } from "@/lib/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getCurrentUserContext } from "@/lib/data/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -30,9 +29,8 @@ export default async function WhatsappSettingsLayout({ children }: { children: R
     const profile = (profiles.data ?? []).find((profile: { id: string }) => profile.id === member.user_id);
     return { id: member.id, name: profile?.full_name || "Persona del equipo", phone: profile?.phone || null, active: profile?.active === true };
   });
-  // Credentials stay in a server-owned table. Only non-secret status fields are read for this business.
-  const admin = createSupabaseAdminClient() as any;
-  const result = await admin.from("whatsapp_integrations").select("phone_number_id,display_phone_number,status,connected_at,token_expires_at").eq("business_id", ctx.businessId).maybeSingle();
+  // Column grants expose status only; RLS enforces owner/admin and the business. Tokens have no client grant.
+  const result = await db.from("whatsapp_integrations").select("phone_number_id,display_phone_number,status,connected_at,token_expires_at").eq("business_id", ctx.businessId).maybeSingle();
   if (result.error) return <Unavailable />;
   const integration = result.data;
   const expired = Boolean(integration?.token_expires_at && Date.parse(integration.token_expires_at) <= Date.now());
