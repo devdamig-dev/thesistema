@@ -166,7 +166,7 @@ export async function getRecentNotifications(limit = 12): Promise<Notification[]
     return DEMO_NOTIFICATIONS.filter((n) => !n.archived).slice(0, limit);
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return [];
   const db = supabase as any;
   try {
@@ -213,7 +213,7 @@ export async function listNotifications(
 
   if (!isDatabaseMode()) return demoFiltered.slice(0, limit);
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return [];
   const db = supabase as any;
   try {

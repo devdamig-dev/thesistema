@@ -57,7 +57,7 @@ export async function saveBusinessStep(payload: {
   timezone?: string;
 }): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "database_unavailable" };
   const db = supabase as any;
   const { data: authData, error: authError } = await db.auth.getUser();
@@ -86,7 +86,7 @@ export async function saveBranchStep(payload: {
   branches: { name: string; address?: string; type: string; isMain: boolean }[];
 }): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "database_unavailable" };
   const db = supabase as any;
   const businessId = await getOnboardingBusinessId(db);
@@ -158,7 +158,7 @@ export async function saveBranchStep(payload: {
 
 export async function saveChannelsStep(channels: string[] = []): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "database_unavailable" };
   const db = supabase as any;
   const businessId = await getOnboardingBusinessId(db);
@@ -176,7 +176,7 @@ export async function saveChannelsStep(channels: string[] = []): Promise<Result>
 
 export async function saveTeamStep(): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "database_unavailable" };
   const db = supabase as any;
   const businessId = await getOnboardingBusinessId(db);
@@ -191,7 +191,7 @@ export async function saveTeamStep(): Promise<Result> {
 
 export async function saveWhatsappStep(): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "database_unavailable" };
   const db = supabase as any;
   const businessId = await getOnboardingBusinessId(db);
@@ -208,7 +208,7 @@ export async function seedIngredientsAndProducts(
   _industry: Industry,
 ): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "database_unavailable" };
   const db = supabase as any;
   const businessId = await getOnboardingBusinessId(db);
@@ -229,7 +229,7 @@ export async function seedIngredientsAndProducts(
 
 export async function completeOnboarding(): Promise<Result> {
   if (!isDatabaseMode()) return { ok: true, persisted: false };
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "database_unavailable" };
   const db = supabase as any;
   const businessId = await getOnboardingBusinessId(db);

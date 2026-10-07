@@ -65,7 +65,7 @@ export default async function AjustesResumenPage() {
   if (env.appMode === "database") {
     const [ctx, supabase] = await Promise.all([
       getCurrentUserContext(),
-      Promise.resolve(createSupabaseServerClient()),
+      Promise.resolve(await createSupabaseServerClient()),
     ]);
 
     if (supabase && ctx.businessId) {

@@ -69,7 +69,7 @@ type MutationResult =
 export async function getPurchasesPageDataAction(): Promise<
   { ok: true; data: PurchasesPageData } | { ok: false; error: string }
 > {
-  const supabase = createSupabaseServerClient() as any;
+  const supabase = await createSupabaseServerClient() as any;
   if (!supabase) return { ok: false, error: "No pudimos conectar con tus datos." };
 
   const ctx = await getCurrentUserContext();
@@ -226,7 +226,7 @@ export const createSupplierAction = withPermission<[SupplierInput], MutationResu
     const validation = validateSupplier(input);
     if (validation) return { ok: false, persisted: false, error: validation };
 
-    const db = createSupabaseServerClient() as any;
+    const db = await createSupabaseServerClient() as any;
     if (!db) return { ok: false, persisted: false, error: "No pudimos conectar con tus datos." };
 
     const res = await db
@@ -283,7 +283,7 @@ export const createPurchaseAction = withPermission<[PurchaseInput], MutationResu
     const validation = validatePurchase(input);
     if (validation) return { ok: false, persisted: false, error: validation };
 
-    const db = createSupabaseServerClient() as any;
+    const db = await createSupabaseServerClient() as any;
     if (!db) return { ok: false, persisted: false, error: "No pudimos conectar con tus datos." };
 
     const supplierRes = await db

@@ -69,7 +69,7 @@ function getPeriodRange(period: SalesPeriod): { start: string; end?: string } {
 export async function getSalesPageDataAction(
   period: SalesPeriod = "current_month",
 ): Promise<{ ok: true; data: SalesPageData } | { ok: false; error: string }> {
-  const supabase = createSupabaseServerClient() as any;
+  const supabase = await createSupabaseServerClient() as any;
   if (!supabase) return { ok: false, error: "No pudimos conectar con los datos de ventas." };
 
   const ctx = await getCurrentUserContext();

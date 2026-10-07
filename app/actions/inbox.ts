@@ -48,7 +48,7 @@ async function loadExtraction(extractionId: string): Promise<{
   supabase: any;
   extraction: ExtractionRow | null;
 }> {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return { supabase: null, extraction: null };
   const db = supabase as any;
   const res = await db

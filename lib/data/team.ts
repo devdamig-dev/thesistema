@@ -63,7 +63,7 @@ export async function listTeamMembers(): Promise<TeamMember[]> {
   if (!isDatabaseMode()) return DEMO_MEMBERS;
   const ctx = await getCurrentUserContext();
   if (!ctx.isAuthenticated || !ctx.businessId || !hasPermission(ctx.role, "settings.team")) return [];
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return [];
   const db = supabase as any;
   try {
@@ -128,7 +128,7 @@ export async function listPendingInvitations(): Promise<PendingInvitation[]> {
   if (!isDatabaseMode()) return DEMO_INVITATIONS;
   const ctx = await getCurrentUserContext();
   if (!ctx.isAuthenticated || !ctx.businessId || !hasPermission(ctx.role, "settings.team")) return [];
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return [];
   const db = supabase as any;
   try {
@@ -159,7 +159,7 @@ export async function listTeamBranches(): Promise<TeamBranch[]> {
   if (!isDatabaseMode()) return DEMO_BRANCHES;
   const ctx = await getCurrentUserContext();
   if (!ctx.isAuthenticated || !ctx.businessId || !hasPermission(ctx.role, "settings.team")) return [];
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return [];
   const db = supabase as any;
   try {

@@ -30,7 +30,7 @@ export default async function BalancesPage() {
   const databaseMode = isDatabaseMode();
 
   if (databaseMode) {
-    const supabase = createSupabaseServerClient() as any;
+    const supabase = await createSupabaseServerClient() as any;
     if (!supabase) {
       return <BalancesUnavailable message="Supabase no está configurado. No mostramos ceros ni balances demo como fallback." />;
     }

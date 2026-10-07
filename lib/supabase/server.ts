@@ -14,9 +14,9 @@ import { cookies } from "next/headers";
 import { env, isDatabaseMode } from "@/lib/env";
 import type { Database } from "./types";
 
-export function createSupabaseServerClient() {
+export async function createSupabaseServerClient() {
   if (!isDatabaseMode()) return null;
-  const store = cookies();
+  const store = await cookies();
   return createServerClient<Database>(env.supabaseUrl, env.supabaseAnonKey, {
     cookies: {
       get(name: string) {
@@ -42,5 +42,5 @@ export function createSupabaseServerClient() {
 }
 
 export type SupabaseServerClient = NonNullable<
-  ReturnType<typeof createSupabaseServerClient>
+  Awaited<ReturnType<typeof createSupabaseServerClient>>
 >;

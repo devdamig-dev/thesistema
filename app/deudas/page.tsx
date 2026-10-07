@@ -13,7 +13,7 @@ const EMPTY_KPIS = { totalDeuda: 0, vencidas: 0, proximoVencimiento: "—", impa
 
 export default async function DeudasPage() {
   if (isDatabaseMode()) {
-    const supabase = createSupabaseServerClient() as any;
+    const supabase = await createSupabaseServerClient() as any;
     if (!supabase) return <DebtsUnavailable message="No pudimos conectar con la información financiera del negocio." />;
     const ctx = await getCurrentUserContext();
     if (!ctx.businessId) return <DebtsUnavailable message="No pudimos identificar el negocio activo." />;

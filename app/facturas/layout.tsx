@@ -7,7 +7,7 @@ import { DatabaseInvoicesView, type DatabaseInvoiceRow } from "./database-view";
 
 async function loadAccessibleBranches() {
   const ctx = await getCurrentUserContext();
-  const db = createSupabaseServerClient() as any;
+  const db = await createSupabaseServerClient() as any;
   if (!db || !ctx.businessId) return [];
   if (ctx.assignedBranchIds !== null && ctx.assignedBranchIds.length === 0) return [];
 

@@ -25,7 +25,7 @@ export default async function AjustesIAPage() {
     return <AiSettingsClient mode="database" connection="unknown" unavailable />;
   }
 
-  const supabase = createSupabaseServerClient() as any;
+  const supabase = await createSupabaseServerClient() as any;
   let connection: WhatsAppConnectionState = "unknown";
   if (supabase) {
     const result = await supabase

@@ -26,7 +26,7 @@ export async function setIndustryAction(industry: IndustryKey) {
     return { ok: false as const, persisted: false, error: "Sin business asignado" };
   }
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) {
     return { ok: false as const, persisted: false, error: "Supabase no disponible" };
   }

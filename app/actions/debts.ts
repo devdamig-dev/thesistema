@@ -39,7 +39,7 @@ export async function registerDebtAction(payload: {
     refresh();
     return { ok: true, persisted: false };
   }
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) {
     return {
       ok: false,
@@ -133,7 +133,7 @@ export async function registerPaymentAction(payload: {
     refresh();
     return { ok: true, persisted: false };
   }
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) {
     return {
       ok: false,
@@ -221,7 +221,7 @@ export async function markDebtAsSettledAction(debtId: string): Promise<Result> {
     refresh();
     return { ok: true, persisted: false };
   }
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) {
     return {
       ok: false,

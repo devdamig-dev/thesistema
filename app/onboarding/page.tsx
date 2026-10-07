@@ -22,7 +22,7 @@ type InitialStateResult =
 async function getInitialState(): Promise<InitialStateResult> {
   if (!isDatabaseMode()) return { ok: true, state: DEFAULT_INITIAL_STATE };
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) {
     return { ok: false, error: "Supabase no está disponible. No iniciamos un onboarding nuevo con datos por defecto." };
   }

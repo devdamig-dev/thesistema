@@ -11,7 +11,7 @@ import { WhatsAppConnectButton } from "./connect-button";
 export default async function WhatsappSettingsLayout({ children }: { children: ReactNode }) {
   if (!isDatabaseMode()) return <>{children}</>;
 
-  const supabase = createSupabaseServerClient() as any;
+  const supabase = await createSupabaseServerClient() as any;
   if (!supabase) return <Unavailable />;
 
   const ctx = await getCurrentUserContext();

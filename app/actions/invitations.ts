@@ -27,7 +27,7 @@ export async function acceptInvitationAction(token: string): Promise<AcceptResul
   }
   if (!token) return { ok: false, persisted: false, error: "no_token" };
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "no_client" };
 
   const { data: userData, error: userError } = await supabase.auth.getUser();

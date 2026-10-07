@@ -36,7 +36,7 @@ export const getProductsPageDataAction = withPermission<[],
   if (!isDatabaseMode()) return { ok: true, data: [] };
   if (!ctx.businessId) return { ok: false, persisted: false, error: "No pudimos identificar el negocio activo." };
 
-  const db = createSupabaseServerClient() as any;
+  const db = await createSupabaseServerClient() as any;
   if (!db) return { ok: false, persisted: false, error: "No pudimos conectar con tus productos." };
 
   const productsRes = await db
@@ -109,7 +109,7 @@ export const createProductAction = withPermission<[ProductInput], ProductMutatio
     const validation = validateProduct(input);
     if (validation) return { ok: false, persisted: false, error: validation };
 
-    const db = createSupabaseServerClient() as any;
+    const db = await createSupabaseServerClient() as any;
     if (!db) return { ok: false, persisted: false, error: "No pudimos conectar con tus productos." };
 
     const res = await db
@@ -155,7 +155,7 @@ export const updateProductAction = withPermission<[string, ProductInput], Produc
     const validation = validateProduct(input);
     if (validation) return { ok: false, persisted: false, error: validation };
 
-    const db = createSupabaseServerClient() as any;
+    const db = await createSupabaseServerClient() as any;
     if (!db) return { ok: false, persisted: false, error: "No pudimos conectar con tus productos." };
 
     const res = await db

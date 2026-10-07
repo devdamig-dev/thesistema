@@ -16,7 +16,7 @@ export default async function InboxPage() {
   let items: Awaited<ReturnType<typeof inbox.list>> = [];
 
   if (isDatabaseMode()) {
-    const supabase = createSupabaseServerClient() as any;
+    const supabase = await createSupabaseServerClient() as any;
     if (!supabase) {
       return <InboxUnavailable message="Supabase no está configurado. No mostramos mensajes demo como fallback." />;
     }
