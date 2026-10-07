@@ -147,6 +147,10 @@ export default function OnboardingClient({
           });
           break;
         case "channels":
+          if (selectedChannels.length === 0) {
+            toast({ tone: "warn", title: "Elegí al menos un canal de venta" });
+            return;
+          }
           result = await saveChannelsStep(selectedChannels);
           break;
         case "team":
