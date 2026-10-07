@@ -185,12 +185,14 @@ function normalizeSalesChannel(channel: string): string {
 async function createExpense(
   db: any,
   businessId: string,
+  branchId: string,
   fields: ExtractedExpense,
 ): Promise<string | null> {
   const res = await db
     .from("expenses")
     .insert({
       business_id: businessId,
+      branch_id: branchId,
       name: fields.concept ?? "Gasto sin nombre",
       category: fields.category ?? "Otros",
       amount: fields.amount ?? 0,
@@ -464,7 +466,7 @@ export async function approveExtractionAction(extractionId: string): Promise<Act
       targetRecordId = await createSale(db, businessId, branchId, extraction.fields as ExtractedSale);
       break;
     case "expense":
-      targetRecordId = await createExpense(db, businessId, extraction.fields as ExtractedExpense);
+      targetRecordId = await createExpense(db, businessId, branchId, extraction.fields as ExtractedExpense);
       break;
     case "stock_update":
       targetRecordId = await createStockMovement(db, branchId, extraction.fields as ExtractedStockUpdate);
