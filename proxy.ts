@@ -13,7 +13,7 @@
  *   5. Resuelve rol + módulos dentro de ese mismo negocio.
  */
 
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { canSeeModule, type ModuleKey, type Role } from "@/lib/permissions";
 import {
@@ -31,6 +31,18 @@ type BusinessResolution = {
   businessId: string | null;
   ambiguous: boolean;
 };
+
+const AUTH_RESPONSE_HEADERS = ["cache-control", "expires", "pragma"] as const;
+
+function redirectWithAuthState(response: NextResponse, destination: URL): NextResponse {
+  const redirect = NextResponse.redirect(destination);
+  response.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie));
+  AUTH_RESPONSE_HEADERS.forEach((header) => {
+    const value = response.headers.get(header);
+    if (value) redirect.headers.set(header, value);
+  });
+  return redirect;
+}
 
 function isAuthPublicPath(pathname: string): boolean {
   return (
@@ -95,30 +107,36 @@ export async function proxy(request: NextRequest) {
 
   const supabase = createServerClient(SUPA_URL, SUPA_ANON, {
     cookies: {
-      get: (name: string) => request.cookies.get(name)?.value,
-      set: (name: string, value: string, options: CookieOptions) => {
-        request.cookies.set({ name, value, ...options });
+      getAll: () => request.cookies.getAll(),
+      setAll: (cookiesToSet, headers) => {
+        cookiesToSet.forEach(({ name, value, options }) => {
+          request.cookies.set(name, value);
+        });
         response = NextResponse.next({ request: { headers: request.headers } });
-        response.cookies.set({ name, value, ...options });
-      },
-      remove: (name: string, options: CookieOptions) => {
-        request.cookies.set({ name, value: "", ...options });
-        response = NextResponse.next({ request: { headers: request.headers } });
-        response.cookies.set({ name, value: "", ...options });
+        cookiesToSet.forEach(({ name, value, options }) => {
+          response.cookies.set(name, value, options);
+        });
+        Object.entries(headers).forEach(([name, value]) => {
+          response.headers.set(name, value);
+        });
       },
     },
   });
 
   const isPublic = isPublicPath(pathname);
   const authPublic = isAuthPublicPath(pathname);
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: claimsData, error: claimsError } = await supabase.auth.getClaims();
+  const claims = claimsError ? null : claimsData?.claims;
+  const user = claims?.sub
+    ? { id: claims.sub, email: typeof claims.email === "string" ? claims.email : null }
+    : null;
 
   if (!user && !authPublic) {
     const redirect = request.nextUrl.clone();
     redirect.pathname = "/login";
     redirect.search = "";
     redirect.searchParams.set("next", pathname);
-    return NextResponse.redirect(redirect);
+    return redirectWithAuthState(response, redirect);
   }
 
   let business: BusinessResolution = { businessId: null, ambiguous: false };
@@ -131,7 +149,7 @@ export async function proxy(request: NextRequest) {
       redirect.search = "";
       redirect.searchParams.set("reason", "multiple_businesses");
       redirect.searchParams.set("from", pathname);
-      return NextResponse.redirect(redirect);
+      return redirectWithAuthState(response, redirect);
     }
   }
 
@@ -154,7 +172,7 @@ export async function proxy(request: NextRequest) {
         const redirect = request.nextUrl.clone();
         redirect.pathname = "/onboarding";
         redirect.search = "";
-        return NextResponse.redirect(redirect);
+        return redirectWithAuthState(response, redirect);
       }
     } catch {
       // Best-effort para errores transitorios de lectura. Las server actions y
@@ -192,7 +210,7 @@ export async function proxy(request: NextRequest) {
         redirect.search = "";
         redirect.searchParams.set("m", requiredModule);
         redirect.searchParams.set("from", pathname);
-        return NextResponse.redirect(redirect);
+        return redirectWithAuthState(response, redirect);
       }
     }
   }
