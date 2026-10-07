@@ -149,77 +149,65 @@ export async function registerPaymentAction(payload: {
     return { ok: false, persisted: false, error: "Ingresá un monto de pago mayor a cero." };
   }
 
-  const debtBeforeRes = await db
-    .from("debts")
-    .select("business_id, creditor, pending_amount, status")
-    .eq("id", payload.debt_id)
-    .maybeSingle();
-  const debtBefore = debtBeforeRes.data as
-    | { business_id: string; creditor: string; pending_amount: number; status: string }
-    | null;
-  if (!debtBefore) {
-    return { ok: false, persisted: false, error: "No encontramos la deuda seleccionada." };
+  const ctx = await getCurrentUserContext();
+  if (!ctx.businessId || !ctx.userId) {
+    return { ok: false, persisted: false, error: "No pudimos identificar el negocio activo." };
   }
-  if (debtBefore.status === "settled" || Number(debtBefore.pending_amount) <= 0) {
-    return { ok: false, persisted: false, error: "La deuda ya está saldada." };
-  }
-  if (amount > Number(debtBefore.pending_amount)) {
-    return { ok: false, persisted: false, error: "El pago no puede superar el saldo pendiente." };
-  }
-
-  const res = await db
-    .from("debt_payments")
-    .insert({
-      debt_id: payload.debt_id,
-      amount,
-      payment_method: payload.payment_method?.trim() || "Transferencia",
-      paid_at: payload.paid_at ?? new Date().toISOString().slice(0, 10),
-      notes: payload.notes?.trim() || undefined,
-    })
-    .select("id")
-    .maybeSingle();
-  const row = res.data as { id: string } | null;
-  if (!row) {
-    return { ok: false, persisted: false, error: res.error?.message ?? "No pudimos registrar el pago." };
+  const paymentRes = await db.rpc("register_debt_payment_atomic", {
+    p_debt_id: payload.debt_id,
+    p_business_id: ctx.businessId,
+    p_actor_id: ctx.userId,
+    p_amount: amount,
+    p_payment_method: payload.payment_method?.trim() || "Transferencia",
+    p_paid_at: payload.paid_at ?? new Date().toISOString().slice(0, 10),
+    p_notes: payload.notes?.trim() || null,
+  });
+  const payment = paymentRes.data as {
+    ok: boolean;
+    error?: string;
+    payment_id?: string;
+    creditor?: string;
+    pending_amount?: number;
+    status?: string;
+  } | null;
+  if (paymentRes.error || !payment?.ok || !payment.payment_id) {
+    const messages: Record<string, string> = {
+      debt_not_found: "No encontramos la deuda seleccionada.",
+      debt_already_settled: "La deuda ya está saldada.",
+      amount_exceeds_pending: "El pago no puede superar el saldo pendiente.",
+      invalid_paid_at: "La fecha del pago no es válida.",
+      permission_denied: "No tenés permiso para registrar este pago.",
+    };
+    return { ok: false, persisted: false, error: messages[payment?.error ?? ""] ?? "No pudimos registrar el pago." };
   }
 
-  // Re-leer deuda para ver si quedó saldada (trigger SQL recalcula)
-  const debtRes = await db
-    .from("debts")
-    .select("business_id, creditor, pending_amount, status")
-    .eq("id", payload.debt_id)
-    .maybeSingle();
-  const debt = debtRes.data as
-    | { business_id: string; creditor: string; pending_amount: number; status: string }
-    | null;
-  if (debt) {
-    const settled = debt.status === "settled" || Number(debt.pending_amount) <= 0;
-    await logActivity({
-      businessId: debt.business_id,
-      action: settled ? "debt.settled" : "debt.payment.registered",
-      targetType: "debt_payments",
-      targetId: row.id,
-      summary: settled
-        ? `Deuda saldada · ${debt.creditor}`
-        : `Pago parcial · ${debt.creditor} · $${amount.toLocaleString("es-AR")}`,
-      data: { debt_id: payload.debt_id, payment_id: row.id, amount },
-    });
-    await createNotification({
-      businessId: debt.business_id,
-      tone: settled ? "success" : "info",
-      priority: settled ? "low" : "medium",
-      category: "debt",
-      title: settled ? `Deuda saldada · ${debt.creditor}` : `Pago registrado · ${debt.creditor}`,
-      detail: settled
-        ? "Felicitaciones · la deuda quedó cancelada."
-        : `Pago parcial de $${amount.toLocaleString("es-AR")}. Saldo pendiente: $${Number(debt.pending_amount).toLocaleString("es-AR")}.`,
-      href: "/deudas",
-      source: "debts",
-    });
-  }
+  const settled = payment.status === "settled" || Number(payment.pending_amount) <= 0;
+  const creditor = payment.creditor ?? "Acreedor";
+  await logActivity({
+    businessId: ctx.businessId,
+    action: settled ? "debt.settled" : "debt.payment.registered",
+    targetType: "debt_payments",
+    targetId: payment.payment_id,
+    summary: settled
+      ? `Deuda saldada · ${creditor}`
+      : `Pago parcial · ${creditor} · $${amount.toLocaleString("es-AR")}`,
+    data: { debt_id: payload.debt_id, payment_id: payment.payment_id, amount },
+  });
+  await createNotification({
+    businessId: ctx.businessId,
+    tone: settled ? "success" : "info",
+    priority: settled ? "low" : "medium",
+    category: "debt",
+    title: settled ? `Deuda saldada · ${creditor}` : `Pago registrado · ${creditor}`,
+    detail: settled
+      ? "Felicitaciones · la deuda quedó cancelada."
+      : `Pago parcial de $${amount.toLocaleString("es-AR")}. Saldo pendiente: $${Number(payment.pending_amount).toLocaleString("es-AR")}.`,
+    href: "/deudas",
+    source: "debts",
+  });
 
   refresh();
-  return { ok: true, persisted: true, payment_id: row.id };
+  return { ok: true, persisted: true, payment_id: payment.payment_id };
 }
 
 /* ============================================================================

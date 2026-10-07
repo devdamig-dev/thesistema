@@ -365,17 +365,16 @@ async function createDebtPayment(
   const debt = debtRes.data as { id: string; pending_amount: number } | null;
   if (!debt) return null;
 
-  const res = await db
-    .from("debt_payments")
-    .insert({
-      debt_id: debt.id,
-      amount: fields.amount,
-      payment_method: fields.payment_method ?? "Transferencia",
-      paid_at: new Date().toISOString().slice(0, 10),
-    })
-    .select("id")
-    .maybeSingle();
-  return (res.data as { id: string } | null)?.id ?? null;
+  const res = await db.rpc("register_debt_payment_atomic", {
+    p_debt_id: debt.id,
+    p_business_id: businessId,
+    p_actor_id: null,
+    p_amount: fields.amount,
+    p_payment_method: fields.payment_method ?? "Transferencia",
+    p_paid_at: new Date().toISOString().slice(0, 10),
+    p_notes: null,
+  });
+  return res.data?.ok ? res.data.payment_id : null;
 }
 
 function parseDebtDueDate(input?: string): string | null {
