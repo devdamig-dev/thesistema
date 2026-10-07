@@ -16,6 +16,7 @@
     "../lib/whatsapp-agent/registry.ts",
     "../lib/whatsapp-agent/types.ts",
     "../lib/permissions/**/*.ts",
+    "../lib/auth/redirect.ts",
     "../app/actions/team.ts",
     "../app/actions/invitations.ts",
     "../app/actions/exports.ts",

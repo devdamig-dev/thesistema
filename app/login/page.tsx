@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isDemoMode } from "@/lib/env";
 import { useToast } from "@/components/ui/toast";
+import { safeAppRedirectPath } from "@/lib/auth/redirect";
 
 export default function LoginPage() {
   return (
@@ -20,7 +21,7 @@ export default function LoginPage() {
 function LoginPageInner() {
   const router = useRouter();
   const params = useSearchParams();
-  const next = params.get("next") ?? "/";
+  const next = safeAppRedirectPath(params.get("next"));
   const inviteToken = params.get("invite_token");
   const authCode = params.get("code");
   const recovery = params.get("recovery") === "1";
