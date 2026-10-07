@@ -6,6 +6,11 @@ import { isDatabaseMode } from "@/lib/env";
 import {
   SUGGESTED_MODULES_BY_INDUSTRY,
 } from "@/lib/industries";
+import {
+  validateBranchesPayload,
+  validateBusinessPayload,
+  validateChannelsPayload,
+} from "@/lib/onboarding/validation";
 import type { Industry } from "@/lib/entities";
 
 type Result =
@@ -50,12 +55,9 @@ async function getOnboardingBusinessId(db: any): Promise<string | null> {
   return incomplete.length === 1 ? incomplete[0].id : null;
 }
 
-export async function saveBusinessStep(payload: {
-  name: string;
-  taxId?: string;
-  industry: Industry;
-  timezone?: string;
-}): Promise<Result> {
+export async function saveBusinessStep(payload: unknown): Promise<Result> {
+  const validated = validateBusinessPayload(payload);
+  if (!validated.ok) return { ok: false, persisted: false, error: validated.error };
   if (!isDatabaseMode()) return { ok: true, persisted: false };
   const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "database_unavailable" };
@@ -65,12 +67,12 @@ export async function saveBusinessStep(payload: {
     return { ok: false, persisted: false, error: "not_authenticated" };
   }
 
-  const suggestedModules = SUGGESTED_MODULES_BY_INDUSTRY[payload.industry] ?? [];
+  const suggestedModules = SUGGESTED_MODULES_BY_INDUSTRY[validated.value.industry];
   const { data: businessId, error } = await db.rpc("bootstrap_first_business", {
-    p_name: payload.name.trim(),
-    p_industry: payload.industry,
-    p_tax_id: payload.taxId?.trim() || null,
-    p_timezone: payload.timezone ?? "America/Argentina/Buenos_Aires",
+    p_name: validated.value.name,
+    p_industry: validated.value.industry,
+    p_tax_id: validated.value.taxId,
+    p_timezone: validated.value.timezone,
     p_modules: suggestedModules,
   });
   if (error || !businessId) {
@@ -82,9 +84,9 @@ export async function saveBusinessStep(payload: {
   return { ok: true, persisted: true };
 }
 
-export async function saveBranchStep(payload: {
-  branches: { name: string; address?: string; type: string; isMain: boolean }[];
-}): Promise<Result> {
+export async function saveBranchStep(payload: unknown): Promise<Result> {
+  const validated = validateBranchesPayload(payload);
+  if (!validated.ok) return { ok: false, persisted: false, error: validated.error };
   if (!isDatabaseMode()) return { ok: true, persisted: false };
   const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "database_unavailable" };
@@ -92,58 +94,32 @@ export async function saveBranchStep(payload: {
   const businessId = await getOnboardingBusinessId(db);
   if (!businessId) return { ok: false, persisted: false, error: "no_unambiguous_business" };
 
-  for (const b of payload.branches) {
-    const branchName = b.name.trim();
-    if (!branchName) continue;
+  // bootstrap_first_business creates the initial main branch. During onboarding
+  // we edit that row instead of inserting a second main branch.
+  const mainLookup = await db
+    .from("branches")
+    .select("id")
+    .eq("business_id", businessId)
+    .eq("is_main", true)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (mainLookup.error || !mainLookup.data?.id) {
+    console.error("saveBranchStep main lookup failed", mainLookup.error);
+    return { ok: false, persisted: false, error: "branch_save_failed" };
+  }
 
-    // bootstrap_first_business creates the initial main branch. During onboarding
-    // we must edit that row instead of inserting a second main branch with the
-    // name entered by the user.
-    let existingBranch: { id: string } | null = null;
-    if (b.isMain) {
-      const mainLookup = await db
-        .from("branches")
-        .select("id")
-        .eq("business_id", businessId)
-        .eq("is_main", true)
-        .order("created_at", { ascending: true })
-        .limit(1)
-        .maybeSingle();
-      if (mainLookup.error) {
-        console.error("saveBranchStep main lookup failed", mainLookup.error);
-        return { ok: false, persisted: false, error: "branch_save_failed" };
-      }
-      existingBranch = mainLookup.data;
-    } else {
-      const nameLookup = await db
-        .from("branches")
-        .select("id")
-        .eq("business_id", businessId)
-        .eq("name", branchName)
-        .maybeSingle();
-      if (nameLookup.error) {
-        console.error("saveBranchStep lookup failed", nameLookup.error);
-        return { ok: false, persisted: false, error: "branch_save_failed" };
-      }
-      existingBranch = nameLookup.data;
-    }
+  const writeResult = await db.from("branches").update({
+    business_id: businessId,
+    name: validated.value.name,
+    address: validated.value.address,
+    branch_type: validated.value.type,
+    is_main: true,
+  }).eq("id", mainLookup.data.id);
 
-    const branchPayload = {
-      business_id: businessId,
-      name: branchName,
-      address: b.address?.trim() || null,
-      branch_type: b.type,
-      is_main: b.isMain,
-    };
-
-    const writeResult = existingBranch?.id
-      ? await db.from("branches").update(branchPayload).eq("id", existingBranch.id)
-      : await db.from("branches").insert(branchPayload);
-
-    if (writeResult.error) {
-      console.error("saveBranchStep failed", writeResult.error);
-      return { ok: false, persisted: false, error: "branch_save_failed" };
-    }
+  if (writeResult.error) {
+    console.error("saveBranchStep failed", writeResult.error);
+    return { ok: false, persisted: false, error: "branch_save_failed" };
   }
 
   const { error: progressError } = await db
@@ -156,7 +132,9 @@ export async function saveBranchStep(payload: {
   return { ok: true, persisted: true };
 }
 
-export async function saveChannelsStep(channels: string[] = []): Promise<Result> {
+export async function saveChannelsStep(channels: unknown = []): Promise<Result> {
+  const validated = validateChannelsPayload(channels);
+  if (!validated.ok) return { ok: false, persisted: false, error: validated.error };
   if (!isDatabaseMode()) return { ok: true, persisted: false };
   const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "database_unavailable" };
@@ -166,7 +144,7 @@ export async function saveChannelsStep(channels: string[] = []): Promise<Result>
 
   const { error } = await db
     .from("businesses")
-    .update({ onboarding_step: 3, sales_channels: channels })
+    .update({ onboarding_step: 3, sales_channels: validated.value })
     .eq("id", businessId);
   if (error) return { ok: false, persisted: false, error: "channels_save_failed" };
 
