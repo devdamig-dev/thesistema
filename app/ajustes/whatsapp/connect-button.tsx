@@ -201,6 +201,8 @@ export function WhatsAppConnectButton({ appId, configId, apiVersion, businessApp
   }
   async function cancel() {
     if (phase === "connecting") return;
+    setDiagnostic(null);
+    setDiagnosticSaved(null);
     const id = session.current;
     if (id) {
       try { await api({ action: "cancel", sessionId: id }); }
