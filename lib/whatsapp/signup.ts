@@ -54,10 +54,15 @@ export function parseConnectionRequest(input: unknown): PrepareRequest | Connect
   return fail();
 }
 
-/** In v4 the saved Meta configuration selects products/Coexistence, not legacy featureType flags. */
-export function signupOptions(configId: string) {
+/** v4 keeps products/permissions in config_id; Coexistence still needs its launch featureType. */
+export function signupOptions(configId: string, mode: SignupMode) {
   if (!metaId(configId)) throw new ConnectionError("configuration_invalid", "La conexión de Meta necesita una revisión de configuración.");
-  return { config_id: configId, response_type: "code", override_default_response_type: true, extras: {} };
+  return {
+    config_id: configId,
+    response_type: "code",
+    override_default_response_type: true,
+    extras: mode === "business_app" ? { featureType: "whatsapp_business_app_onboarding" } : {},
+  };
 }
 
 export type SignupEvent = { kind: "finish"; accountId?: string; phoneNumberId?: string } | { kind: "cancel" | "error" };
