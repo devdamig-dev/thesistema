@@ -1,3 +1,4 @@
+import { diagnosticFromMeta, parseSignupDiagnostic, type SignupDiagnostic } from "./signup-diagnostics";
 import type { ConnectionRecovery } from "./connection-recovery";
 
 export type SignupMode = "business_app" | "cloud_api";
@@ -31,11 +32,19 @@ export function authorizeConnectionActor(ctx: { isAuthenticated: boolean; userId
 
 export type PrepareRequest = { action: "prepare"; mode: SignupMode; code: string; wabaId?: string; phoneNumberId?: string };
 export type ConnectRequest = { action: "connect"; sessionId: string; phoneNumberId: string };
+export type ReportRequest = { action: "report_error"; mode: SignupMode; diagnostic: SignupDiagnostic };
 export type CancelRequest = { action: "cancel"; sessionId: string };
-export function parseConnectionRequest(input: unknown): PrepareRequest | ConnectRequest | CancelRequest {
+export function parseConnectionRequest(input: unknown): PrepareRequest | ConnectRequest | CancelRequest | ReportRequest {
   const body = record(input);
   const fail = () => { throw new ConnectionError("invalid_request", "La solicitud de conexión no es válida. Volvé a iniciar el proceso."); };
   const only = (keys: string[]) => { if (Object.keys(body).some(key => !keys.includes(key))) fail(); };
+  if (body.action === "report_error") {
+    only(["action", "mode", "diagnostic"]);
+    if (body.mode !== "business_app" && body.mode !== "cloud_api") return fail();
+    const diagnostic = parseSignupDiagnostic(body.diagnostic);
+    if (!diagnostic) return fail();
+    return { action: "report_error", mode: body.mode, diagnostic };
+  }
   if (body.action === "prepare") {
     only(["action", "mode", "code", "wabaId", "phoneNumberId"]);
     if (body.mode !== "business_app" && body.mode !== "cloud_api") return fail();
@@ -65,7 +74,7 @@ export function signupOptions(configId: string, mode: SignupMode) {
   };
 }
 
-export type SignupEvent = { kind: "finish"; accountId?: string; phoneNumberId?: string } | { kind: "cancel" | "error" };
+export type SignupEvent = { kind: "finish"; accountId?: string; phoneNumberId?: string } | { kind: "cancel" } | { kind: "error"; diagnostic: SignupDiagnostic };
 export function parseSignupEvent(origin: string, input: unknown): SignupEvent | null {
   if (!["https://www.facebook.com", "https://web.facebook.com"].includes(origin)) return null;
   let raw = input;
@@ -75,8 +84,13 @@ export function parseSignupEvent(origin: string, input: unknown): SignupEvent | 
   }
   const event = record(raw);
   if (event.type !== "WA_EMBEDDED_SIGNUP") return null;
-  if (event.event === "CANCEL") return { kind: "cancel" };
-  if (event.event === "ERROR") return { kind: "error" };
+  const failure = record(event.data);
+  // Meta uses CANCEL for the user's “Report error” action too. Do not label
+  // a provider rejection as a voluntary cancellation or drop its support ID.
+  if (event.event === "CANCEL" || event.event === "ERROR") {
+    const reportedError = event.event === "ERROR" || failure.error_code !== undefined || (typeof failure.error_message === "string" && Boolean(failure.error_message.trim()));
+    return reportedError ? { kind: "error", diagnostic: diagnosticFromMeta(event.event, failure) } : { kind: "cancel" };
+  }
   if (!["FINISH", "FINISH_ONLY_WABA", "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", "FINISH_GRANT_ONLY_API_ACCESS"].includes(String(event.event))) return null;
   const data = record(event.data);
   const accountId = data.waba_id ?? data.wabaId;

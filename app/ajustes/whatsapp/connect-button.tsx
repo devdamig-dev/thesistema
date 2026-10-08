@@ -7,6 +7,7 @@ import { Loader2, MessageSquareText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConnectionError, parseSignupEvent, signupOptions, type PhoneChoice, type SignupMode } from "@/lib/whatsapp/signup";
 
+import { signupFailureMessage, type SignupDiagnostic } from "@/lib/whatsapp/signup-diagnostics";
 import { connectionRecovery } from "@/lib/whatsapp/connection-recovery";
 
 type FbLoginResponse = { authResponse?: { code?: string }; status?: string };
@@ -23,6 +24,8 @@ export function WhatsAppConnectButton({ appId, configId, apiVersion, businessApp
   const [status, setStatus] = useState<string | null>(null);
   const [choices, setChoices] = useState<PhoneChoice[]>([]);
   const [selected, setSelected] = useState("");
+  const [diagnostic, setDiagnostic] = useState<SignupDiagnostic | null>(null);
+  const [diagnosticSaved, setDiagnosticSaved] = useState<"pending" | "saved" | "failed" | null>(null);
   const session = useRef<string | null>(null);
   const attempt = useRef(0);
   const active = useRef(false);
@@ -73,6 +76,19 @@ export function WhatsAppConnectButton({ appId, configId, apiVersion, businessApp
     }
   }, [api, clearTimers, mode]);
 
+  const reportDiagnostic = useCallback(async (value: SignupDiagnostic, generation: number) => {
+    setDiagnosticSaved("pending");
+    try {
+      const response = await fetch("/api/integrations/whatsapp/complete", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "report_error", mode, diagnostic: value }),
+        signal: AbortSignal.timeout(5000),
+      });
+      const result = await response.json().catch(() => null);
+      if (generation === attempt.current) setDiagnosticSaved(response.ok && result?.ok === true && result?.phase === "diagnostic_saved" ? "saved" : "failed");
+    } catch { if (generation === attempt.current) setDiagnosticSaved("failed"); }
+  }, [mode]);
+
   useEffect(() => {
     function onMessage(event: MessageEvent) {
       if (!active.current || started.current) return;
@@ -87,12 +103,18 @@ export function WhatsAppConnectButton({ appId, configId, apiVersion, businessApp
         attempt.current += 1;
         payload.current = {};
         setPhase("error");
-        setStatus(value.kind === "cancel" ? "Cancelaste el proceso en Meta. Tu WhatsApp actual no fue desvinculado." : "Meta no completó la autorización. Revisá el portfolio y el acceso al número, sin borrar tu cuenta actual.");
+        if (value.kind === "error") {
+          setDiagnostic(value.diagnostic);
+          setStatus(signupFailureMessage(value.diagnostic));
+          void reportDiagnostic(value.diagnostic, attempt.current);
+        } else {
+          setStatus("Cancelaste el proceso en Meta. Tu WhatsApp actual no fue desvinculado.");
+        }
       }
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [clearTimers, prepare]);
+  }, [clearTimers, prepare, reportDiagnostic]);
 
   useEffect(() => () => { clearTimers(); controller.current?.abort(); active.current = false; attempt.current += 1; }, [clearTimers]);
 
@@ -115,6 +137,8 @@ export function WhatsAppConnectButton({ appId, configId, apiVersion, businessApp
     started.current = false;
     setChoices([]);
     setSelected("");
+    setDiagnostic(null);
+    setDiagnosticSaved(null);
     setPhase("authorizing");
     setStatus(mode === "business_app" ? "En Meta elegí conectar tu WhatsApp Business app para conservarlo en el celular." : "En Meta elegí el portfolio y la cuenta de WhatsApp que querés autorizar.");
     timers.current.push(setTimeout(() => {
@@ -130,8 +154,15 @@ export function WhatsAppConnectButton({ appId, configId, apiVersion, businessApp
         if (generation !== attempt.current || !active.current) return;
         const code = response.authResponse?.code;
         if (!code) {
-          clearTimers(); active.current = false; payload.current = {};
-          setPhase("error"); setStatus("Meta no concedió la autorización. Podés volver a intentarlo."); return;
+          // Meta's diagnostic postMessage may follow the empty login callback.
+          // Keep this attempt open briefly so its provider error is not overwritten.
+          clearTimers();
+          timers.current.push(setTimeout(() => {
+            if (generation !== attempt.current || !active.current || started.current) return;
+            active.current = false; payload.current = {};
+            setPhase("error"); setStatus("Meta no concedió la autorización. Podés volver a intentarlo.");
+          }, 1500));
+          return;
         }
         payload.current.code = code;
         if (payload.current.wabaId) void prepare(generation);
@@ -196,7 +227,7 @@ export function WhatsAppConnectButton({ appId, configId, apiVersion, businessApp
         <legend className="mb-2 text-sm font-semibold text-ink">¿Cómo usás este WhatsApp?</legend>
         {([ ["business_app", "Uso WhatsApp Business en el celular", "Conservá la app y autorizá la conexión oficial con Thesistema."], ["cloud_api", "Ya lo uso con una plataforma o CRM", "Autorizá una cuenta API existente, sin reemplazar automáticamente su proveedor."] ] as const).map(([value, label, detail]) => (
           <label key={value} className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${mode === value ? "border-brand-500/50 bg-brand-500/5" : "border-line"}`}>
-            <input type="radio" name="whatsapp-mode" value={value} checked={mode === value} onChange={() => { setMode(value); setStatus(null); setPhase("idle"); }} className="mt-1" />
+            <input type="radio" name="whatsapp-mode" value={value} checked={mode === value} onChange={() => { attempt.current += 1; setMode(value); setStatus(null); setDiagnostic(null); setDiagnosticSaved(null); setPhase("idle"); }} className="mt-1" />
             <span><span className="block text-sm font-semibold text-ink">{label}</span><span className="block text-xs leading-relaxed text-ink-muted">{detail}</span></span>
           </label>
         ))}
@@ -216,7 +247,14 @@ export function WhatsAppConnectButton({ appId, configId, apiVersion, businessApp
       </div>
       {!configured ? <p className="text-xs text-warn-400">Falta habilitar la conexión de Meta para este entorno. Es un ajuste de Thesistema, no de tu número.</p> : null}
       {status ? <p role="status" aria-live="polite" className="text-sm leading-relaxed text-ink-muted">{status}</p> : null}
-      <details className="text-xs text-ink-muted"><summary className="cursor-pointer font-semibold">¿No aparece tu número o Meta no lo habilita?</summary><p className="mt-2 leading-relaxed">Entrá con la persona que tiene control del portfolio y de la cuenta de WhatsApp. Administrar una página o sus anuncios no siempre incluye ese acceso. La disponibilidad final depende de Meta y del estado del número. No borres la cuenta del celular ni la desconectes de otra plataforma para forzar el alta. WhatsApp personal no es el mismo producto que WhatsApp Business.</p></details>
+      {diagnostic ? <div className="space-y-1 rounded-xl border border-line p-3 text-xs text-ink-muted" aria-label="Referencia del error de Meta">
+        <p className="font-semibold text-ink">Referencia para revisar la conexión</p>
+        {diagnostic.errorCode ? <p>Código de Meta: {diagnostic.errorCode}</p> : null}
+        {diagnostic.sessionReference ? <p className="break-all">Referencia de Meta: {diagnostic.sessionReference}</p> : null}
+        <p>{diagnosticSaved === "saved" ? "Diagnóstico registrado en la actividad del negocio. La cuenta no se marcó como conectada." : diagnosticSaved === "failed" ? "No pudimos guardar el diagnóstico. Conservá esta referencia; no se marcó ninguna conexión como completada." : "Guardando la referencia del error…"}</p>
+      </div> : null}
+      <details className="text-xs text-ink-muted"><summary className="cursor-pointer font-semibold">¿No aparece tu número o Meta no lo habilita?</summary><p className="mt-2 leading-relaxed">Entrá con la persona que tiene control del portfolio y de la cuenta de WhatsApp. Administrar una página o sus anuncios no siempre incluye ese acceso. La disponibilidad también depende de los permisos y la configuración de Gastro Pilot en Meta: que otro proveedor acepte tu número no confirma que nuestra app tenga el mismo acceso. Si todos aparecen deshabilitados, usá «Informar del error a Gastro Pilot» dentro de Meta para obtener una referencia; no cambies ni borres tus números. No borres la cuenta del celular ni la desconectes de otra plataforma para forzar el alta. WhatsApp personal no es el mismo producto que WhatsApp Business.</p></details>
     </div>
   );
 }
+

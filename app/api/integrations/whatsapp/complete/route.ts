@@ -1,3 +1,4 @@
+import { persistSignupDiagnostic } from "@/lib/whatsapp/signup-diagnostic-store";
 import { NextRequest, NextResponse } from "next/server";
 import { isDatabaseMode } from "@/lib/env";
 import { getCurrentUserContext } from "@/lib/data/auth";
@@ -27,6 +28,12 @@ export async function POST(request: NextRequest) {
     let body: unknown;
     try { body = JSON.parse(raw); } catch { throw new ConnectionError("invalid_request", "La solicitud de conexión no es válida."); }
     const input = parseConnectionRequest(body);
+    if (input.action === "report_error") {
+      const configId = input.mode === "business_app"
+        ? process.env.NEXT_PUBLIC_META_WHATSAPP_BUSINESS_APP_CONFIG_ID?.trim() || process.env.NEXT_PUBLIC_META_WHATSAPP_CONFIG_ID?.trim() || ""
+        : process.env.NEXT_PUBLIC_META_WHATSAPP_CONFIG_ID?.trim() || "";
+      return json(await persistSignupDiagnostic(db, actor, input, { appId: process.env.META_APP_ID?.trim() || process.env.NEXT_PUBLIC_META_APP_ID?.trim() || "", configId }));
+    }
     const store = connectionStore(db);
     if (input.action === "cancel") {
       const result = await db.from(CONNECTION_SESSION_TABLE)
@@ -49,3 +56,4 @@ export async function POST(request: NextRequest) {
     return json({ ok: false, code: "connection_failed", recovery: "check_status", error: "No pudimos completar la conexión. No borres ni desvincules tu WhatsApp; actualizá la página y volvé a intentarlo." }, 502);
   }
 }
+
