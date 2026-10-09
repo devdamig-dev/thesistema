@@ -32,6 +32,7 @@ import { PresenceIndicator } from "@/components/realtime/presence-indicator";
 import { ToastPresets, useToast } from "@/components/ui/toast";
 import {
   approveExtractionAction,
+  previewInboxDebtAction,
   rejectExtractionAction,
   requestMoreInfoAction,
 } from "@/app/actions/inbox";
@@ -42,6 +43,7 @@ import {
 } from "@/lib/mock-data";
 import { formatARS, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import type { InboxDebtPreview } from "@/lib/whatsapp-agent/inbox-debts";
 
 const CHANNEL_ICON = {
   texto: MessageSquareText,
@@ -64,6 +66,7 @@ export default function InboxClient({
   const [statusOverrides, setStatusOverrides] = useState<Record<string, InboxStatus>>({});
   const [pending, startTransition] = useTransition();
   const { toast } = useToast();
+  const [debtReview, setDebtReview] = useState<{ extractionId: string; preview: InboxDebtPreview } | null>(null);
 
   const items = useMemo(
     () =>
@@ -294,6 +297,8 @@ export default function InboxClient({
               <ExtractedPanel
                 item={selected}
                 pending={pending}
+                debtPreview={debtReview && debtReview.extractionId === selected.extractionId ? debtReview.preview : undefined}
+                onCancelDebtPreview={() => setDebtReview(null)}
                 onApprove={() => {
                   // Si tenemos extractionId, vamos al server. Si no
                   // (modo demo o item de mock), sólo actualizamos estado.
@@ -304,8 +309,23 @@ export default function InboxClient({
                     return;
                   }
                   startTransition(async () => {
-                    const result = await approveExtractionAction(extractionId);
+                    const preview = debtReview?.extractionId === extractionId ? debtReview.preview : null;
+                    if (!preview) {
+                      const review = await previewInboxDebtAction(extractionId);
+                      if (review.ok) {
+                        setDebtReview({ extractionId, preview: review.preview });
+                        return; // First click is read-only. The operator must review the complete schedule.
+                      }
+                      if (review.error !== "unsupported_debt_extraction") {
+                        toast({ tone: "warn", title: "La deuda necesita revisión", description: "Faltan datos completos o permisos de Deudas. Revisá moneda, fechas, financiación y cuota/imputación. No se guardó ninguna obligación." });
+                        await approveExtractionAction(extractionId); // Marks incomplete debt proposals needs_review, never writes a debt.
+                        setStatusOverrides((s) => ({ ...s, [selected.id]: "revision" }));
+                        return;
+                      }
+                    }
+                    const result = await approveExtractionAction(extractionId, preview?.digest);
                     if (result.ok) {
+                      setDebtReview(null);
                       setStatusOverrides((s) => ({ ...s, [selected.id]: "aprobado" }));
                       toast({
                         tone: "success",
@@ -316,12 +336,15 @@ export default function InboxClient({
                       });
                       router.refresh();
                     } else {
+                      if (result.error !== "debt_response_unknown" && result.error !== "debt_saved_inbox_status_pending") setDebtReview(null);
                       toast({
                         tone: "warn",
                         title: "No pudimos aprobar",
                         description:
-                          result.error === "missing_fields_for_creation"
-                            ? "Faltan datos críticos. Lo dejamos en revisión."
+                          result.error === "missing_fields_for_creation" ? "Faltan datos críticos. Lo dejamos en revisión."
+                            : result.error === "debt_review_required" ? "El detalle o la sesión cambiaron. Revisá el nuevo cronograma antes de confirmar."
+                            : result.error === "stale_version" ? "El saldo cambió. Actualizá el detalle y revisá la imputación antes de confirmar."
+                            : ["debt_response_unknown", "debt_saved_inbox_status_pending"].includes(result.error) ? "El resultado podría estar guardado. Conservamos el mismo intento: podés reintentar sin duplicar la operación o revisar Deudas."
                             : result.error,
                       });
                       setStatusOverrides((s) => ({ ...s, [selected.id]: "revision" }));
@@ -429,8 +452,12 @@ function ExtractedPanel({
   onDiscard,
   onEdit,
   pending,
+  debtPreview,
+  onCancelDebtPreview,
 }: {
   item: InboxItem;
+  debtPreview?: InboxDebtPreview;
+  onCancelDebtPreview: () => void;
   onApprove: () => void;
   onReview: () => void;
   onDiscard: () => void;
@@ -487,6 +514,7 @@ function ExtractedPanel({
           </div>
         )}
 
+        {debtPreview && <InboxDebtReview preview={debtPreview} onCancel={onCancelDebtPreview} pending={pending} />}
         <FieldRow label="Tipo de movimiento" value={item.extracted.tipo} />
         {item.extracted.proveedor && <FieldRow label="Proveedor" value={item.extracted.proveedor} />}
         {item.extracted.empleado && <FieldRow label="Empleado" value={item.extracted.empleado} />}
@@ -538,7 +566,7 @@ function ExtractedPanel({
             ) : (
               <>
                 <Check className="h-3.5 w-3.5" />
-                Aprobar
+                {debtPreview ? "Confirmar este detalle" : "Aprobar"}
               </>
             )}
           </Button>
@@ -633,4 +661,28 @@ function initials(name: string) {
     .map((p) => p[0])
     .join("")
     .toUpperCase();
+}
+
+function InboxDebtReview({ preview, onCancel, pending }: { preview: InboxDebtPreview; onCancel: () => void; pending?: boolean }) {
+  const money = (cents: number) => `${preview.currency} ${(cents / 100).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return <section aria-label="Detalle de deuda para confirmar" className="mb-4 space-y-2 rounded-xl border border-warn-500/40 bg-bg-subtle p-3 text-sm">
+    <h3 className="font-semibold">Revisá antes de guardar</h3>
+    <p>{preview.creditor}</p><p className="break-all text-xs">Sucursal: {preview.branchId}</p>
+    {preview.creation && <><p>Origen: {preview.creation.takenAt} · {preview.creation.creditorType}</p><p>{preview.creation.concept}</p>{preview.creation.reference && <p>Referencia: {preview.creation.reference}</p>}{preview.creation.notes && <p>Notas: {preview.creation.notes}</p>}{preview.creation.expectedPaymentMethod && <p>Método previsto: {preview.creation.expectedPaymentMethod}</p>}</>}
+    {preview.schedule && <>
+      <p>Capital original: {money(preview.schedule.originalAmountCents)}</p>
+      <p>Total financiado: {money(preview.schedule.totalFinancedCents)}</p>
+      {preview.schedule.downPaymentCents !== null && <p>Anticipo histórico confirmado: {money(preview.schedule.downPaymentCents)}</p>}
+      {preview.schedule.interestRate && <p>Tasa informada: {preview.schedule.interestRate.value} ({preview.schedule.interestRate.period})</p>}
+      <ol className="max-h-72 space-y-2 overflow-auto" aria-label="Cronograma completo">{preview.schedule.installments.map(part => <li key={part.installmentNumber}>Cuota {part.installmentNumber}: {money(part.totalAmountCents)} · {part.dueDate ?? "sin vencimiento informado"}</li>)}</ol>
+    </>}
+    {preview.payment && <>
+      <p>Pago: {money(preview.payment.amountCents)} · {preview.payment.paidAt}</p>
+      <p>Método: {preview.payment.paymentMethod}</p>
+      <p className="break-all">Imputación: {preview.payment.allocation.rule === "oldest_due" ? "cuotas pendientes más antiguas" : `sólo cuota ${preview.payment.allocation.installmentId}, sin distribuir a otras cuotas`}</p>
+      {preview.payment.reference && <p>Referencia: {preview.payment.reference}</p>}{preview.payment.notes && <p>Notas: {preview.payment.notes}</p>}
+    </>}
+    <p className="text-xs text-ink-muted">La confirmación usa exactamente este detalle. Si cambia, será necesario revisarlo otra vez.</p>
+    <Button variant="ghost" size="sm" onClick={onCancel} disabled={pending}>Cancelar revisión</Button>
+  </section>;
 }

@@ -30,8 +30,9 @@ test("payment recalculation handles deletion and reopens a debt", () => {
 
 test("all product payment entry points use the audited atomic RPC", () => {
   assert.match(actions, /db\.rpc\("register_debt_payment_atomic"/);
-  assert.match(inbox, /db\.rpc\("register_debt_payment_atomic"/);
-  assert.match(adapter, /db\.rpc\("register_debt_payment_atomic"/);
+  assert.match(inbox, /executeInboxDebt\(db, ctx, extraction, debtReviewDigest\)/);
+  assert.match(readFileSync("lib/whatsapp-agent/inbox-debts.ts", "utf8"), /rpc = "register_debt_plan_payment"/);
+  assert.match(adapter, /throw new Error\("legacy_payment_requires_review"\)/);
   assert.doesNotMatch(adapter, /if \(call\.name === "debts\.registerPayment"\)[\s\S]*\.from\("debt_payments"\)[\s\S]*\.insert/);
 });
 

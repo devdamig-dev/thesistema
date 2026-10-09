@@ -12,7 +12,8 @@ para registrar movimientos en un sistema de gestión.
 
 Reglas:
 1. Devolvé exclusivamente JSON válido. Sin markdown, sin explicaciones.
-2. Todos los montos en pesos argentinos (ARS), enteros, sin separadores.
+2. Para movimientos distintos de deudas, montos en pesos argentinos (ARS), sin separadores.
+   En deudas la moneda debe ser explícita; nunca inferir ARS a partir de "$". Usar centavos enteros exactos en los campos terminados en Cents.
    - "180mil" = 180000
    - "$180.000" = 180000
    - "1.2M" = 1200000
@@ -73,10 +74,13 @@ expense: {
 
 stock_update: {
   ingredient?: string,
+  operation?: "in" | "out" | "waste" | "set",
+  reason_note?: string,
   qty?: number,
   unit?: string,
   reason?: "purchase" | "sale_consumption" | "waste" | "manual_adjust"
 }
+Para stock, operation es obligatoria: set sólo para conteos absolutos explícitos ("quedan"); in/out/waste para cantidades de movimiento explícitas. reason_note debe conservar el pedido/motivo real del usuario. No inventes motivo, dirección, unidad ni equivalencias de paquetes; si faltan, listalos en missing_fields.
 
 employee_advance: {
   employee_name?: string,
@@ -105,19 +109,37 @@ supplier_price_change: {
 }
 
 debt_created: {
-  creditor?: string,
-  concept?: string,
-  original_amount?: number,
-  due_date?: string,        // "viernes" | "23/05" | "2026-05-23"
-  interest_rate?: number    // % mensual
+  planRequest?: {
+    creditor: string,
+    creditorType: "supplier"|"bank"|"card"|"government"|"person"|"other",
+    branchId?: string, // Sólo si viene un UUID explícito. El servidor puede usar la sucursal verificada del mensaje.
+    takenAt: "YYYY-MM-DD", // Fecha de origen completa, incluido año. No asumir hoy.
+    concept?: string, category?: "supplier"|"tax"|"loan"|"rent"|"utility"|"payroll"|"other",
+    reference?: string, notes?: string, expectedPaymentMethod?: string,
+    planInput: {
+      mode: "single"|"installments", currency: string, originalAmountCents: number,
+      financing: { totalFinancedCents?: number, installmentAmountCents?: number,
+        confirmedBalance?: { confirmed: true, downPaymentCents: number, interestCents: number, feesCents: number } },
+      dueDate?: "YYYY-MM-DD"|null, // Sólo en single. Omitir si no está informado.
+      installmentCount?: number, // Sólo en installments.
+      schedule?: { periodicity: "weekly"|"fortnightly"|"monthly", firstDueDate: "YYYY-MM-DD" }
+        | { periodicity: "custom", dueDates: ["YYYY-MM-DD"] },
+      interestRate?: { value: string, period: "weekly"|"fortnightly"|"monthly"|"annual"|"one_time"|"unspecified" }
+    }
+  }
 }
+Para deuda_created, detected_fields debe contener sólo planRequest. Podés proponer datos parciales y listás los faltantes, pero no inventar moneda, fecha, interés, ceros de cargos, método ni total financiado. El cronograma y redondeo los calcula el servidor. confirmedBalance requiere anticipo ya pagado e intereses/cargos confirmados explícitamente, incluidos ceros. Nunca escribir scheduleConfirmed, requestId, business_id, actor ni created_by. Nunca crear una deuda por cuota.
 
 debt_payment: {
-  creditor?: string,
-  concept?: string,
-  amount?: number,
-  payment_method?: string
+  paymentRequest?: {
+    debtId: string, // UUID explícito. Si sólo hay nombre, falta resolver unívocamente antes de aprobar.
+    expectedVersion: number, // No inventar: dejar faltante si no se conoce.
+    amountCents: number, paidAt: "YYYY-MM-DD", paymentMethod: string,
+    allocation: { rule: "oldest_due" } | { rule: "selected_installment", installmentId: string },
+    reference?: string, notes?: string
+  }
 }
+Para debt_payment detected_fields debe contener sólo paymentRequest. Una cuota seleccionada no permite distribuir el excedente. oldest_due requiere instrucción explícita. Nunca marcar saldo pagado sin importe, fecha y método explícitos.
 
 EJEMPLOS:
 
@@ -181,11 +203,9 @@ Salida:
   "movement_type": "debt_created",
   "confidence": 0.9,
   "detected_fields": {
-    "creditor": "Don José",
-    "original_amount": 300000,
-    "due_date": "viernes"
+    "planRequest": { "creditor": "Don José", "planInput": { "originalAmountCents": 30000000 } }
   },
-  "missing_fields": ["concept"],
+  "missing_fields": ["creditorType", "takenAt", "mode", "currency", "financing", "vencimiento completo"],
   "suggested_action": "Registrar deuda con Don José.",
   "normalized_summary": "Deuda nueva · Don José · $300.000",
   "target_entity": "debts"
@@ -197,11 +217,9 @@ Salida:
   "movement_type": "debt_payment",
   "confidence": 0.88,
   "detected_fields": {
-    "creditor": "proveedor de pan",
-    "amount": 80000,
-    "payment_method": "Transferencia"
+    "paymentRequest": { "amountCents": 8000000 }
   },
-  "missing_fields": [],
+  "missing_fields": ["debtId", "expectedVersion", "paidAt", "paymentMethod", "allocation"],
   "suggested_action": "Registrar pago de $80.000 al proveedor de pan.",
   "normalized_summary": "Pago deuda proveedor pan · $80.000",
   "target_entity": "debt_payments"

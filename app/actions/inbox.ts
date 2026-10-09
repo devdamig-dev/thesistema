@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { getCurrentUserContext } from "@/lib/data/auth";
+import { executeInboxDebt, prepareInboxDebt, type InboxDebtPreview } from "@/lib/whatsapp-agent/inbox-debts";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isDatabaseMode } from "@/lib/env";
 import { logActivity } from "@/lib/data/activity";
@@ -9,12 +11,9 @@ import { assertPermission } from "@/lib/permissions/server-action";
 import type {
   ExtractedAdvance,
   ExtractedDailyClosure,
-  ExtractedDebtCreated,
-  ExtractedDebtPayment,
   ExtractedExpense,
   ExtractedPurchase,
   ExtractedSale,
-  ExtractedStockUpdate,
   MovementType,
 } from "@/lib/ai/types";
 
@@ -84,6 +83,8 @@ function refreshPaths() {
   revalidatePath("/");
   revalidatePath("/deudas");
   revalidatePath("/balances");
+  revalidatePath("/stock");
+  revalidatePath("/auditoria");
 }
 
 /* ============================================================================
@@ -203,35 +204,6 @@ async function createExpense(
   return (res.data as { id: string } | null)?.id ?? null;
 }
 
-async function createStockMovement(
-  db: any,
-  branchId: string | null,
-  fields: ExtractedStockUpdate,
-): Promise<string | null> {
-  if (!branchId || !fields.ingredient || fields.qty == null) return null;
-  // Buscar ingrediente por nombre
-  const ing = await db
-    .from("ingredients")
-    .select("id")
-    .ilike("name", `%${fields.ingredient}%`)
-    .limit(1)
-    .maybeSingle();
-  const ingredientId = (ing.data as { id: string } | null)?.id;
-  if (!ingredientId) return null;
-
-  const res = await db
-    .from("stock_movements")
-    .insert({
-      ingredient_id: ingredientId,
-      branch_id: branchId,
-      reason: fields.reason ?? "manual_adjust",
-      qty: fields.qty,
-    })
-    .select("id")
-    .maybeSingle();
-  return (res.data as { id: string } | null)?.id ?? null;
-}
-
 async function createAdvance(
   db: any,
   businessId: string,
@@ -306,110 +278,6 @@ async function createDailyClosure(
   return (res.data as { id: string } | null)?.id ?? null;
 }
 
-async function createDebt(
-  db: any,
-  businessId: string,
-  branchId: string,
-  fields: ExtractedDebtCreated,
-): Promise<string | null> {
-  if (!fields.creditor || fields.original_amount == null) return null;
-
-  // Buscar supplier que matchee el creditor (opcional)
-  let supplierId: string | null = null;
-  const sup = await db
-    .from("suppliers")
-    .select("id")
-    .eq("business_id", businessId)
-    .ilike("name", `%${fields.creditor}%`)
-    .limit(1)
-    .maybeSingle();
-  supplierId = (sup.data as { id: string } | null)?.id ?? null;
-
-  const res = await db
-    .from("debts")
-    .insert({
-      business_id: businessId,
-      branch_id: branchId,
-      creditor: fields.creditor,
-      supplier_id: supplierId,
-      concept: fields.concept,
-      original_amount: fields.original_amount,
-      pending_amount: fields.original_amount,
-      due_date: parseDebtDueDate(fields.due_date),
-      interest_rate: fields.interest_rate,
-    })
-    .select("id")
-    .maybeSingle();
-  return (res.data as { id: string } | null)?.id ?? null;
-}
-
-async function createDebtPayment(
-  db: any,
-  businessId: string,
-  branchId: string,
-  fields: ExtractedDebtPayment,
-): Promise<string | null> {
-  if (fields.amount == null) return null;
-  // Buscar deuda activa más reciente que matchee el creditor.
-  if (!fields.creditor) return null;
-  const debtRes = await db
-    .from("debts")
-    .select("id, pending_amount")
-    .eq("business_id", businessId)
-    .eq("branch_id", branchId)
-    .neq("status", "settled")
-    .ilike("creditor", `%${fields.creditor}%`)
-    .order("due_date", { ascending: true, nullsFirst: false })
-    .limit(1)
-    .maybeSingle();
-  const debt = debtRes.data as { id: string; pending_amount: number } | null;
-  if (!debt) return null;
-
-  const res = await db.rpc("register_debt_payment_atomic", {
-    p_debt_id: debt.id,
-    p_business_id: businessId,
-    p_actor_id: null,
-    p_amount: fields.amount,
-    p_payment_method: fields.payment_method ?? "Transferencia",
-    p_paid_at: new Date().toISOString().slice(0, 10),
-    p_notes: null,
-  });
-  return res.data?.ok ? res.data.payment_id : null;
-}
-
-function parseDebtDueDate(input?: string): string | null {
-  if (!input) return null;
-  // ISO ya formado
-  if (/^\d{4}-\d{2}-\d{2}$/.test(input)) return input;
-  // DD/MM o DD/MM/YYYY
-  const dm = input.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
-  if (dm) {
-    const day = dm[1].padStart(2, "0");
-    const month = dm[2].padStart(2, "0");
-    const yearRaw = dm[3] ?? String(new Date().getFullYear());
-    const year = yearRaw.length === 2 ? `20${yearRaw}` : yearRaw;
-    return `${year}-${month}-${day}`;
-  }
-  // Día de la semana → próxima ocurrencia
-  const weekdays: Record<string, number> = {
-    domingo: 0,
-    lunes: 1,
-    martes: 2,
-    miércoles: 3,
-    miercoles: 3,
-    jueves: 4,
-    viernes: 5,
-    sábado: 6,
-    sabado: 6,
-  };
-  const w = weekdays[input.toLowerCase()];
-  if (w == null) return null;
-  const today = new Date();
-  const delta = (w - today.getDay() + 7) % 7 || 7;
-  const target = new Date(today.getTime() + delta * 86400_000);
-  return target.toISOString().slice(0, 10);
-}
-
 function parseClosureDate(input?: string): string | null {
   if (!input) return null;
   // "16/05" o "16/05/2026" → ISO
@@ -430,7 +298,7 @@ function parseClosureDate(input?: string): string | null {
  * Aprueba una extracción y crea el registro real en la tabla destino
  * según el tipo. Si falta info crítica, marca como needs_review.
  */
-export async function approveExtractionAction(extractionId: string): Promise<ActionResult> {
+export async function approveExtractionAction(extractionId: string, debtReviewDigest?: string): Promise<ActionResult> {
   const guard = await assertPermission("inbox.approve");
   if (guard) return guard;
   if (!isDatabaseMode()) {
@@ -439,12 +307,50 @@ export async function approveExtractionAction(extractionId: string): Promise<Act
   }
 
   const { supabase: db, extraction } = await loadExtraction(extractionId);
-  if (!db) return { ok: true, persisted: false };
+  if (!db) return { ok: false, persisted: false, error: "database_unavailable" };
   if (!extraction) {
     return { ok: false, persisted: false, error: "extraction_not_found" };
   }
-  if (extraction.status === "approved") {
+  // Stock owns approval and its source record in the same database transaction.
+  // No legacy business/branch/name fallback and no second history/audit write.
+  if (extraction.type === "stock_update") {
+    const stockGuard = await assertPermission("stock.adjust");
+    if (stockGuard) return stockGuard;
+    const ctx = await getCurrentUserContext();
+    if (!ctx.isAuthenticated || !ctx.businessId) return { ok: false, persisted: false, error: "no_business" };
+    if (extraction.business_id && extraction.business_id !== ctx.businessId) return { ok: false, persisted: false, error: "stock_extraction_not_found" };
+    const result = await db.rpc("approve_stock_extraction_atomic", {
+      p_extraction_id: extractionId,
+      p_business_id: ctx.businessId,
+    });
+    try { refreshPaths(); } catch { /* Confirmed persistence survives a cache-refresh failure. */ }
+    if (result.error) return { ok: false, persisted: false, error: "No se confirmó la aprobación de stock. Revisá el historial antes de reintentar." };
+    if (!result.data?.ok) return { ok: false, persisted: false,
+      error: result.data?.needs_review ? "missing_fields_for_creation" : result.data?.error ?? "stock_approval_failed" };
+    if (!result.data.target_record_id) return { ok: false, persisted: false, error: "stock_approval_result_unconfirmed" };
+    return { ok: true, persisted: true, target_entity: "stock_movements", target_record_id: result.data.target_record_id };
+  }
+  if (extraction.status === "approved" && !["debt_created", "debt_payment"].includes(extraction.type)) {
     return { ok: true, persisted: true, target_entity: extraction.target_entity };
+  }
+
+  if (extraction.type === "debt_created" || extraction.type === "debt_payment") {
+    const ctx = await getCurrentUserContext();
+    try {
+      const result = await executeInboxDebt(db, ctx, extraction, debtReviewDigest);
+      const target = extraction.type === "debt_created" ? "debts" : "debt_payments";
+      const targetId = extraction.type === "debt_created" ? result.debtId : result.paymentId;
+      // The Inbox wrapper commits financial ledger, approval actor and status in one transaction.
+      try {
+        await logActivity({ businessId: ctx.businessId!, action: `inbox.${extraction.type}.approved`, targetType: target, targetId, summary: "Operación de deuda revisada y aprobada desde Inbox.", data: { extractionId, debtId: result.debtId } });
+        refreshPaths();
+      } catch { /* The financial transaction already committed and is audited by its RPC. */ }
+      return { ok: true, persisted: true, target_entity: target, target_record_id: targetId };
+    } catch (error) {
+      await db.from("ai_extractions").update({ status: "needs_review" }).eq("id", extraction.id).in("status", ["pending", "needs_review", "failed"]);
+      const code = error instanceof Error ? error.message : "missing_fields_for_creation";
+      return { ok: false, persisted: false, error: code };
+    }
   }
 
   const businessId =
@@ -467,20 +373,11 @@ export async function approveExtractionAction(extractionId: string): Promise<Act
     case "expense":
       targetRecordId = await createExpense(db, businessId, branchId, extraction.fields as ExtractedExpense);
       break;
-    case "stock_update":
-      targetRecordId = await createStockMovement(db, branchId, extraction.fields as ExtractedStockUpdate);
-      break;
     case "employee_advance":
       targetRecordId = await createAdvance(db, businessId, extraction.fields as ExtractedAdvance);
       break;
     case "daily_closure":
       targetRecordId = await createDailyClosure(db, businessId, branchId, extraction.fields as ExtractedDailyClosure);
-      break;
-    case "debt_created":
-      targetRecordId = await createDebt(db, businessId, branchId, extraction.fields as ExtractedDebtCreated);
-      break;
-    case "debt_payment":
-      targetRecordId = await createDebtPayment(db, businessId, branchId, extraction.fields as ExtractedDebtPayment);
       break;
     case "supplier_price_change":
     case "unknown":
@@ -552,15 +449,22 @@ export async function rejectExtractionAction(extractionId: string): Promise<Acti
   if (!db || !extraction) {
     return { ok: false, persisted: false, error: "extraction_not_found" };
   }
-  await db
+  const changed = await db
     .from("ai_extractions")
     .update({ status: "rejected" })
-    .eq("id", extractionId);
+    .eq("id", extractionId)
+    .eq("status", extraction.status)
+    .eq("fields", JSON.stringify(extraction.fields))
+    .in("status", ["pending", "needs_review", "failed"])
+    .select("id").maybeSingle();
+  if (changed.error || !changed.data) return { ok: false, persisted: false, error: "extraction_changed_or_closed" };
   refreshPaths();
   return { ok: true, persisted: true };
 }
 
 export async function requestMoreInfoAction(extractionId: string): Promise<ActionResult> {
+  const guard = await assertPermission("inbox.approve");
+  if (guard) return guard;
   if (!isDatabaseMode()) {
     refreshPaths();
     return { ok: true, persisted: false };
@@ -569,10 +473,15 @@ export async function requestMoreInfoAction(extractionId: string): Promise<Actio
   if (!db || !extraction) {
     return { ok: false, persisted: false, error: "extraction_not_found" };
   }
-  await db
+  const changed = await db
     .from("ai_extractions")
     .update({ status: "needs_review" })
-    .eq("id", extractionId);
+    .eq("id", extractionId)
+    .eq("status", extraction.status)
+    .eq("fields", JSON.stringify(extraction.fields))
+    .in("status", ["pending", "needs_review", "failed"])
+    .select("id").maybeSingle();
+  if (changed.error || !changed.data) return { ok: false, persisted: false, error: "extraction_changed_or_closed" };
   refreshPaths();
   return { ok: true, persisted: true };
 }
@@ -585,6 +494,8 @@ export async function updateExtractionFieldsAction(
   extractionId: string,
   fields: Record<string, unknown>,
 ): Promise<ActionResult> {
+  const guard = await assertPermission("inbox.approve");
+  if (guard) return guard;
   if (!isDatabaseMode()) {
     refreshPaths();
     return { ok: true, persisted: false };
@@ -593,11 +504,28 @@ export async function updateExtractionFieldsAction(
   if (!db || !extraction) {
     return { ok: false, persisted: false, error: "extraction_not_found" };
   }
-  const merged = { ...(extraction.fields as Record<string, unknown>), ...fields };
-  await db
+  const typedDebtReplacement = extraction.type === "debt_created" && Object.hasOwn(fields, "planRequest") || extraction.type === "debt_payment" && Object.hasOwn(fields, "paymentRequest");
+  const merged = typedDebtReplacement ? fields : { ...(extraction.fields as Record<string, unknown>), ...fields };
+  const changed = await db
     .from("ai_extractions")
     .update({ fields: merged })
-    .eq("id", extractionId);
+    .eq("id", extractionId)
+    .eq("status", extraction.status)
+    .eq("fields", JSON.stringify(extraction.fields))
+    .in("status", ["pending", "needs_review", "failed"])
+    .select("id").maybeSingle();
+  if (changed.error || !changed.data) return { ok: false, persisted: false, error: "extraction_changed_or_closed" };
   refreshPaths();
   return { ok: true, persisted: true };
+}
+
+/** Read-only preview. The returned digest binds approval to actor, tenant and complete unchanged payload. */
+export async function previewInboxDebtAction(extractionId: string): Promise<{ ok: true; preview: InboxDebtPreview } | { ok: false; error: string }> {
+  const guard = await assertPermission("inbox.approve");
+  if (guard) return { ok: false, error: guard.error };
+  if (!isDatabaseMode()) return { ok: false, error: "database_required" };
+  const { supabase: db, extraction } = await loadExtraction(extractionId);
+  if (!db || !extraction) return { ok: false, error: "extraction_not_found" };
+  try { const prepared = await prepareInboxDebt(db, await getCurrentUserContext(), extraction); return { ok: true, preview: prepared.preview }; }
+  catch (error) { return { ok: false, error: error instanceof Error ? error.message : "missing_fields_for_creation" }; }
 }

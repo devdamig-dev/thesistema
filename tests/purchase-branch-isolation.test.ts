@@ -52,6 +52,7 @@ loader._load = function(name: string, ...args: any[]) {
   const mocks: Record<string, any> = {
     "@/lib/supabase/server": { createSupabaseServerClient: database },
     "@/lib/data/auth": { getCurrentUserContext: async () => context() },
+    "@/lib/permissions": { hasPermission: () => true },
     "@/lib/env": { isDatabaseMode: () => true },
     "@/lib/permissions/server-action": {
       withPermission: (_permission: string, handler: Function) => (input: unknown) => handler(context(), input),

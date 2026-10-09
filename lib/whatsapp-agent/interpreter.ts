@@ -1,3 +1,5 @@
+import { isDebtPlanTool, missingDebtArguments } from "./debt-contract";
+import { clarifyDebtCall, interpretDebtCall } from "./debt-interpreter";
 import type { PendingOperation, ToolCall, ToolDefinition } from "./types";
 
 const numericValue = (value: string) => {
@@ -5,6 +7,14 @@ const numericValue = (value: string) => {
     ? value.replace(/\./g, "").replace(",", ".")
     : value.replace(",", ".");
   const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+// Stock quantities use decimal separators, never currency thousands/scales.
+const stockQuantity = (text: string) => {
+  const value = text.trim();
+  if (!/^-?\d+(?:[.,]\d+)?$/.test(value)) return undefined;
+  const parsed = Number(value.replace(",", "."));
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
@@ -23,8 +33,17 @@ const supplierName = (text: string) => {
 };
 
 const stockArguments = (text: string): Record<string, unknown> => {
-  const match = text.match(/(?:sum[aá]|agreg[aá]|ingres[aá])\s+(-?\d+(?:[.,]\d+)*)\s*(?:kg|kilos?|kilogramos?|unidades?)?\s+(?:de\s+)?(.+?)\s+al stock[.!]?$/i);
-  return { ingredient: match?.[2]?.trim(), quantity: match ? numericValue(match[1]) : undefined, operation: "in" };
+  const match = text.match(/(?:sum[aá]|agreg[aá]|ingres[aá])\s+(-?\d+(?:[.,]\d+)*)\s*(kg|kilos?|kilogramos?|g|gramos?|l|litros?|ml|mililitros?|u|unidades?)?\s+(?:de\s+)?(.+?)\s+al stock[.!]?$/i);
+  const suppliedUnit = match?.[2]?.toLocaleLowerCase("es");
+  const unit = suppliedUnit?.startsWith("k") ? "kg"
+    : suppliedUnit?.startsWith("g") ? "g"
+      : suppliedUnit?.startsWith("mi") || suppliedUnit === "ml" ? "ml"
+        : suppliedUnit?.startsWith("l") ? "l"
+          : suppliedUnit?.startsWith("u") ? "unit" : undefined;
+  // Preserve the actual request across clarification turns as the movement's
+  // reason, and keep the supplied unit instead of treating every amount as base.
+  return { ingredient: match?.[3]?.trim(), quantity: match ? stockQuantity(match[1]) : undefined,
+    operation: "in", reason: text.trim(), unit };
 };
 
 export async function interpretHeuristically(
@@ -33,13 +52,17 @@ export async function interpretHeuristically(
   pending?: PendingOperation | null,
 ): Promise<ToolCall | null> {
   const normalized = text.trim().toLocaleLowerCase("es");
+  if (pending?.kind === "clarification" && isDebtPlanTool(pending.toolCall.name)) return clarifyDebtCall(text, pending, tools);
   if (pending?.kind === "clarification") {
     const missing = getMissingArguments(pending.toolCall, tools);
     if (!missing.length) return pending.toolCall;
     const key = missing[0];
-    const value = ["amount", "quantity", "price"].includes(key) ? amount(text) : text.trim();
+    const value = key === "quantity" && pending.toolCall.name === "stock.addMovement" ? stockQuantity(text)
+      : ["amount", "quantity", "price"].includes(key) ? amount(text) : text.trim();
     return { ...pending.toolCall, arguments: { ...pending.toolCall.arguments, [key]: value } };
   }
+  const debtCall = interpretDebtCall(text, tools);
+  if (debtCall) return debtCall;
   const allowed = (name: string) => tools.some((tool) => tool.name === name);
   if (/facturas?.*pendiente|pendientes?.*facturas?/.test(normalized) && allowed("invoices.listPending")) return { name: "invoices.listPending", arguments: {} };
   if (/stock|insumos?/.test(normalized) && /(bajo|faltan|cr[ií]tic)/.test(normalized) && allowed("stock.getLowStock")) return { name: "stock.getLowStock", arguments: {} };
@@ -62,6 +85,7 @@ export async function interpretHeuristically(
 }
 
 export function getMissingArguments(call: ToolCall, tools: readonly ToolDefinition[]): string[] {
+  if (isDebtPlanTool(call.name)) return missingDebtArguments(call);
   const tool = tools.find((item) => item.name === call.name);
   return tool?.required.filter((key) => call.arguments[key] === undefined || call.arguments[key] === null || call.arguments[key] === "") ?? [];
 }

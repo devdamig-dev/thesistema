@@ -130,6 +130,9 @@ export type Database = {
           category: string | null;
           phone: string | null;
           email: string | null;
+          active: boolean;
+          payment_terms: string | null;
+          notes: string | null;
         };
         Insert: Partial<Database["public"]["Tables"]["suppliers"]["Row"]> & {
           business_id: string;
@@ -373,6 +376,8 @@ export type Database = {
           phone: string | null;
           email: string | null;
           channel: string | null;
+          notes: string | null;
+          active: boolean;
           visits: number;
           total_spend: number;
           last_visit_at: string | null;

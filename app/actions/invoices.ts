@@ -427,10 +427,13 @@ export async function approveInvoiceAction(
     }
   }
 
-  await logStage(db, invoiceId, "recalc", recalcSummaries.length === ingredientIds.length, {
+  await logStage(db, invoiceId, "recalc", recalcSummaries.length === ingredientIds.length && recalcSummaries.every((r) => (r.errors?.length ?? 0) === 0), {
     ingredients: ingredientIds.length,
-    products_affected: recalcSummaries.reduce((s, r) => s + r.productsAffected, 0),
-    recommendations: recalcSummaries.reduce((s, r) => s + r.recommendationsCreated, 0),
+    phase: "post_write_verification",
+    products_verified: recalcSummaries.reduce((s, r) => s + (r.details?.length ?? 0), 0),
+    verification_repairs: recalcSummaries.reduce((s, r) => s + r.productsAffected, 0),
+    errors: recalcSummaries.flatMap((r) => r.errors ?? []),
+    products_skipped: recalcSummaries.reduce((s, r) => s + (r.productsSkipped ?? 0), 0),
   });
 
   refresh();

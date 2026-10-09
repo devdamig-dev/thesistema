@@ -1,3 +1,5 @@
+import { isDebtPlanTool } from "./debt-contract";
+import { prepareDebtTool } from "./debt-adapter";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { runAgent } from "./core";
 import { interpretHeuristically } from "./interpreter";
@@ -43,6 +45,7 @@ export async function processWhatsAppAgentMessage(input: IncomingAgentMessage) {
     getPending: (actor) => getPending(db, actor, conversationId),
     savePending: (operation) => savePending(db, operation, conversationId),
     consumePending: (id, actor, requireUnexpired) => consumePending(db, id, actor, requireUnexpired, conversationId),
+    prepare: (actor, call) => isDebtPlanTool(call.name) ? prepareDebtTool(db, actor, call) : Promise.resolve(call),
     execute: (actor, call) => executeTool(db, actor, call),
     audit: (event) => audit(db, event, conversationId),
     now: () => new Date(),

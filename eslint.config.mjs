@@ -15,6 +15,7 @@ export default defineConfig([
   globalIgnores([
     ".next/**",
     ".test-dist/**",
+    ".test-artifacts/**",
     "node_modules/**",
     "out/**",
     "build/**",

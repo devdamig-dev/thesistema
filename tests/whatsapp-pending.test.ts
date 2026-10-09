@@ -10,7 +10,7 @@ const original = loader._load;
 loader._load = function(name: string, ...args: any[]) {
   return name === "@/lib/permissions" ? { permissionsFor } : original.call(this, name, ...args);
 };
-const { consumePending, resolveActor, resolveAuthorizedConversation } = require("../lib/whatsapp-agent/supabase-adapter");
+const { consumePending, getPending, savePending, resolveActor, resolveAuthorizedConversation } = require("../lib/whatsapp-agent/supabase-adapter");
 loader._load = original;
 
 const actor: AgentActor = { userId: "u", memberId: "m", businessId: "b", phone: "5491111111111", name: "Ana", role: "owner", enabledModules: ["debts"], branchIds: null };
@@ -200,4 +200,42 @@ test("missing, duplicated, or failed conversation lookup never authorizes proces
     resolveAuthorizedConversation(failedDb, { ...identityInput, providerConversationId: "group-1" }, "business-a"),
     (error: any) => error.code === "XX000",
   );
+});
+
+
+test("pending replacement uses one scoped atomic RPC, with no raw update/insert fallback", async () => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const calls: string[] = [];
+  const db = createClient("https://agent.test", "test-key", { global: { fetch: async (request, init) => {
+    const url = new URL(String(request)); calls.push(url.pathname);
+    assert.equal(url.pathname, "/rest/v1/rpc/replace_whatsapp_agent_pending");
+    const args = JSON.parse(String(init?.body));
+    assert.equal(args.p_business_id, actor.businessId); assert.equal(args.p_member_id, actor.memberId); assert.equal(args.p_conversation_id, "conversation-a");
+    assert.equal(args.p_arguments.__resultUncertain, true); assert.equal(args.p_arguments.requestId, id);
+    return new Response(JSON.stringify({ ok: true, id }), { status: 200, headers: { "Content-Type": "application/json" } });
+  } } });
+  const operation = { actor, kind: "confirmation", resultUncertain: true, toolCall: { name: "debts.createPlan", arguments: { requestId: id } }, expiresAt: "2026-10-09T13:00:00Z" };
+  assert.equal((await savePending(db, operation, "conversation-a")).id, id);
+  assert.equal(calls.length, 1);
+  await assert.rejects(savePending(db, operation), /pending_conversation_required/); assert.equal(calls.length, 1);
+});
+
+test("multiple historical pending rows fail closed rather than choosing a hidden older confirmation", async () => {
+  const db = createClient("https://agent.test", "test-key", { global: { fetch: async (request) => {
+    const url = new URL(String(request)); assert.equal(url.searchParams.get("limit"), "2");
+    assert.equal(url.searchParams.get("business_id"), "eq.b"); assert.equal(url.searchParams.get("member_id"), "eq.m"); assert.equal(url.searchParams.get("conversation_id"), "eq.conversation-a");
+    return new Response(JSON.stringify([{ id: "pending-one" }, { id: "pending-two" }]), { status: 200, headers: { "Content-Type": "application/json" } });
+  } } });
+  await assert.rejects(getPending(db, actor, "conversation-a"), /pending_scope_ambiguous/);
+});
+
+test("malformed pending lookup and CAS responses never hide recovery or authorize a write", async () => {
+  for (const value of [null, {}, [{ id: "", kind: "confirmation", tool_name: "debts.createPlan", arguments: {}, expires_at: "2026-10-09T13:00:00Z" }], [{ id: "00000000-0000-4000-8000-000000000001", kind: "confirmation", tool_name: "debts.createPlan", arguments: [], expires_at: "invalid" }]]) {
+    const q: any = { select(){return q;},eq(){return q;},is(){return q;},order(){return q;},limit(){return Promise.resolve({data:value,error:null});} };
+    await assert.rejects(getPending({from:()=>q},actor,"conversation-a"),/pending_response_unknown/);
+  }
+  for (const value of [{}, {id:"another"}, [], undefined]) {
+    const q: any = { update(){return q;},eq(){return q;},is(){return q;},gt(){return q;},select(){return q;},maybeSingle(){return Promise.resolve({data:value,error:null});} };
+    await assert.rejects(consumePending({from:()=>q},"pending-1",actor,true,"conversation-a"),/pending_response_unknown/);
+  }
 });

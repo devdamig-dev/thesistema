@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { validateToolCall } from "../lib/whatsapp-agent/validation";
 import { runAgent } from "../lib/whatsapp-agent/core.js";
 import { interpretHeuristically } from "../lib/whatsapp-agent/interpreter.js";
 import { capabilityCatalogFor, WHATSAPP_TOOLS } from "../lib/whatsapp-agent/registry.js";
 import type { AgentActor, AgentDependencies, IncomingAgentMessage, PendingOperation, ToolCall } from "../lib/whatsapp-agent/types.js";
 
 const actor: AgentActor = { userId: "user-a", memberId: "member-a", businessId: "business-a", phone: "5491112345678", name: "Ana", role: "owner", enabledModules: ["sales", "purchases", "debts", "stock", "products", "invoices_ocr"], branchIds: null };
+const preparedFields = { requestId: "00000000-0000-4000-8000-000000000001", debtId: "00000000-0000-4000-8000-000000000002", branchId: "00000000-0000-4000-8000-000000000003", currency: "ARS", expectedVersion: 0 };
 const input = (text: string, id = "wamid.1"): IncomingAgentMessage => ({ messageId: id, senderPhone: actor.phone, recipientPhone: "5491188888888", text });
 
 function harness(options: { actor?: AgentActor | null; pending?: PendingOperation | null; duplicate?: boolean; fail?: boolean } = {}) {
@@ -17,6 +19,7 @@ function harness(options: { actor?: AgentActor | null; pending?: PendingOperatio
     getPending: async () => pending,
     savePending: async (operation) => (pending = { ...operation, id: "pending-1" }),
     consumePending: async () => { if (!pending) return false; pending = null; return true; },
+    prepare: async (_actor, call) => ({ ...call, arguments: { ...call.arguments, ...preparedFields, ...(call.arguments.allocationRule === "selected_installment" ? { installmentId: "00000000-0000-4000-8000-000000000004" } : {}) } }),
     execute: async (resolvedActor, call) => { executions.push({ actor: resolvedActor, call }); if (options.fail) throw new Error("database down"); return { businessId: resolvedActor.businessId, ok: true }; },
     audit: async (event) => { audits.push(event); },
     now: () => new Date("2026-09-29T12:00:00.000Z"),
@@ -42,8 +45,9 @@ test("disabled modules cannot execute", async () => { const h = harness({ actor:
 test("business isolation uses the resolved actor and ignores no caller tenant", async () => { const h = harness(); await runAgent(input("ventas de hoy"), h.deps); assert.equal(h.executions[0].actor.businessId, "business-a"); assert.equal("businessId" in h.executions[0].call.arguments, false); });
 test("sensitive payment previews creditor, amount and method before confirmation", async () => {
   const h = harness();
-  assert.equal((await runAgent(input("Marcá como pagada la deuda de Pablo"), h.deps)).status, "needs_input");
+  assert.equal((await runAgent(input("Registrá el pago de la cuota 2 de Pablo"), h.deps)).status, "needs_input");
   assert.equal((await runAgent(input("$50.000", "wamid.2"), h.deps)).status, "needs_input");
+  assert.equal((await runAgent(input("2026-10-09", "wamid.date"), h.deps)).status, "needs_input");
   const preview = await runAgent(input("Transferencia", "wamid.3"), h.deps);
   assert.equal(preview.status, "needs_confirmation");
   assert.match(preview.text, /Pablo/);
@@ -52,7 +56,9 @@ test("sensitive payment previews creditor, amount and method before confirmation
   const result = await runAgent(input("Sí", "wamid.4"), h.deps);
   assert.equal(result.status, "completed");
   assert.equal(h.executions.length, 1);
-  assert.deepEqual(h.executions[0].call.arguments, { creditor: "Pablo", amount: 50000, paymentMethod: "Transferencia" });
+  assert.equal(h.executions[0].call.arguments.creditor, "Pablo");
+  assert.equal(h.executions[0].call.arguments.amountCents, 5000000);
+  assert.equal(h.executions[0].call.arguments.paymentMethod, "Transferencia");
   assert.equal(h.audits.at(-1).confirmed, true);
 });
 test("expired confirmation is never executed", async () => { const expired: PendingOperation = { id: "old", actor, kind: "confirmation", toolCall: { name: "debts.registerPayment", arguments: { creditor: "Pablo" } }, expiresAt: "2026-09-29T11:00:00.000Z" }; const h = harness({ pending: expired }); const reply = await runAgent(input("Sí"), h.deps); assert.equal(reply.status, "needs_input"); assert.equal(h.executions.length, 0); });
@@ -72,7 +78,7 @@ test("successful action is audited with tenant, tool and sanitized arguments", a
 
 test("two distinct simultaneous confirmations execute the sensitive operation once", async () => {
   const h = harness();
-  h.deps.interpret = async () => ({ name: "debts.registerPayment", arguments: { creditor: "Pablo", amount: 50000, paymentMethod: "Transferencia" } });
+  h.deps.interpret = async () => ({ name: "debts.registerPlanPayment", arguments: { creditor: "Pablo", amountCents: 5000000, allocationRule: "oldest_due", paymentMethod: "Transferencia", paidAt: "2026-10-09" } });
   await runAgent(input("Marcá como pagada la deuda de Pablo"), h.deps);
   const replies = await Promise.all([
     runAgent(input("Sí", "confirmation-1"), h.deps),
@@ -84,7 +90,7 @@ test("two distinct simultaneous confirmations execute the sensitive operation on
 
 test("No and Cancelar discard confirmation and clarification without executing", async () => {
   for (const [request, cancellation] of [
-    ["Marcá como pagada la deuda de Pablo", "No"],
+    ["Registrá el pago de la cuota 2 de Pablo", "No"],
     ["Registrá una compra de $180.000 a Don José", "Cancelar"],
   ]) {
     const h = harness();
@@ -101,7 +107,7 @@ test("No and Cancelar discard confirmation and clarification without executing",
 test("failed consumption never executes and failed cancellation does not report cancellation", async () => {
   for (const answer of ["Sí", "Cancelar"]) {
     const h = harness();
-    h.deps.interpret = async () => ({ name: "debts.registerPayment", arguments: { creditor: "Pablo", amount: 50000, paymentMethod: "Transferencia" } });
+    h.deps.interpret = async () => ({ name: "debts.registerPlanPayment", arguments: { creditor: "Pablo", amountCents: 5000000, allocationRule: "oldest_due", paymentMethod: "Transferencia", paidAt: "2026-10-09" } });
     await runAgent(input("Marcá como pagada la deuda de Pablo"), h.deps);
     h.deps.consumePending = async () => { throw new Error("database unavailable"); };
     assert.equal((await runAgent(input(answer, "failed-consume"), h.deps)).status, "failed");
@@ -112,7 +118,7 @@ test("failed consumption never executes and failed cancellation does not report 
 
 test("expired or concurrently consumed row cannot authorize a write", async () => {
   const h = harness();
-  h.deps.interpret = async () => ({ name: "debts.registerPayment", arguments: { creditor: "Pablo", amount: 50000, paymentMethod: "Transferencia" } });
+  h.deps.interpret = async () => ({ name: "debts.registerPlanPayment", arguments: { creditor: "Pablo", amountCents: 5000000, allocationRule: "oldest_due", paymentMethod: "Transferencia", paidAt: "2026-10-09" } });
   await runAgent(input("Marcá como pagada la deuda de Pablo"), h.deps);
   h.deps.consumePending = async (_id, scopedActor, requireUnexpired) => {
     assert.equal(scopedActor.businessId, actor.businessId);
@@ -125,7 +131,7 @@ test("expired or concurrently consumed row cannot authorize a write", async () =
 
 test("cancellation and confirmation racing on a pending operation have only one winner", async () => {
   const h = harness();
-  h.deps.interpret = async () => ({ name: "debts.registerPayment", arguments: { creditor: "Pablo", amount: 50000, paymentMethod: "Transferencia" } });
+  h.deps.interpret = async () => ({ name: "debts.registerPlanPayment", arguments: { creditor: "Pablo", amountCents: 5000000, allocationRule: "oldest_due", paymentMethod: "Transferencia", paidAt: "2026-10-09" } });
   await runAgent(input("Marcá como pagada la deuda de Pablo"), h.deps);
   const replies = await Promise.all([
     runAgent(input("Cancelar", "cancel-race"), h.deps),
@@ -190,13 +196,13 @@ test("typed tool validation rejects invalid numbers, dates, periods and enums", 
   }
 });
 
-test("typed tool validation normalizes supported payment methods", async () => {
-  const h = harness();
-  h.deps.interpret = async () => ({ name: "debts.registerPayment", arguments: { creditor: "Pablo", amount: 1000, paymentMethod: "debito" } });
+test("legacy validation still normalizes supported methods, but runtime requires manual historical review", async () => {
+  const call: ToolCall = { name: "debts.registerPayment", arguments: { creditor: "Pablo", amount: 1000, paymentMethod: "debito", paidAt: "2026-10-09" } };
+  assert.equal(validateToolCall(call).call.arguments.paymentMethod, "Débito");
+  const h = harness(); h.deps.interpret = async () => call;
   const reply = await runAgent(input("pagar"), h.deps);
-  assert.equal(reply.status, "needs_confirmation");
-  assert.match(reply.text, /Débito/);
-  assert.deepEqual(h.pending()?.toolCall.arguments, { creditor: "Pablo", amount: 1000, paymentMethod: "Débito" });
+  assert.equal(reply.status, "needs_input"); assert.match(reply.text, /revisión manual/);
+  assert.equal(h.executions.length, 0); assert.equal(h.pending(), null);
 });
 
 test("capabilities catalog is derived only from real tools, modules and role permissions", () => {
