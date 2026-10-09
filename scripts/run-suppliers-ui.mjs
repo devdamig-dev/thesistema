@@ -105,6 +105,7 @@ await runUiHarness({
         assert.equal(await editor.getByLabel('Nombre *', { exact: true }).isDisabled(), true);
         assert.equal(await editor.getByRole('button', { name: 'Guardar proveedor', exact: true }).count(), 0);
         const attempt = await page.evaluate(() => JSON.parse(sessionStorage.getItem('thesistema:supplier-create:v1:qa-ficticio:user:business')));
+        await editor.getByRole('button', { name: 'Verificar resultado', exact: true }).scrollIntoViewIfNeeded();
         await screenshot(`${prefix}-uncertain`);
         await editor.getByRole('button', { name: 'Cerrar', exact: true }).last().click();
         await editor.waitFor({ state: 'hidden' });
