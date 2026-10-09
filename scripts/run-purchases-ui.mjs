@@ -92,7 +92,12 @@ await runUiHarness({
    await check(`${prefix}: anulación rechazada deja compra activa y permite revisar motivo`, async () => {
     await page.evaluate(() => { window.qa.response = 'rejected'; }); await row('Compra QA Ficticia Inicial').getByRole('button', { name: 'Anular', exact: true }).click(); const editor = await editorReady(page);
     await editor.getByLabel('Motivo obligatorio', { exact: true }).fill('No se debe guardar'); await editor.getByRole('button', { name: 'Confirmar anulación', exact: true }).click();
-    await page.getByText('QA ficticio: el stock consumido impide anular.', { exact: true }).waitFor(); assert.equal(await editor.getByLabel('Motivo obligatorio', { exact: true }).isDisabled(), false);
+    await page.getByText('QA ficticio: el stock consumido impide anular.', { exact: true }).waitFor();
+    // The toast can render before React finishes the async transition. Filling
+    // auto-waits for editability and proves the rejected draft can be corrected.
+    await editor.getByLabel('Motivo obligatorio', { exact: true }).fill('Motivo revisado sin enviar');
+    assert.equal(await editor.getByLabel('Motivo obligatorio', { exact: true }).isDisabled(), false);
+    assert.equal(await editor.getByLabel('Motivo obligatorio', { exact: true }).inputValue(), 'Motivo revisado sin enviar');
     assert.equal(await page.evaluate(() => window.qa.purchases.find((p) => p.insumo === 'Compra QA Ficticia Inicial').status), 'active');
     await editor.getByRole('button', { name: 'Cerrar', exact: true }).click(); await editor.waitFor({ state: 'hidden' }); await page.evaluate(() => { window.qa.response = 'success'; });
    });

@@ -66,6 +66,10 @@ do $$declare p jsonb;r jsonb;r2 jsonb;n integer;sid uuid;begin
  perform pg_temp.i_throws(format('update public.invoices set total=99 where id=%L',sid),'invoice_readonly');perform pg_temp.i_throws(format('update public.invoices set status=''rejected'' where id=%L',sid),'invoice_readonly');perform pg_temp.i_throws(format('update public.invoice_items set total=99 where invoice_id=%L',sid),'invoice_readonly');perform pg_temp.i_throws(format('delete from public.invoice_items where invoice_id=%L',sid),'invoice_readonly');
  select v into p from pg_temp.saved where k='manual_approval';r:=public.approve_invoice_reviewed_atomic('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001',p);perform pg_temp.i_assert(r->>'ok'='true','manual invoice approval');perform pg_temp.i_assert((select count(*)from public.stock_movements where source='manual')=1,'manual invoice stock origin factual');
 end$$;
+-- Flush approval receipts in the same service transport context as its commit,
+-- before this multi-scenario fixture switches caller and hides invoices via RLS.
+set constraints all immediate;
+set constraints all deferred;
 reset role;
 -- Later OCR/service changes invalidate a saved review, including line changes.
 set local role authenticated;
