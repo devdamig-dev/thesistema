@@ -160,7 +160,9 @@ export async function runUiHarness({ name, entry, actionModules, run }) {
     const screenshot = async (label) => {
       await ensureFixtureFont();
       await noOverflow(page);
-      await page.screenshot({ path: path.join(out, `${label}.png`), fullPage: true, animations: 'disabled' });
+      // Fixed editors must be captured in the viewport; full-page images distort their position.
+      const fullPage = await page.locator('aside, dialog[open]').count() === 0;
+      await page.screenshot({ path: path.join(out, `${label}.png`), fullPage, animations: 'disabled' });
       checkErrors();
     };
     await run({ page, origin, check, screenshot });
@@ -168,7 +170,9 @@ export async function runUiHarness({ name, entry, actionModules, run }) {
   } catch (error) {
     failed = error instanceof Error ? error.stack : String(error);
     if (context?.pages()[0]) {
-      await context.pages()[0].screenshot({ path: path.join(out, 'failure.png'), fullPage: true, animations: 'disabled', timeout: 3000 }).catch(() => {});
+      const failedPage = context.pages()[0];
+      const fullPage = await failedPage.locator('aside, dialog[open]').count().then((count) => count === 0, () => false);
+      await failedPage.screenshot({ path: path.join(out, 'failure.png'), fullPage, animations: 'disabled', timeout: 3000 }).catch(() => {});
     }
     throw error;
   } finally {
