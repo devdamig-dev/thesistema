@@ -39,14 +39,47 @@ const page=await browser.newPage({viewport:{width:1400,height:1200},serviceWorke
 const verifyIsolation=await isolateFixturePage(page,'http://127.0.0.1:'+server.address().port,['/','/bundle.js','/style.css','/font.css',...Array.from(fontFiles,file=>'/fonts/'+file)]);
 let browserPassed=false;
 const button=name=>page.getByRole('button',{name,exact:true});
+async function captureReview(viewport) {
+ const review=page.getByRole('region',{name:'Detalle de deuda para confirmar',exact:true});
+ const confirm=button('Confirmar este detalle');
+ await confirm.waitFor({state:'visible'});
+ const confirmHandle=await confirm.elementHandle();
+ await page.waitForFunction(element=>!element.disabled,confirmHandle);
+ await confirmHandle.dispose();
+ await review.scrollIntoViewIfNeeded();
+ const handle=await review.elementHandle();
+ await page.waitForFunction(element=>{
+  const box=element.getBoundingClientRect();
+  if(box.width<=0||box.height<=0||box.left<0||box.right>innerWidth||box.top<0||box.bottom>innerHeight)return false;
+  for(let node=element;node;node=node.parentElement){
+   const style=getComputedStyle(node);
+   if(style.visibility!=='visible'||Number(style.opacity)<0.99)return false;
+   if(style.transform!=='none'){const matrix=new DOMMatrixReadOnly(style.transform);if(Math.abs(matrix.m41)>0.1||Math.abs(matrix.m42)>0.1)return false;}
+  }
+  return true;
+ },handle);
+ await handle.dispose();
+ const items=review.getByRole('list',{name:'Cronograma completo'}).getByRole('listitem');
+ assert.equal(await items.count(),3);
+ assert.equal(await items.evaluateAll(elements=>elements.every(element=>{const box=element.getBoundingClientRect();return box.top>=0&&box.bottom<=innerHeight&&box.left>=0&&box.right<=innerWidth;})),true,'every installment must be physically visible');
+ await ensureInter(page);
+ // Capture the real scrolled viewport: offscreen composited cards can be omitted
+ // by a full-page screenshot immediately after a responsive viewport change.
+ await page.screenshot({path:join(dir,`preview-${viewport}.png`),fullPage:false,animations:'disabled'});
+ await confirm.scrollIntoViewIfNeeded();
+ assert.equal(await confirm.isEnabled(),true,'confirmation must be ready after preview resolves');
+ assert.equal(await confirm.evaluate(element=>{const box=element.getBoundingClientRect();return box.top>=0&&box.bottom<=innerHeight&&box.left>=0&&box.right<=innerWidth;}),true,'confirmation must be in viewport');
+ await page.screenshot({path:join(dir,`confirm-${viewport}.png`),fullPage:false,animations:'disabled'});
+ assert.equal((await page.evaluate(()=>window.__calls)).length,0,'capturing or reviewing must not persist');
+}
 try{
  await page.goto('http://127.0.0.1:'+server.address().port);
  await ensureInter(page);
  await button('Aprobar').click();await page.getByRole('heading',{name:'Revisá antes de guardar'}).waitFor();
  assert.equal((await page.evaluate(()=>window.__calls)).length,0);
- await page.screenshot({path:join(dir,'preview-desktop.png'),fullPage:true,animations:'disabled'});
+ await captureReview('desktop');
  assert.equal(await page.getByRole('list',{name:'Cronograma completo'}).getByRole('listitem').count(),3);
- await page.setViewportSize({width:390,height:844});await page.screenshot({path:join(dir,'preview-mobile.png'),fullPage:true,animations:'disabled'});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'mobile preview overflow');await page.setViewportSize({width:1400,height:1200});
+ await page.setViewportSize({width:390,height:844});await captureReview('mobile');assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'mobile preview overflow');await page.setViewportSize({width:1400,height:1200});
  await button('Cancelar revisión').click();assert.equal(await button('Confirmar este detalle').count(),0);assert.equal((await page.evaluate(()=>window.__calls)).length,0);
  await button('Aprobar').click();await page.getByRole('heading',{name:'Revisá antes de guardar'}).waitFor();
  await page.evaluate(()=>window.__responses.push({ok:false,persisted:false,error:'debt_review_required'}));
