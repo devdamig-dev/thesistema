@@ -43,6 +43,9 @@ import {
 } from "@/lib/mock-data";
 import { formatARS, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { getInboxExpenseReviewAction } from "@/app/actions/inbox-expenses";
+import { InboxExpenseReviewDialog } from "./expense-review";
+import type { InboxExpenseReview } from "@/lib/expenses/inbox";
 import { getInboxSaleReviewAction } from "@/app/actions/sales";
 import { InboxSaleReviewDialog } from "./sale-review";
 import type { InboxSaleReview } from "@/lib/sales/inbox";
@@ -64,6 +67,7 @@ export default function InboxClient({
   presenceMe?: { id: string; name: string };
 }) {
   const router = useRouter();
+  const [expenseReview, setExpenseReview] = useState<InboxExpenseReview | null>(null);
   const [saleReview,setSaleReview] = useState<InboxSaleReview|null>(null);
   const saleReviewLock=useRef(false);
   const [filter, setFilter] = useState<Filter>("todos");
@@ -98,6 +102,7 @@ export default function InboxClient({
 
   return (
     <>
+    {expenseReview && <InboxExpenseReviewDialog key={`${expenseReview.businessId}:${expenseReview.userId}:${expenseReview.extractionId}`} review={expenseReview} onClose={() => setExpenseReview(null)} onSaved={() => { setExpenseReview(null); toast({ tone: "success", title: "Gasto guardado", description: "El gasto y su aprobación quedaron registrados juntos. No se ejecutó ningún pago." }); router.refresh(); }} />}
     {saleReview && <InboxSaleReviewDialog review={saleReview} onClose={()=>setSaleReview(null)} onSaved={()=>{setSaleReview(null);toast({tone:"success",title:"Resumen guardado",description:"Los ingresos se guardaron sin inventar tickets ni descontar stock."});router.refresh();}}/>}
     <div className="space-y-6">
       <SectionHeader
@@ -322,6 +327,9 @@ export default function InboxClient({
                       const sale = await getInboxSaleReviewAction(extractionId);
                       if (sale.ok) { setSaleReview(sale.review); return; }
                       if (sale.error !== "unsupported_sale_extraction") { toast({tone:"warn",title:"La venta requiere revisión",description:sale.error}); return; }
+                      const expense = await getInboxExpenseReviewAction(extractionId);
+                      if (expense.ok) { setExpenseReview(expense.review); return; }
+                      if (expense.error !== "unsupported_expense_extraction") { toast({ tone: "warn", title: "El gasto requiere revisión", description: expense.error }); return; }
                     } finally { saleReviewLock.current=false; }
                     const preview = debtReview?.extractionId === extractionId ? debtReview.preview : null;
                     if (!preview) {

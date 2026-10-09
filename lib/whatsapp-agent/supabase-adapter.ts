@@ -343,6 +343,7 @@ export async function executeTool(db: Db, actor: AgentActor, call: ToolCall): Pr
     let query = db
       .from("purchases")
       .select("id,branch_id,purchased_at,total,payment_method,supplier_id")
+      .eq("record_status", "active")
       .eq("business_id", actor.businessId)
       .order("purchased_at", { ascending: false })
       .limit(50);

@@ -45,7 +45,7 @@ export default async function BalancesPage() {
     const periodMonth = `${today.slice(0, 7)}-01`;
     const result = await supabase
       .from("balance_snapshots")
-      .select("sales_data_stale,sales_total,purchases_total,expenses_total,payroll_total,withdrawals_total,debts_pending,debt_payments_total,stock_valued,cash_estimated,gross_margin_pct,operating_result,net_result")
+      .select("sales_data_stale,expenses_data_stale,payroll_data_stale,purchases_data_stale,sales_total,purchases_total,expenses_total,payroll_total,withdrawals_total,debts_pending,debt_payments_total,stock_valued,cash_estimated,gross_margin_pct,operating_result,net_result")
       .eq("business_id",ctx.businessId)
       .eq("period_month", periodMonth)
       .maybeSingle();
@@ -59,7 +59,7 @@ export default async function BalancesPage() {
     }
 
     const row = result.data as Record<string, number | string | boolean | null> | null;
-    if (row?.sales_data_stale) return <BalancesUnavailable message="Las ventas de este mes cambiaron desde la generación del balance. El snapshot se conserva para auditoría y necesita regenerarse antes de mostrar sus indicadores. Consultá Ventas para ver los ingresos activos." />;
+    if (row?.sales_data_stale || row?.expenses_data_stale || row?.payroll_data_stale || row?.purchases_data_stale) return <BalancesUnavailable message="Los datos operativos cambiaron desde la generación del balance. El snapshot se conserva para auditoría y necesita regenerarse antes de mostrar sus indicadores. Consultá los módulos operativos para ver los registros vigentes." />;
     const snapshot = row
       ? {
           ventasMes: Number(row.sales_total ?? 0),

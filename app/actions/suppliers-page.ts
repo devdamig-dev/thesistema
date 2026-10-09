@@ -83,7 +83,7 @@ export async function getSupplierHistoryAction(id: string): Promise<{ ok: true; 
     if (!isDatabaseMode() || !ctx.isAuthenticated || !ctx.businessId || !hasPermission(ctx.role, "purchases.view") || !isSupplierId(id)) return { ok: false, error: "No tenés acceso al historial." };
     const db = await createSupabaseServerClient() as any;
     if (!db) return { ok: false, error: "No pudimos conectar con tus datos." };
-    const res = await db.from("purchases").select("id,purchased_at,total,branches(name)").eq("business_id", ctx.businessId).eq("supplier_id", id).order("purchased_at", { ascending: false }).order("id").limit(30);
+    const res = await db.from("purchases").select("id,purchased_at,total,branches(name)").eq("record_status","active").eq("business_id", ctx.businessId).eq("supplier_id", id).order("purchased_at", { ascending: false }).order("id").limit(30);
     if (res.error) return { ok: false, error: "No pudimos cargar las compras del proveedor." };
     const rows = res.data ?? [];
     let items: any[] = [];

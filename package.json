@@ -24,12 +24,16 @@
     "test:ui": "node scripts/run-management-ui.mjs",
     "test:ui:bundle": "BUNDLE_ONLY=1 npm run test:ui",
     "test:ui:fixtures": "node --test tests/management-ui-fixtures.test.mjs tests/sales-ui-fixtures.test.mjs",
-    "test:db:native": "node scripts/run-catalog-sql.mjs --native-docker && node scripts/run-catalog-sql.mjs stock-ledger --native-docker && node scripts/run-customers-sql.mjs --native-docker && node scripts/run-suppliers-sql.mjs --native-docker && node scripts/run-debt-plans-sql.mjs --native-docker && node scripts/run-sales-sql.mjs --native-docker",
+    "test:db:native": "node scripts/run-catalog-sql.mjs --native-docker && node scripts/run-catalog-sql.mjs stock-ledger --native-docker && node scripts/run-customers-sql.mjs --native-docker && node scripts/run-suppliers-sql.mjs --native-docker && node scripts/run-debt-plans-sql.mjs --native-docker && node scripts/run-sales-sql.mjs --native-docker && node scripts/run-employees-sql.mjs --native-docker && node tests/closures-sql.mjs --native-docker && node scripts/run-expenses-sql.mjs --native-docker && node scripts/run-purchases-sql.mjs --native-docker",
     "test:sales:sql": "node scripts/run-sales-sql.mjs",
     "test:sales:concurrency": "node scripts/run-sales-sql.mjs --native-concurrency",
     "test:ui:sales": "node scripts/run-sales-ui.mjs",
     "test:ui:inbox-sales": "node tests/inbox-sales-ui.browser.mjs",
-    "test:sales:rest": "node scripts/run-sales-postgrest.mjs"
+    "test:sales:rest": "node scripts/run-sales-postgrest.mjs",
+    "test:purchases:sql": "node scripts/run-purchases-sql.mjs",
+    "test:employees:sql": "node scripts/run-employees-sql.mjs",
+    "test:expenses:sql": "node scripts/run-expenses-sql.mjs",
+    "test:closures:sql": "node tests/closures-sql.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",

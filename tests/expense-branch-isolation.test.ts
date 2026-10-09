@@ -19,17 +19,22 @@ test("expense migration requires a same-business branch and branch-scoped RLS", 
   assert.doesNotMatch(policyMigration, /for all to authenticated/);
 });
 
-test("manual expense reads and writes fail closed to the actor branch scope", () => {
-  assert.match(actions, /expensesQuery = expensesQuery\.in\("branch_id", branchIds\)/);
-  assert.match(actions, /purchasesQuery = purchasesQuery\.in\("branch_id", branchIds\)/);
-  assert.match(actions, /assignedBranchIds\.includes\(input\.branchId\)/);
-  assert.match(actions, /\.eq\("business_id", ctx\.businessId\)\.maybeSingle\(\)/);
-  assert.match(actions, /branch_id: input\.branchId/);
+test("manual expense reads and atomic writes fail closed to tenant and branch", () => {
+  const atomic = readFileSync("supabase/migrations/20261009201230_atomic_manual_expenses.sql", "utf8");
+  assert.match(actions, /ctx\.assignedBranchIds === null \? query : query\.in\("branch_id"/);
+  assert.match(actions, /scope\(db\.from\("expenses"\)/);
+  assert.match(actions, /scope\(db\.from\("purchases"\)/);
+  assert.match(actions, /mutateExpense\(current\.db/);
+  assert.match(atomic, /where id=p_branch and business_id=p_business for share/);
+  assert.match(atomic, /where id=v_id and business_id=p_business for update/);
+  assert.match(atomic, /role::text not in \('owner','admin','manager'\)/);
+  assert.match(atomic, /revoke insert,update,delete,truncate,references,trigger on public\.expenses/);
 });
 
 test("inbox approvals persist the resolved branch and UI requires a real branch", () => {
-  assert.match(inbox, /createExpense\(db, businessId, branchId/);
+  assert.match(inbox, /extraction\.type === "expense".*expense_review_required/);
+  assert.doesNotMatch(inbox, /async function createExpense/);
   assert.match(inbox, /branch_id: branchId/);
-  assert.match(page, /Elegí una sucursal/);
-  assert.match(page, /expense\.sucursal/);
+  assert.match(page, /Seleccioná una sucursal/);
+  assert.match(page, /row\.sucursal/);
 });

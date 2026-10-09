@@ -64,7 +64,7 @@ export default async function DatabaseDashboard() {
       .catch(error=>[{data:[],error},{data:[],error}]);
     const [salesResults, purchasesRes, pendingRes, approvedRes] = await Promise.all([
       salesPair,
-      db.from("purchases").select("total").eq("business_id", ctx.businessId).gte("purchased_at", monthDate),
+      db.from("purchases").select("total").eq("record_status", "active").eq("business_id", ctx.businessId).gte("purchased_at", monthDate),
       db.from("ai_extractions").select("id", { count: "exact", head: true }).eq("business_id", ctx.businessId).eq("status", "pending"),
       db.from("ai_extractions").select("id", { count: "exact", head: true }).eq("business_id", ctx.businessId).eq("status", "approved").gte("approved_at", todayStart || now),
     ]);

@@ -289,6 +289,7 @@ export const expenses = {
     const res = await supabase
       .from("expenses")
       .select("*")
+      .eq("record_status", "active")
       .order("amount", { ascending: false });
     const rows = res.data as Tables["expenses"]["Row"][] | null;
     if (res.error || !rows?.length) return [];
@@ -466,7 +467,7 @@ export const balances = {
       .maybeSingle();
     const row = res.data as Tables["balance_snapshots"]["Row"] | null;
     if (res.error) throw new Error("balance_read_failed");
-    if (row?.sales_data_stale) throw new Error("balance_sales_snapshot_stale");
+    if (row?.sales_data_stale || (row as any)?.expenses_data_stale || (row as any)?.payroll_data_stale || (row as any)?.purchases_data_stale) throw new Error("balance_sales_snapshot_stale");
     if (!row) return EMPTY_BALANCE;
     return {
       ventasMes: Number(row.sales_total),

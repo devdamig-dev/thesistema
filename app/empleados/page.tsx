@@ -1,190 +1,109 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
-import { AlertTriangle, Download, Loader2, Plus, Users } from "lucide-react";
-import { SectionHeader } from "@/components/ui/section-header";
-import { KpiCard } from "@/components/ui/kpi-card";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { ToastPresets, useToast } from "@/components/ui/toast";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { Archive, Download, Loader2, Pencil, Plus, RotateCcw } from "lucide-react";
+import { getEmployeesPageDataAction, getEmployeeManualAction, setEmployeeActiveAction } from "@/app/actions/employees-page";
 import { exportEmployeesCsvAction } from "@/app/actions/exports";
-import { getEmployeesPageDataAction, type EmployeesPageData } from "@/app/actions/employees-page";
+import { EmployeeForm } from "@/components/employees/employee-form";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Drawer } from "@/components/ui/drawer";
+import { KpiCard } from "@/components/ui/kpi-card";
+import { SectionHeader } from "@/components/ui/section-header";
+import { useToast } from "@/components/ui/toast";
+import { formatARS } from "@/lib/format";
 import { triggerCsvDownload } from "@/lib/csv-download";
-import { employees as demoEmployees, laborStats } from "@/lib/mock-data";
-import { formatARS, formatPercent } from "@/lib/format";
-
-const IS_DATABASE = process.env.NEXT_PUBLIC_APP_MODE === "database";
+import type { EmployeeRow, EmployeesPageData } from "@/lib/employees/domain";
 
 export default function EmpleadosPage() {
   const { toast } = useToast();
+  const [data, setData] = useState<EmployeesPageData | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<"active" | "archived" | "all">("active");
+  const [branchId, setBranchId] = useState("");
+  const [page, setPage] = useState(0);
+  const [editing, setEditing] = useState<EmployeeRow | "new" | null>(null);
+  const [changing, setChanging] = useState<EmployeeRow | null>(null);
+  const [pending, setPending] = useState(false);
   const [exporting, startExport] = useTransition();
-  const [loading, setLoading] = useState(IS_DATABASE);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [databaseData, setDatabaseData] = useState<EmployeesPageData | null>(null);
+  const [changeError, setChangeError] = useState("");
+  const [mustReload, setMustReload] = useState(false);
+  const busy = useRef(false);
+  const request = useRef(0);
+  const load = useCallback(async () => {
+    const sequence = ++request.current;
+    setLoading(true);
+    try {
+      const result = await getEmployeesPageDataAction({ query, status, branchId, page });
+      if (request.current !== sequence) return;
+      if (result.ok) { setData(result.data); setError(""); }
+      else { setData(null); setError(result.error); }
+    } catch { if (request.current === sequence) { setData(null); setError("No pudimos cargar el equipo."); } }
+    finally { if (request.current === sequence) setLoading(false); }
+  }, [query, status, branchId, page]);
+  useEffect(() => { const timer = setTimeout(() => void load(), 200); return () => { clearTimeout(timer); request.current += 1; }; }, [load]);
 
-  useEffect(() => {
-    if (!IS_DATABASE) return;
-    let cancelled = false;
-    void getEmployeesPageDataAction()
-      .then((res) => {
-        if (cancelled) return;
-        if (!res.ok) {
-          setLoadError(res.error);
-          setDatabaseData(null);
-        } else {
-          setDatabaseData(res.data);
-          setLoadError(null);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setLoadError("No pudimos cargar el equipo real.");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, []);
-
-  function handleExportNovedades() {
+  async function changeActive() {
+    if (!changing || busy.current || mustReload) return;
+    busy.current = true; setPending(true); setChangeError("");
+    try {
+      const result = await setEmployeeActiveAction({ id: changing.id, expectedUpdatedAt: changing.updatedAt, active: !changing.active });
+      if (result.ok) { setChanging(null); toast({ tone: "success", title: result.employee.active ? "Empleado restaurado" : "Empleado archivado" }); await load(); }
+      else { setChangeError("message" in result ? result.message : result.error); if ("status" in result && result.status !== "rejected") setMustReload(true); }
+    } catch { setChangeError("No pudimos confirmar el cambio. Verificá el estado guardado antes de continuar."); setMustReload(true); }
+    finally { busy.current = false; setPending(false); }
+  }
+  async function verifyStatus() {
+    if (!changing || busy.current) return;
+    busy.current = true; setPending(true);
+    try {
+      const result = await getEmployeeManualAction(changing.id);
+      if (result.ok && result.employee) {
+        if (result.employee.active === !changing.active) {
+          setChanging(null); toast({ tone: "success", title: result.employee.active ? "Restauración confirmada" : "Archivo confirmado" });
+        } else { setChanging(result.employee); setMustReload(false); setChangeError("Este es el estado guardado actualmente. Revisalo antes de continuar."); }
+        await load();
+      } else setChangeError(result.ok ? "El empleado ya no está disponible." : result.error);
+    } catch { setChangeError("No pudimos verificar el estado."); }
+    finally { busy.current = false; setPending(false); }
+  }
+  function exportRows() {
     startExport(async () => {
-      const res = await exportEmployeesCsvAction();
-      if (res.ok) {
-        triggerCsvDownload(res.filename, res.content);
-        toast({ tone: "success", title: "Novedades listas para liquidación", description: `${res.rows} empleados exportados.` });
-      } else {
-        toast({ tone: "warn", title: "No pudimos exportar", description: res.error });
-      }
+      try {
+        const result = await exportEmployeesCsvAction();
+        if (result.ok) { triggerCsvDownload(result.filename, result.content); toast({ tone: "success", title: "Novedades exportadas", description: `${result.rows} empleados visibles, activos y archivados.` }); }
+        else toast({ tone: "warn", title: "No pudimos exportar", description: result.error });
+      } catch { toast({ tone: "warn", title: "No pudimos exportar", description: "Volvé a intentarlo cuando se recupere la conexión." }); }
     });
   }
-
-  const rows = IS_DATABASE
-    ? (databaseData?.employees ?? []).map((row) => ({
-        id: row.id,
-        nombre: row.fullName,
-        rol: row.role,
-        turno: row.shift ?? "—",
-        horas: row.monthlyHours,
-        costo: row.monthlyCost,
-        adelanto: row.pendingAdvance,
-        faltas: row.absences,
-        tardes: row.lateArrivals,
-        activo: row.active,
-      }))
-    : demoEmployees.map((row, index) => ({
-        id: `demo-${index}`,
-        nombre: row.nombre,
-        rol: row.rol,
-        turno: "Demo",
-        horas: row.horasMes,
-        costo: row.costoMes,
-        adelanto: 0,
-        faltas: 0,
-        tardes: 0,
-        activo: true,
-      }));
-
-  const activeCount = IS_DATABASE ? databaseData?.activeCount ?? 0 : laborStats.empleadosActivos;
-  const totalCost = IS_DATABASE ? databaseData?.totalMonthlyCost ?? 0 : laborStats.costoTotal;
-  const pendingAdvances = IS_DATABASE ? databaseData?.pendingAdvances ?? 0 : laborStats.adelantosPendientes;
-  const incidentCount = IS_DATABASE ? (databaseData?.totalAbsences ?? 0) + (databaseData?.totalLateArrivals ?? 0) : 0;
-
-  return (
-    <div className="space-y-8">
-      <SectionHeader
-        eyebrow="Equipo"
-        title="Tu equipo, ordenado."
-        description={IS_DATABASE
-          ? "Nómina persistida del negocio: horas, costo, adelantos y novedades reales. No mostramos empleados ni alertas de la demo."
-          : "Turnos, horas, adelantos y costo laboral. La IA cruza esta info con las ventas para detectar oportunidades."}
-        actions={
-          <>
-            <Button size="sm" variant="ghost" onClick={handleExportNovedades} disabled={exporting}>
-              {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-              {exporting ? "Generando…" : "Exportar novedades"}
-            </Button>
-            <Button size="sm" variant="primary" onClick={() => toast(ToastPresets.comingSoon("Alta de empleado"))}>
-              <Plus className="h-4 w-4" /> Agregar empleado
-            </Button>
-          </>
-        }
-      />
-
-      {IS_DATABASE && loadError && (
-        <div className="rounded-2xl border border-warn-500/30 bg-warn-500/[0.06] p-5">
-          <div className="text-sm font-semibold text-ink">No pudimos leer el equipo real</div>
-          <p className="mt-1 text-xs text-ink-muted">{loadError} No mostramos empleados, costos ni alertas demo.</p>
-        </div>
-      )}
-
-      {IS_DATABASE && loading ? (
-        <div className="rounded-2xl border border-line p-8 text-center text-sm text-ink-muted">
-          <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> Cargando equipo real…
-        </div>
-      ) : loadError ? null : (
-        <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <KpiCard label="Costo laboral mes" value={formatARS(totalCost, { compact: true })} delta={IS_DATABASE ? undefined : 3.1} tone="brand" />
-            <KpiCard label="Sobre ventas" value={IS_DATABASE ? "—" : formatPercent(laborStats.ratio, 0)} delta={IS_DATABASE ? undefined : 1.5} tone="warn" hint={IS_DATABASE ? "Requiere cruce con ventas reales" : "Objetivo 25%"} />
-            <KpiCard label="Activos" value={String(activeCount)} />
-            <KpiCard label="Adelantos pendientes" value={formatARS(pendingAdvances)} tone="danger" />
-          </div>
-
-          {IS_DATABASE && incidentCount > 0 && (
-            <div className="rounded-2xl border border-warn-500/25 bg-warn-500/[0.05] p-4 text-sm text-ink">
-              <div className="flex items-center gap-2 font-medium"><AlertTriangle className="h-4 w-4 text-warn-400" /> Novedades registradas</div>
-              <p className="mt-1 text-xs text-ink-muted">{databaseData?.totalAbsences ?? 0} faltas · {databaseData?.totalLateArrivals ?? 0} llegadas tarde.</p>
-            </div>
-          )}
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Users className="h-4 w-4" /> Equipo</CardTitle>
-              <Badge tone="default">{rows.length} miembros</Badge>
-            </CardHeader>
-            {rows.length === 0 ? (
-              <CardContent>
-                <div className="rounded-xl border border-dashed border-line px-4 py-8 text-center text-sm text-ink-muted">
-                  Todavía no hay empleados registrados.
-                </div>
-              </CardContent>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="border-y border-line bg-bg-subtle/60 text-left text-[11px] uppercase tracking-wider text-ink-subtle">
-                    <tr>
-                      <th className="px-5 py-2.5 font-medium">Empleado</th>
-                      <th className="px-5 py-2.5 font-medium">Rol</th>
-                      <th className="px-5 py-2.5 font-medium">Turno</th>
-                      <th className="px-5 py-2.5 text-right font-medium">Horas mes</th>
-                      <th className="px-5 py-2.5 text-right font-medium">Costo mes</th>
-                      <th className="px-5 py-2.5 text-right font-medium">Adelanto</th>
-                      <th className="px-5 py-2.5 text-right font-medium">Faltas</th>
-                      <th className="px-5 py-2.5 text-right font-medium">Tardes</th>
-                      <th className="px-5 py-2.5 font-medium">Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row) => (
-                      <tr key={row.id} className="border-b border-line/60 last:border-0 hover:bg-bg-subtle">
-                        <td className="px-5 py-3 font-medium text-ink">{row.nombre}</td>
-                        <td className="px-5 py-3 text-ink-muted">{row.rol}</td>
-                        <td className="px-5 py-3 text-ink-muted">{row.turno}</td>
-                        <td className="px-5 py-3 text-right tabular-nums text-ink">{row.horas}h</td>
-                        <td className="px-5 py-3 text-right font-semibold tabular-nums text-ink">{formatARS(row.costo)}</td>
-                        <td className="px-5 py-3 text-right tabular-nums text-ink-muted">{formatARS(row.adelanto)}</td>
-                        <td className="px-5 py-3 text-right tabular-nums text-ink-muted">{row.faltas}</td>
-                        <td className="px-5 py-3 text-right tabular-nums text-ink-muted">{row.tardes}</td>
-                        <td className="px-5 py-3"><Badge tone={row.activo ? "success" : "default"}>{row.activo ? "Activo" : "Inactivo"}</Badge></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-        </>
-      )}
+  return <div className="space-y-6">
+    <SectionHeader eyebrow="Equipo" title="Tu equipo, ordenado." description="Registrá empleados, turnos, horas, costo, adelantos y novedades reales. Archivar conserva los datos y el historial." actions={data ? <><Button onClick={exportRows} disabled={exporting || pending} variant="ghost"><Download className="h-4 w-4" />{exporting ? "Exportando…" : "Exportar novedades"}</Button>{data.canManage && <Button variant="primary" onClick={() => setEditing("new")} disabled={pending}><Plus className="h-4 w-4" />Agregar empleado</Button>}</> : undefined} />
+    <div className="flex flex-wrap items-end gap-3">
+      <label className="min-w-48 flex-1 text-xs text-ink-muted">Buscar por nombre<input className="mt-1 block h-10 w-full rounded-lg border border-line bg-bg px-3 text-sm" value={query} maxLength={200} onChange={(e) => { setQuery(e.target.value); setPage(0); }} /></label>
+      <label className="text-xs text-ink-muted">Estado<select className="mt-1 block h-10 rounded-lg border border-line bg-bg px-3 text-sm" value={status} onChange={(e) => { setStatus(e.target.value as typeof status); setPage(0); }}><option value="active">Activos</option><option value="archived">Archivados</option><option value="all">Todos</option></select></label>
+      <label className="max-w-full text-xs text-ink-muted">Sucursal<select className="mt-1 block h-10 max-w-full rounded-lg border border-line bg-bg px-3 text-sm" value={branchId} onChange={(e) => { setBranchId(e.target.value); setPage(0); }}><option value="">Todas las visibles</option>{data?.branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
+      <Button onClick={() => void load()} disabled={loading}>Actualizar</Button>
     </div>
-  );
+    {error && <div role="alert" className="rounded-xl border border-warn-500/30 p-5 text-sm">{error}</div>}
+    {loading ? <div role="status" className="flex items-center justify-center gap-2 p-12 text-ink-muted"><Loader2 className="h-5 w-5 animate-spin" />Cargando equipo…</div> : data && <>
+      <p className="text-xs text-ink-muted">{data.count} empleados en este filtro{!data.canManage ? " · Acceso de lectura" : ""}. Los indicadores incluyen todo el filtro; la exportación incluye toda la nómina visible.</p>
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4"><KpiCard label="Costo mensual activo" value={formatARS(data.totalMonthlyCost, { compact: true })} tone="brand" /><KpiCard label="Activos" value={String(data.activeCount)} /><KpiCard label="Adelantos pendientes" value={formatARS(data.pendingAdvances, { compact: true })} tone="warn" /><KpiCard label="Faltas / tardes" value={`${data.totalAbsences} / ${data.totalLateArrivals}`} /></div>
+      {data.employees.length === 0 ? <div className="rounded-xl border border-dashed border-line p-10 text-center text-sm text-ink-muted">No hay empleados que coincidan con este filtro.</div> : <div className="grid gap-4 lg:grid-cols-2">
+        {data.employees.map((employee) => <article key={employee.id} className="space-y-3 rounded-xl border border-line bg-bg-elevated p-5">
+          <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="break-words font-semibold text-ink">{employee.fullName}</h2><p className="break-words text-sm text-ink-muted">{employee.role} · {employee.shift || "Turno sin registrar"}</p><p className="mt-1 text-xs text-ink-muted">{data.branches.find((branch) => branch.id === employee.branchId)?.name ?? "Sucursal sin asignar"}</p></div><Badge tone={employee.active ? "success" : "default"}>{employee.active ? "Activo" : "Archivado"}</Badge></div>
+          <dl className="grid grid-cols-2 gap-3 text-sm"><div><dt className="text-xs text-ink-muted">Horas del mes</dt><dd>{employee.monthlyHours} h</dd></div><div><dt className="text-xs text-ink-muted">Costo del mes</dt><dd>{formatARS(employee.monthlyCost)}</dd></div><div><dt className="text-xs text-ink-muted">Adelantos pendientes</dt><dd>{formatARS(employee.pendingAdvance)}</dd></div><div><dt className="text-xs text-ink-muted">Faltas / tardes</dt><dd>{employee.absences} / {employee.lateArrivals}</dd></div></dl>
+          {data.canManage && <div className="flex flex-wrap gap-2 border-t border-line pt-3"><Button size="sm" variant="ghost" onClick={() => setEditing(employee)}><Pencil className="h-3.5 w-3.5" />Editar</Button><Button size="sm" variant="ghost" onClick={() => { setChanging(employee); setMustReload(false); setChangeError(""); }}>{employee.active ? <Archive className="h-3.5 w-3.5" /> : <RotateCcw className="h-3.5 w-3.5" />}{employee.active ? "Archivar" : "Restaurar"}</Button></div>}
+        </article>)}
+      </div>}
+      <div className="flex items-center justify-between gap-3"><Button disabled={page === 0} onClick={() => setPage(page - 1)}>Anterior</Button><span className="text-xs text-ink-muted">Página {page + 1} de {Math.max(1, Math.ceil(data.count / data.pageSize))}</span><Button disabled={(page + 1) * data.pageSize >= data.count} onClick={() => setPage(page + 1)}>Siguiente</Button></div>
+    </>}
+    <Drawer open={editing !== null} onClose={() => !pending && setEditing(null)} title={editing === "new" ? "Nuevo empleado" : "Editar empleado"} description="Cargá únicamente datos reales del equipo." width="max-w-lg">
+      {editing && data && <EmployeeForm key={editing === "new" ? "new" : editing.id} branches={data.branches} draftScope={data.draftScope} employee={editing === "new" ? undefined : editing} onCancel={() => setEditing(null)} onBusyChange={setPending} onSaved={() => { setEditing(null); toast({ tone: "success", title: "Empleado guardado" }); void load(); }} />}
+    </Drawer>
+    <Drawer open={changing !== null} onClose={() => !pending && setChanging(null)} title={changing?.active ? "Archivar empleado" : "Restaurar empleado"} width="max-w-lg">
+      {changing && <div className="space-y-4 p-6"><p className="font-semibold">{changing.fullName} · {changing.active ? "Activo" : "Archivado"}</p><p className="text-sm text-ink-muted">{changing.active ? "Dejará de contarse como activo. Sus adelantos pendientes, turnos y registros históricos se conservan." : "Volverá a contarse como activo, con sus datos guardados."}</p>{changeError && <p role="alert" className="text-sm text-warn-400">{changeError}</p>}<div className="flex flex-wrap justify-end gap-2"><Button disabled={pending} variant="ghost" onClick={() => setChanging(null)}>Cerrar</Button>{mustReload ? <Button disabled={pending} onClick={() => void verifyStatus()}>Verificar estado</Button> : <Button disabled={pending} variant="primary" onClick={() => void changeActive()}>{pending && <Loader2 className="h-4 w-4 animate-spin" />}{changing.active ? "Confirmar archivo" : "Confirmar restauración"}</Button>}</div></div>}
+    </Drawer>
+  </div>;
 }

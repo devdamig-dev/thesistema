@@ -11,7 +11,6 @@ import { assertPermission } from "@/lib/permissions/server-action";
 import type {
   ExtractedAdvance,
   ExtractedDailyClosure,
-  ExtractedExpense,
   ExtractedPurchase,
   MovementType,
 } from "@/lib/ai/types";
@@ -151,27 +150,6 @@ async function createPurchase(
   return purchaseId;
 }
 
-async function createExpense(
-  db: any,
-  businessId: string,
-  branchId: string,
-  fields: ExtractedExpense,
-): Promise<string | null> {
-  const res = await db
-    .from("expenses")
-    .insert({
-      business_id: businessId,
-      branch_id: branchId,
-      name: fields.concept ?? "Gasto sin nombre",
-      category: fields.category ?? "Otros",
-      amount: fields.amount ?? 0,
-      status: "paid",
-    })
-    .select("id")
-    .maybeSingle();
-  return (res.data as { id: string } | null)?.id ?? null;
-}
-
 async function createAdvance(
   db: any,
   businessId: string,
@@ -298,6 +276,7 @@ export async function approveExtractionAction(extractionId: string, debtReviewDi
     if (!result.data.target_record_id) return { ok: false, persisted: false, error: "stock_approval_result_unconfirmed" };
     return { ok: true, persisted: true, target_entity: "stock_movements", target_record_id: result.data.target_record_id };
   }
+  if (extraction.type === "expense") return { ok: false, persisted: false, error: "expense_review_required" };
   if (extraction.type === "sale") return { ok: false, persisted: false, error: "sale_review_required" };
   if (extraction.status === "approved" && !["debt_created", "debt_payment"].includes(extraction.type)) {
     return { ok: true, persisted: true, target_entity: extraction.target_entity };
@@ -335,9 +314,6 @@ export async function approveExtractionAction(extractionId: string, debtReviewDi
   switch (extraction.type as MovementType) {
     case "purchase":
       targetRecordId = await createPurchase(db, businessId, branchId, extraction.fields as ExtractedPurchase);
-      break;
-    case "expense":
-      targetRecordId = await createExpense(db, businessId, branchId, extraction.fields as ExtractedExpense);
       break;
     case "employee_advance":
       targetRecordId = await createAdvance(db, businessId, extraction.fields as ExtractedAdvance);

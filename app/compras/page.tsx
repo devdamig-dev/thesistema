@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { SupplierForm } from "@/components/suppliers/supplier-form";
-import { FormEvent, useEffect, useMemo, useState, useTransition } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { ArrowDownRight, ArrowUpRight, FileSpreadsheet, Loader2, Plus, Truck } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
 import { KpiCard } from "@/components/ui/kpi-card";
@@ -14,7 +14,7 @@ import { Drawer } from "@/components/ui/drawer";
 import { useToast } from "@/components/ui/toast";
 import { exportPurchasesCsvAction } from "@/app/actions/exports";
 import {
-  createPurchaseAction,
+  createPurchaseAction, voidPurchaseAction, getPurchaseCorrectionAction, type PurchasesPageRow,
   getPurchasesPageDataAction,
   type PurchaseInput,
   type PurchasesPageData,
@@ -30,13 +30,19 @@ const inputClass = "h-10 w-full rounded-lg border border-line bg-bg px-3 text-sm
 export default function ComprasPage() {
   const { toast } = useToast();
   const [exporting, startExport] = useTransition();
-  const [pending, startMutation] = useTransition();
+  const [mutationPending, startMutation] = useTransition();
+  const [purchaseSaving,setPurchaseSaving]=useState(false);
+  const pending=mutationPending || purchaseSaving;
   const [loading, setLoading] = useState(IS_DATABASE);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [databaseData, setDatabaseData] = useState<PurchasesPageData | null>(null);
   const [supplierDrawerOpen, setSupplierDrawerOpen] = useState(false);
   const [supplierBusy, setSupplierBusy] = useState(false);
   const [purchaseDrawerOpen, setPurchaseDrawerOpen] = useState(false);
+  const [correction,setCorrection]=useState<PurchaseInput | null>(null);
+  const [voidTarget,setVoidTarget]=useState<PurchasesPageRow | null>(null);
+  const [voidReason,setVoidReason]=useState("");
+  const voidBusy=useRef(false);
 
   async function loadPurchases() {
     if (!IS_DATABASE) return;
@@ -85,17 +91,22 @@ export default function ComprasPage() {
     });
   }
 
-  function savePurchase(input: PurchaseInput) {
-    startMutation(async () => {
+  async function savePurchase(input: PurchaseInput): Promise<false | null | true> {
+    setPurchaseSaving(true);
+    try {
       const res = await createPurchaseAction(input);
       if (!res.ok) {
         toast({ tone: "warn", title: "No pudimos registrar la compra", description: res.error });
-        return;
+        return res.persisted;
       }
-      toast({ tone: "success", title: "Compra registrada", description: "La compra quedó incorporada al mes y a los reportes." });
+      toast({ tone: "success", title: "Compra registrada", description: "Compra, líneas y existencias guardadas juntas." });
       setPurchaseDrawerOpen(false);
       await loadPurchases();
-    });
+      return true;
+    } catch {
+      toast({tone:"warn",title:"Resultado incierto",description:"Conservá y verificá el mismo intento antes de registrar otra compra."});
+      return null;
+    } finally { setPurchaseSaving(false); }
   }
 
   return (
@@ -116,7 +127,7 @@ export default function ComprasPage() {
               <Truck className="h-4 w-4" /> Nuevo proveedor
             </Button>
             {IS_DATABASE && <Link href="/compras/proveedores" className="inline-flex items-center px-3 text-sm text-ink-muted hover:text-ink">Gestionar proveedores</Link>}
-            <Button size="sm" variant="primary" onClick={() => setPurchaseDrawerOpen(true)} disabled={!IS_DATABASE || pending}>
+            <Button size="sm" variant="primary" onClick={() => {setCorrection(null);setPurchaseDrawerOpen(true);}} disabled={!IS_DATABASE || pending}>
               <Plus className="h-4 w-4" /> Registrar compra
             </Button>
           </>
@@ -164,7 +175,7 @@ export default function ComprasPage() {
                     <div className="text-sm font-semibold text-ink">Todavía no hay compras registradas.</div>
                     <p className="mt-1 text-xs text-ink-muted">Cargá la primera compra para empezar a comparar proveedores y costos.</p>
                     {IS_DATABASE && (
-                      <Button size="sm" variant="primary" className="mt-4" onClick={() => setPurchaseDrawerOpen(true)} disabled={supplierCount === 0}>
+                      <Button size="sm" variant="primary" className="mt-4" onClick={() => {setCorrection(null);setPurchaseDrawerOpen(true);}} disabled={supplierCount === 0}>
                         <Plus className="h-4 w-4" /> Registrar compra
                       </Button>
                     )}
@@ -184,7 +195,7 @@ export default function ComprasPage() {
                         <th className="px-5 py-2.5 font-medium">Insumo</th>
                         <th className="px-5 py-2.5 text-right font-medium">Cant.</th>
                         <th className="px-5 py-2.5 text-right font-medium">Var.</th>
-                        <th className="px-5 py-2.5 text-right font-medium">Monto</th>
+                        <th className="px-5 py-2.5 text-right font-medium">Monto</th><th className="px-5 py-2.5">Estado</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -204,6 +215,7 @@ export default function ComprasPage() {
                             )}
                           </td>
                           <td className="px-5 py-3 text-right font-semibold tabular-nums text-ink">{formatARS(p.monto)}</td>
+                          <td className="px-5 py-3">{IS_DATABASE && "status" in p ? p.status === "voided" ? "Anulada" : (p as PurchasesPageRow).source === "manual" ? <div className="flex gap-1"><Button size="sm" variant="ghost" disabled={pending} onClick={() => {const id=(p as PurchasesPageRow).id;startMutation(async()=>{const result=await getPurchaseCorrectionAction(id);if(result.ok){setCorrection(result.input);setPurchaseDrawerOpen(true);}else toast({tone:"warn",title:"No se pudo abrir",description:result.error});});}}>Corregir</Button><Button size="sm" variant="ghost" disabled={pending} onClick={() => {setVoidTarget(p as PurchasesPageRow);setVoidReason("");}}>Anular</Button></div> : "Original" : "Demo"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -259,14 +271,20 @@ export default function ComprasPage() {
         {supplierDrawerOpen && databaseData?.canManageSuppliers && <SupplierForm draftScope={databaseData.supplierDraftScope} onBusyChange={setSupplierBusy} onCancel={() => setSupplierDrawerOpen(false)} onSaved={() => { setSupplierDrawerOpen(false); toast({ tone: "success", title: "Proveedor guardado" }); void loadPurchases(); }} />}
       </Drawer>
 
+      <Drawer open={voidTarget !== null} onClose={() => !pending && setVoidTarget(null)} title="Anular compra" description="Conserva el historial y revierte sus entradas de stock. Si los insumos ya se consumieron, la operación se rechaza completa.">
+        <Field label="Motivo obligatorio"><input className={inputClass} value={voidReason} disabled={pending} onChange={e => setVoidReason(e.target.value)}/></Field>
+        <Button disabled={pending || !voidReason.trim()} onClick={() => { if(!voidTarget || voidBusy.current)return; voidBusy.current=true; const target=voidTarget; const reason=voidReason; startMutation(async()=>{try{const result=await voidPurchaseAction({id:target.id,expectedVersion:target.version,reason});if(result.ok){setVoidTarget(null);await loadPurchases();}else toast({tone:"warn",title:"Revisá la anulación",description:result.error});}finally{voidBusy.current=false;}});}}>Confirmar anulación</Button>
+      </Drawer>
       <Drawer
         open={purchaseDrawerOpen}
         onClose={() => !pending && setPurchaseDrawerOpen(false)}
-        title="Registrar compra"
+        title={correction ? "Corregir compra" : "Registrar compra"}
         description="Cargá una compra manual con su proveedor y detalle principal."
         width="max-w-lg"
       >
         <PurchaseForm
+          key={`${databaseData?.supplierDraftScope}:${correction?.replacesPurchaseId ?? "new"}`}
+          correction={correction}
           pending={pending}
           suppliers={databaseData?.suppliers ?? []}
           canCreateSupplier={databaseData?.canManageSuppliers ?? false}
@@ -276,6 +294,8 @@ export default function ComprasPage() {
             setPurchaseDrawerOpen(false);
             setSupplierDrawerOpen(true);
           }}
+          scope={databaseData?.supplierDraftScope ?? ""}
+          ingredients={databaseData?.ingredients ?? []}
           onSubmit={savePurchase}
         />
       </Drawer>
@@ -283,94 +303,82 @@ export default function ComprasPage() {
   );
 }
 
-function PurchaseForm({ pending, suppliers, branches, canCreateSupplier, onCancel, onCreateSupplier, onSubmit }: {
+function PurchaseForm({ pending, suppliers, branches, ingredients, scope, correction, canCreateSupplier, onCancel, onCreateSupplier, onSubmit }: {
   pending: boolean;
   suppliers: Array<{ id: string; name: string; category: string | null }>;
   branches: Array<{ id: string; name: string }>;
-  onCancel: () => void;
-  canCreateSupplier: boolean;
-  onCreateSupplier: () => void;
-  onSubmit: (input: PurchaseInput) => void;
+  ingredients: Array<{ id: string; name: string; unit: string }>;
+  scope: string;
+  correction: PurchaseInput | null;
+  onCancel: () => void; canCreateSupplier: boolean; onCreateSupplier: () => void;
+  onSubmit: (input: PurchaseInput) => Promise<false | null | true>;
 }) {
-  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
-  const [supplierId, setSupplierId] = useState(suppliers[0]?.id ?? "");
-  const [branchId, setBranchId] = useState(branches[0]?.id ?? "");
-  const [purchasedAt, setPurchasedAt] = useState(today);
-  const [paymentMethod, setPaymentMethod] = useState("Transferencia");
-  const [description, setDescription] = useState("");
-  const [qty, setQty] = useState("1");
-  const [unit, setUnit] = useState("u");
-  const [unitPrice, setUnitPrice] = useState("");
+  const journalKey=`gastropilot:purchase-attempt:${scope}`;
+  const [initialAttempt]=useState<{key:string;input:PurchaseInput}|null>(()=>{
+    if(typeof window === "undefined" || !scope)return null;
+    try {const value=JSON.parse(sessionStorage.getItem(journalKey) ?? "null");return value && typeof value.key === "string" && value.input?.requestId === value.key ? value : null;}catch{return null;}
+  });
+  const initialInput=initialAttempt?.input ?? correction;
+  const [supplierId, setSupplierId] = useState(initialInput?.supplierId ?? "");
+  const [branchId, setBranchId] = useState(initialInput?.branchId ?? "");
+  const [purchasedAt, setPurchasedAt] = useState(initialInput?.purchasedAt ?? new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" }));
+  const [paymentMethod, setPaymentMethod] = useState(initialInput?.paymentMethod ?? "Transferencia");
+  const blank = () => ({ ingredientId: "", description: "", qty: "1", unit: "u", unitPrice: "" });
+  const [lines, setLines] = useState(() => initialInput ? (initialInput.items ?? [initialInput]).map(line => ({ ingredientId:line.ingredientId ?? "",description:line.description,qty:String(line.qty),unit:line.unit,unitPrice:String(line.unitPrice) })) : [blank()]);
+  const [correctionReason,setCorrectionReason]=useState(initialInput?.correctionReason ?? "");
   const [error, setError] = useState("");
-  const total = Number(qty.replace(",", ".")) * Number(unitPrice.replace(",", "."));
-
-  useEffect(() => {
-    if (!supplierId && suppliers[0]) setSupplierId(suppliers[0].id);
-  }, [supplierId, suppliers]);
-  useEffect(() => {
-    if (!branchId && branches[0]) setBranchId(branches[0].id);
-  }, [branchId, branches]);
-
+  const attempt = useRef<{ key: string; input: PurchaseInput } | null>(initialAttempt);
+  const sending=useRef(false);
+  const [attemptKey, setAttemptKey] = useState<string | null>(initialAttempt?.key ?? null);
+  const locked = pending || attemptKey !== null;
+  const total = lines.reduce((sum,line) => sum + Number(line.qty.replace(",",".")) * Number(line.unitPrice.replace(",",".")),0);
+  function patch(index: number, fields: Partial<ReturnType<typeof blank>>) {
+    setLines(previous => previous.map((line,i) => i === index ? { ...line, ...fields } : line));
+  }
+  async function sendAttempt(input: PurchaseInput) {
+    if(sending.current)return;
+    sending.current=true;
+    try {
+      try { sessionStorage.setItem(journalKey,JSON.stringify({key:input.requestId,input})); }
+      catch {setError("No se puede conservar el intento en este navegador. Habilitá almacenamiento antes de guardar.");return;}
+      const result=await onSubmit(input);
+      if(result !== null){sessionStorage.removeItem(journalKey);attempt.current=null;setAttemptKey(null);}
+    } finally {sending.current=false;}
+  }
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const parsedQty = Number(qty.replace(",", "."));
-    const parsedUnitPrice = Number(unitPrice.replace(",", "."));
-    if (!supplierId) return setError("Elegí un proveedor.");
-    if (!branchId) return setError("Elegí una sucursal.");
-    if (!description.trim()) return setError("Ingresá el insumo o concepto comprado.");
-    if (!Number.isFinite(parsedQty) || parsedQty <= 0) return setError("Ingresá una cantidad mayor a cero.");
-    if (!unit.trim()) return setError("Ingresá la unidad.");
-    if (!Number.isFinite(parsedUnitPrice) || parsedUnitPrice < 0) return setError("Ingresá un precio unitario válido.");
-    setError("");
-    onSubmit({ branchId, supplierId, purchasedAt, paymentMethod, description, qty: parsedQty, unit, unitPrice: parsedUnitPrice });
+    if (pending || !scope) return;
+    if (attempt.current) { void sendAttempt(attempt.current.input); return; }
+    if (!supplierId || !branchId) return setError("Elegí proveedor y sucursal.");
+    const items = lines.map(line => ({ ...line, ingredientId: line.ingredientId || null, qty: Number(line.qty.replace(",",".")), unitPrice: Number(line.unitPrice.replace(",",".")) }));
+    if (items.some(line => !line.description.trim() || !line.unit.trim() || !Number.isFinite(line.qty) || line.qty <= 0 || !Number.isFinite(line.unitPrice) || line.unitPrice < 0)) return setError("Revisá descripción, cantidad, unidad y precio de cada línea.");
+    if(correction && !correctionReason.trim())return setError("Ingresá el motivo de la corrección.");
+    const input: PurchaseInput = { ...(correction ? {replacesPurchaseId:correction.replacesPurchaseId,expectedVersion:correction.expectedVersion,correctionReason} : {}), requestId: crypto.randomUUID(), branchId, supplierId, purchasedAt, paymentMethod, ...items[0], ingredientId: items[0].ingredientId, items };
+    attempt.current = { key: input.requestId, input };
+    setAttemptKey(input.requestId);
+    setError(""); void sendAttempt(input);
   }
-
-  if (suppliers.length === 0 || branches.length === 0) {
-    return (
-      <div className="space-y-4">
-        <div className="rounded-xl border border-dashed border-line p-5 text-sm text-ink-muted">{branches.length === 0 ? "No tenés una sucursal disponible para registrar compras." : "Para registrar una compra primero necesitás un proveedor."}</div>
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onCancel}>Cancelar</Button>
-          {branches.length > 0 && canCreateSupplier && <Button variant="primary" onClick={onCreateSupplier}><Truck className="h-4 w-4" /> Nuevo proveedor</Button>}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <form className="space-y-4" onSubmit={submit}>
-      <Field label="Sucursal *">
-        <select className={inputClass} value={branchId} onChange={(e) => setBranchId(e.target.value)}>
-          {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
-        </select>
-      </Field>
-      <Field label="Proveedor *">
-        <select className={inputClass} value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
-          {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}{supplier.category ? ` · ${supplier.category}` : ""}</option>)}
-        </select>
-      </Field>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Field label="Fecha *"><input className={inputClass} type="date" value={purchasedAt} onChange={(e) => setPurchasedAt(e.target.value)} /></Field>
-        <Field label="Medio de pago *">
-          <select className={inputClass} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
-            <option>Transferencia</option><option>Efectivo</option><option>Tarjeta</option><option>Cuenta corriente</option><option>Otro</option>
-          </select>
-        </Field>
-      </div>
-      <Field label="Insumo o concepto *"><input className={inputClass} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ej. Carne picada premium" /></Field>
-      <div className="grid grid-cols-3 gap-3">
-        <Field label="Cantidad *"><input className={inputClass} inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value)} /></Field>
-        <Field label="Unidad *"><input className={inputClass} value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="kg" /></Field>
-        <Field label="Precio unit. *"><input className={inputClass} inputMode="decimal" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} placeholder="0" /></Field>
-      </div>
-      <div className="rounded-xl border border-line bg-bg-subtle/50 p-3 text-sm text-ink-muted">Total: <span className="font-semibold text-ink">{Number.isFinite(total) ? formatARS(total) : "—"}</span></div>
-      {error && <p className="text-xs text-danger-400">{error}</p>}
-      <div className="flex justify-end gap-2 pt-2">
-        <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>Cancelar</Button>
-        <Button type="submit" variant="primary" disabled={pending}>{pending && <Loader2 className="h-4 w-4 animate-spin" />} Registrar compra</Button>
-      </div>
-    </form>
-  );
+  return <form className="space-y-4" onSubmit={submit}>
+    <fieldset disabled={locked} className="space-y-4 disabled:opacity-70">
+      {correction && <><p className="text-sm">La corrección conserva y anula la compra original; registra su reemplazo y ajusta el stock dentro de una misma transacción.</p><Field label="Motivo de corrección *"><input className={inputClass} value={correctionReason} onChange={e=>setCorrectionReason(e.target.value)}/></Field></>}
+      <Field label="Sucursal *"><select className={inputClass} value={branchId} onChange={e => setBranchId(e.target.value)}><option value="">Elegir sucursal</option>{branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
+      <Field label="Proveedor *"><select className={inputClass} value={supplierId} onChange={e => setSupplierId(e.target.value)}><option value="">Elegir proveedor</option>{suppliers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
+      {suppliers.length === 0 && canCreateSupplier && <Button type="button" onClick={onCreateSupplier}>Crear proveedor</Button>}
+      <Field label="Fecha *"><input className={inputClass} type="date" value={purchasedAt} onChange={e => setPurchasedAt(e.target.value)} /></Field>
+      <Field label="Medio de pago declarado *"><select className={inputClass} value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}><option>Transferencia</option><option>Efectivo</option><option>Tarjeta</option><option>Cuenta corriente</option><option>Otro</option></select></Field>
+      {lines.map((line,i) => <div key={i} className="space-y-3 rounded-xl border border-line p-3">
+        <Field label={`Línea ${i + 1}: insumo opcional`}><select className={inputClass} value={line.ingredientId} onChange={e => { const ingredient = ingredients.find(v => v.id === e.target.value); patch(i,{ ingredientId:e.target.value, ...(ingredient ? { description:ingredient.name, unit:ingredient.unit } : {}) }); }}><option value="">Concepto sin entrada de stock</option>{ingredients.map(v => <option key={v.id} value={v.id}>{v.name} ({v.unit})</option>)}</select></Field>
+        <Field label="Descripción *"><input className={inputClass} value={line.description} onChange={e => patch(i,{description:e.target.value})}/></Field>
+        <div className="grid grid-cols-3 gap-2"><Field label="Cantidad *"><input className={inputClass} inputMode="decimal" value={line.qty} onChange={e => patch(i,{qty:e.target.value})}/></Field><Field label="Unidad *"><input className={inputClass} value={line.unit} onChange={e => patch(i,{unit:e.target.value})}/></Field><Field label="Precio unitario *"><input className={inputClass} inputMode="decimal" value={line.unitPrice} onChange={e => patch(i,{unitPrice:e.target.value})}/></Field></div>
+        {lines.length > 1 && <Button type="button" variant="ghost" onClick={() => setLines(values => values.filter((_,n) => n !== i))}>Quitar línea</Button>}
+      </div>)}
+      <Button type="button" disabled={lines.length >= 100} onClick={() => setLines(values => [...values,blank()])}>Agregar línea</Button>
+    </fieldset>
+    <p className="text-sm">Total: {Number.isFinite(total) ? formatARS(total) : "—"}. Elegir un insumo registra su entrada de stock; un concepto libre no modifica existencias.</p>
+    {error && <p role="alert" className="text-sm text-danger-400">{error}</p>}
+    {attemptKey && <p className="text-sm text-ink-muted">Intento {attemptKey}. Si la respuesta se interrumpió, reintentar conserva exactamente los datos y evita duplicados. Antes de cancelar y crear otra compra, revisá el listado.</p>}
+    <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>Cerrar</Button><Button type="submit" variant="primary" disabled={pending}>{pending ? "Guardando…" : attemptKey ? "Verificar el mismo intento" : "Registrar compra"}</Button></div>
+  </form>;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {

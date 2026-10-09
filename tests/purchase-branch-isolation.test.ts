@@ -19,6 +19,12 @@ const context = () => ({
 
 function database() {
   return {
+    async rpc(name: string, args: any) {
+      assert.equal(name, "create_purchase_manual_atomic");
+      assert.equal(args.p_business_id, businessId);
+      insertedPurchase = args.p_input;
+      return { data: { ok: true, id: "purchase-a" }, error: null };
+    },
     from(table: string) {
       const filters: Record<string, unknown> = {};
       let payload: Record<string, unknown> | null = null;
@@ -66,6 +72,7 @@ const actions = require("../app/actions/purchases-page");
 loader._load = original;
 
 const input = (branchId: string) => ({
+  requestId: "c0000000-0000-4000-8000-000000000002",
   branchId,
   supplierId: "supplier-a",
   purchasedAt: "2026-10-05",
@@ -89,8 +96,9 @@ test("purchase creation persists its authorized branch and actor", async () => {
   insertedPurchase = null;
   const result = await actions.createPurchaseAction(input(branchA));
   assert.equal(result.ok, true);
-  assert.equal((insertedPurchase as Record<string, unknown> | null)?.branch_id, branchA);
-  assert.equal((insertedPurchase as Record<string, unknown> | null)?.created_by, "user-a");
+  assert.equal((insertedPurchase as Record<string, unknown> | null)?.branchId, branchA);
+  assert.equal((insertedPurchase as Record<string, unknown> | null)?.requestId, input(branchA).requestId);
+  assert.equal((insertedPurchase as any)?.items[0].qty, "2");
 });
 
 test("business-wide roles still reject a branch from another business", async () => {
