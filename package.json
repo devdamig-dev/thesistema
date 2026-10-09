@@ -28,7 +28,8 @@
     "test:sales:sql": "node scripts/run-sales-sql.mjs",
     "test:sales:concurrency": "node scripts/run-sales-sql.mjs --native-concurrency",
     "test:ui:sales": "node scripts/run-sales-ui.mjs",
-    "test:ui:inbox-sales": "node tests/inbox-sales-ui.browser.mjs"
+    "test:ui:inbox-sales": "node tests/inbox-sales-ui.browser.mjs",
+    "test:sales:rest": "node scripts/run-sales-postgrest.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",
