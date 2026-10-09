@@ -57,9 +57,12 @@ insert into public.products(id,business_id,name,category,price,cost) values
  ('00000000-0000-4000-8000-000000000053','00000000-0000-4000-8000-000000000011','Legacy product','Test',1000,4321),
  ('00000000-0000-4000-8000-000000000054','00000000-0000-4000-8000-000000000012','Foreign product','Test',1000,123);
 insert into public.recipes(id,product_id) values
- ('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000053');
+ ('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000053'),
+ ('00000000-0000-4000-8000-000000000062','00000000-0000-4000-8000-000000000054');
 insert into public.recipe_items(recipe_id,ingredient_id,name,qty,unit_cost) values
  ('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000041','Legacy beef','a handful / do not parse',800);
+insert into public.recipe_items(recipe_id,ingredient_id,name,qty,unit_cost,quantity,unit) values
+ ('00000000-0000-4000-8000-000000000062','00000000-0000-4000-8000-000000000045','Foreign quantity fixture','1 kg',900,1,'kg');
 insert into public.stock_items(ingredient_id,branch_id,current,min) values
  ('00000000-0000-4000-8000-000000000041','00000000-0000-4000-8000-000000000021',12,2);
 
@@ -76,6 +79,7 @@ select pg_temp.catalog_assert(not has_function_privilege('authenticated',(select
 select pg_temp.catalog_assert(not has_function_privilege('anon','public.save_recipe_atomic(uuid,uuid,timestamptz,jsonb)','execute'),'anon cannot invoke recipe RPC');
 select pg_temp.catalog_assert(not (select prosecdef from pg_proc where oid='public.save_recipe_atomic(uuid,uuid,timestamptz,jsonb)'::regprocedure),'recipe RPC is invoker');
 select pg_temp.catalog_assert(not (select prosecdef from pg_proc where oid='public.save_ingredient_atomic(uuid,uuid,jsonb)'::regprocedure),'ingredient RPC is invoker');
+select pg_temp.catalog_assert((select not prosecdef and provolatile='s' from pg_proc where oid='public.catalog_recipe_cost(uuid)'::regprocedure),'recipe cost remains stable and invoker');
 
 do $$
 declare v_result jsonb; v_recipe uuid; v_token timestamptz; v_token2 timestamptz; v_logs bigint; v_count bigint; v_new uuid;
@@ -217,6 +221,22 @@ end; $$;
 select pg_temp.catalog_assert(public.recalc_product_recipe_cost('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000053')->>'error'='recipe_incomplete','trusted backend recalc allowed without inventing actor');
 select pg_temp.catalog_assert(public.recalc_product_recipe_cost('00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000053')->>'error'='product_not_found','service recalc still matches explicit business');
 select pg_temp.catalog_assert(public.save_ingredient_atomic('00000000-0000-4000-8000-000000000011',null,'{"name":"Forbidden","unit":"kg","unitCost":1,"active":true}')->>'error'='permission_denied','save still requires real actor');
+select pg_temp.catalog_assert(public.catalog_recipe_cost('00000000-0000-4000-8000-000000000054')=900,'trusted backend can calculate the separate business recipe');
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000002',true);
+select pg_temp.catalog_assert(public.catalog_recipe_cost('00000000-0000-4000-8000-000000000054') is null,'switch back to authenticated cannot inherit backend RLS bypass');
+select pg_temp.catalog_assert(not exists(select 1 from public.products where id='00000000-0000-4000-8000-000000000054'),'foreign product still invisible after backend call');
+select pg_temp.catalog_assert(public.recalc_product_recipe_cost('00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000054')->>'error'='permission_denied','authenticated nested call still enforces tenant after backend call');
+select pg_temp.catalog_assert(public.recalc_product_recipe_cost('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000053')->>'error'='recipe_incomplete','authenticated nested call retains own business visibility');
+reset role;
+set local role service_role;
+select set_config('request.jwt.claim.sub','',true);
+select pg_temp.catalog_assert(public.catalog_recipe_cost('00000000-0000-4000-8000-000000000054')=900,'repeated switch to backend replans recipe visibility');
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000002',true);
+select pg_temp.catalog_assert(public.catalog_recipe_cost('00000000-0000-4000-8000-000000000054') is null,'repeated authenticated switch still excludes foreign recipe');
 reset role;
 
 -- Fail the audit after the mutation starts: every catalog row and success audit

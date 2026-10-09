@@ -72,7 +72,9 @@ $$;
 
 -- NULL deliberately means incomplete, incompatible, or empty, never zero cost.
 create function public.catalog_recipe_cost(p_product_id uuid)
-returns numeric language sql stable security invoker set search_path = '' as $$
+returns numeric language plpgsql stable security invoker set search_path = '' as $$
+declare v_cost numeric;
+begin
   select case when count(*) > 0 and bool_and(
     ri.quantity is not null and ri.unit is not null and ri.quantity > 0
     and ri.quantity::text not in ('NaN', 'Infinity', '-Infinity')
@@ -80,12 +82,14 @@ returns numeric language sql stable security invoker set search_path = '' as $$
     and i.avg_unit_cost >= 0 and i.avg_unit_cost::text not in ('NaN', 'Infinity', '-Infinity')
     and public.catalog_unit_factor(ri.unit, i.unit) is not null
   ) then round(sum(ri.quantity * i.avg_unit_cost * public.catalog_unit_factor(ri.unit, i.unit)), 2)
-  else null end
+  else null end into v_cost
   from public.products p
   join public.recipes r on r.product_id = p.id
   join public.recipe_items ri on ri.recipe_id = r.id
   left join public.ingredients i on i.id = ri.ingredient_id
   where p.id = p_product_id;
+  return v_cost;
+end;
 $$;
 
 -- RPCs check active profiles, and direct Data API writes must do the same.
