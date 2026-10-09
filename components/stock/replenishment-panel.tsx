@@ -46,16 +46,18 @@ export function ReplenishmentPanel({ branches, revision }: { branches: StockOpti
     <CardHeader><CardTitle>Reposición basada en datos reales</CardTitle></CardHeader>
     <CardContent className="space-y-4">
       <p className="text-sm text-ink-muted">Elegí un período para revisar salidas registradas, recetas de productos vendidos y compras vinculadas. La cantidad sugerida solo repone el faltante hasta el mínimo actual.</p>
-      <form onSubmit={submit} className="flex flex-wrap items-end gap-3" aria-busy={loading}>
-        <label className="min-w-0 flex-1 space-y-1 text-xs">Sucursal de reposición
+      <form onSubmit={submit} className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 xl:grid-cols-3" aria-busy={loading}>
+        <label className="block min-w-0 space-y-1 text-xs sm:col-span-2 xl:col-span-1">Sucursal de reposición
           <select className="h-10 w-full rounded-lg border border-line bg-bg px-3" aria-label="Sucursal de reposición" value={selectedBranch} required onChange={(event) => { invalidate(); setBranchId(event.target.value); }}>
             <option value="">Elegí una sucursal</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
           </select>
         </label>
-        <label className="min-w-0 space-y-1 text-xs">Desde<input className="block h-10 rounded-lg border border-line bg-bg px-3" aria-label="Reposición desde" type="date" required value={from} onChange={(event) => { invalidate(); setFrom(event.target.value); }} /></label>
-        <label className="min-w-0 space-y-1 text-xs">Hasta<input className="block h-10 rounded-lg border border-line bg-bg px-3" aria-label="Reposición hasta" type="date" required value={to} min={from} onChange={(event) => { invalidate(); setTo(event.target.value); }} /></label>
+        <label className="block min-w-0 space-y-1 text-xs">Desde<input className="block h-10 min-w-0 w-full rounded-lg border border-line bg-bg px-3" aria-label="Reposición desde" type="date" required value={from} onChange={(event) => { invalidate(); setFrom(event.target.value); }} /></label>
+        <label className="block min-w-0 space-y-1 text-xs">Hasta<input className="block h-10 min-w-0 w-full rounded-lg border border-line bg-bg px-3" aria-label="Reposición hasta" type="date" required value={to} min={from} onChange={(event) => { invalidate(); setTo(event.target.value); }} /></label>
+        <div className="flex flex-wrap gap-2 sm:col-span-2 xl:col-span-3">
         <Button size="sm" type="submit" disabled={loading || !selectedBranch || !from || !to}>Consultar reposición</Button>
         {(loading || report || error) && <Button size="sm" type="button" variant="ghost" onClick={invalidate}>Limpiar consulta</Button>}
+        </div>
       </form>
       {loading && <p role="status" className="text-sm">Consultando datos del período…</p>}
       {error && <p role="alert" className="text-sm text-danger-500">{error}</p>}

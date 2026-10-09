@@ -92,13 +92,36 @@ try {
     assert.deepEqual(await oldRows(), before, 'mode variations preserve every original field');
     assert.deepEqual(await history(), beforeHistory, 'mode variations preserve audit and stock history');
   }
-  await db.exec(`create function pg_temp.reject_purchase_backfill() returns trigger language plpgsql as $$ begin raise exception 'synthetic_purchase_backfill_failure'; end $$;
-    create trigger zz_reject_purchase_backfill before update on public.purchases for each row execute function pg_temp.reject_purchase_backfill();`);
+  // Reset only the fixture metadata through the same protected maintenance
+  // block. The failure must undo real false-to-true changes, not an idempotent
+  // replay of flags that were already true.
+  const resetBlock = block.replace('set cost_refresh_pending=true', 'set cost_refresh_pending=false');
+  assert.notEqual(resetBlock, block, 'fixture reset targets the backfill assignment');
+  await db.exec(resetBlock);
+  assert.equal((await rows()).filter(({ row }) => row.cost_refresh_pending).length, 0,
+    'all fixture flags start false before the failing backfill');
+  // Sequence advances survive rollback, proving that the second AFTER UPDATE
+  // fired after both linked receipts underwent the intended flag transition.
+  await db.exec(`create sequence pg_temp.backfill_failure_count;
+    create function pg_temp.reject_purchase_backfill() returns trigger language plpgsql as $$
+    begin
+      if old.cost_refresh_pending is distinct from false or new.cost_refresh_pending is distinct from true then
+        raise exception 'synthetic_backfill_missing_flag_transition';
+      end if;
+      if nextval('pg_temp.backfill_failure_count')=2 then
+        raise exception 'synthetic_purchase_backfill_failure';
+      end if;
+      return null;
+    end $$;
+    create trigger zz_reject_purchase_backfill after update on public.purchases for each row execute function pg_temp.reject_purchase_backfill();`);
   const failureModes = await modes();
   const failureRows = await rows();
   await assert.rejects(db.exec(block), /synthetic_purchase_backfill_failure/);
+  assert.equal(Number((await db.query('select last_value from pg_temp.backfill_failure_count')).rows[0].last_value), 2,
+    'injected failure follows two actual flag changes');
   assert.deepEqual(await modes(), failureModes, 'failed DO restores targeted and unrelated trigger modes');
   assert.deepEqual(await rows(), failureRows, 'failed DO cannot partially change rows');
+  assert.deepEqual(await history(), beforeHistory, 'failed DO preserves audit and stock history');
   await db.exec('drop trigger zz_reject_purchase_backfill on public.purchases');
 
   for (const name of targets) {

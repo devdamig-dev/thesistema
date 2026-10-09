@@ -42,6 +42,12 @@ await runUiHarness({
         await report.getByText(/Entrega QA ficticia, 5 kg. Compra 88888888/).waitFor();
         await report.getByText(/no predice cuándo se agotará/).waitFor();
         assert.deepEqual(await page.evaluate(() => window.qa.replenishmentQueries[0]), { branchId: branches[0].id, from: '2026-10-01', to: '2026-10-08' });
+        const fieldBoxes = await Promise.all(['Sucursal de reposición', 'Reposición desde', 'Reposición hasta'].map(name => page.getByLabel(name).boundingBox()));
+        for (const box of fieldBoxes) assert.ok(box && box.width >= 150, 'replenishment controls remain readable');
+        for (let i = 0; i < fieldBoxes.length; i++) for (let j = i + 1; j < fieldBoxes.length; j++) {
+          const a = fieldBoxes[i], b = fieldBoxes[j];
+          assert.ok(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y, 'replenishment controls do not overlap');
+        }
         await noOverflow(page); await screenshot(`${prefix}-replenishment`);
       });
       await check(`${prefix}: reposición descarta consultas obsoletas, admite vacío, limpieza y recuperación de error`, async () => {
