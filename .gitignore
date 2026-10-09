@@ -9,3 +9,6 @@ next-env.d.ts
 .vercel
 *.tsbuildinfo
 .test-dist/
+supabase/.temp/
+
+.test-artifacts/

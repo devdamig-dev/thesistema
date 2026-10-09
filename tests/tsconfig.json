@@ -31,6 +31,8 @@
     "../lib/ocr/**/*.ts",
     "../lib/env.ts",
     "../app/api/webhooks/whatsapp/route.ts",
-    "../app/api/integrations/whatsapp/complete/route.ts"
+    "../app/api/integrations/whatsapp/complete/route.ts",
+    "../app/actions/catalog.ts",
+    "../app/actions/products-page.ts"
   ]
 }

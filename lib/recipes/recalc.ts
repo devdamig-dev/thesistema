@@ -1,41 +1,93 @@
-/**
- * Motor de recálculo de costos.
- *
- * Cuando cambia el `avg_unit_cost` de un ingrediente (porque entró una
- * nueva compra/factura), recalculamos:
- *   1. El costo de cada producto que tiene una receta con ese
- *      ingrediente → `products.cost`.
- *   2. El margen estimado y, si baja más del threshold, generamos
- *      un `ai_recommendation` para que el operador lo revise.
- *
- * Esta función se llama desde `approveInvoiceAction` luego de
- * insertar los purchase_items y de correr la RPC
- * `recalc_ingredient_cost`.
- */
+import { calculateGrossMargin, RecipeCalculationError } from "./quantities";
 
-const MARGIN_ALERT_THRESHOLD_PCT = 5;
+export type RecalcIssue = {
+  code: string;
+  message: string;
+  productId?: string;
+  recipeId?: string;
+};
 
 export type RecalcSummary = {
+  phase: "post_write_verification";
   ingredientId: string;
+  /** Repairs performed by this verification only; not the impact of the prior invoice. */
   productsAffected: number;
+  /** Retained for invoice callers. Unsupported revenue estimates are not persisted. */
   recommendationsCreated: number;
+  productsSkipped: number;
+  errors: RecalcIssue[];
   details: {
     productId: string;
     productName: string;
     oldCost: number;
     newCost: number;
-    oldMargin: number;
-    newMargin: number;
+    oldMargin: number | null;
+    newMargin: number | null;
   }[];
 };
 
+type AffectedItem = {
+  recipe_id: string;
+  ingredient_id: string;
+  recipes: { id: string; product_id: string; products: { id: string; business_id: string } };
+};
+
+type RecalcRpcResult = {
+  ok: boolean;
+  error?: string;
+  product_id?: string;
+  product_name?: string;
+  old_cost?: unknown;
+  new_cost?: unknown;
+  price?: unknown;
+  updated?: boolean;
+};
+
+type QueryResult = { data: unknown; error: { message?: string } | null; count?: number | null };
+
+class RecalcError extends Error {
+  constructor(public readonly code: string, message: string) {
+    super(message);
+    this.name = "RecalcError";
+  }
+}
+
+const RPC_ERROR_MESSAGES: Record<string, string> = {
+  recipe_incomplete: "La receta tiene cantidades, unidades o insumos incompletos; se conservó el costo anterior.",
+  recipe_empty: "La receta está vacía; se conservó el costo anterior.",
+  recipe_not_found: "El producto no tiene una receta disponible para recalcular.",
+  product_not_found: "El producto no está disponible en este negocio.",
+  ingredient_not_found: "Un insumo de la receta no está disponible en este negocio.",
+  forbidden: "No tenés permiso para recalcular los costos de este negocio.",
+};
+
+async function readResult(query: PromiseLike<QueryResult>, code: string): Promise<QueryResult> {
+  let result: QueryResult;
+  try {
+    result = await query;
+  } catch {
+    throw new RecalcError(code, "No se pudo confirmar la operación de costos en la base de datos.");
+  }
+  if (result.error) throw new RecalcError(code, result.error.message ?? "Falló la operación de costos.");
+  return result;
+}
+
+function issue(error: unknown, context: { productId?: string; recipeId?: string } = {}): RecalcIssue {
+  if (error instanceof RecipeCalculationError || error instanceof RecalcError) {
+    return { code: error.code, message: error.message, ...context };
+  }
+  return { code: "recalc_failed", message: "No se pudo confirmar el recálculo del costo.", ...context };
+}
+
 /**
- * Recalcula recetas y márgenes para todos los productos que usan el
- * ingrediente dado. Si el margen baja más del threshold, crea una
- * recomendación.
+ * Discover affected recipes with explicit tenant filters, even for admin clients.
+ * The shared transactional RPC validates the entire recipe, verifies ingredient
+ * ownership, and locks/reprices the product using current ingredient base costs.
+ * No read failure or incomplete legacy quantity is converted into a zero cost.
  *
- * Usa el supabase admin client (saltea RLS) para poder actualizar y
- * crear recommendations desde server actions.
+ * Ingredient triggers already updated typed recipes before this verification.
+ * Its before/after values describe repairs here, never the prior invoice delta.
+ * It does not report margin alerts, revenue impact or confidence.
  */
 export async function recalcRecipesForIngredient(
   db: any,
@@ -43,114 +95,81 @@ export async function recalcRecipesForIngredient(
   ingredientId: string,
 ): Promise<RecalcSummary> {
   const summary: RecalcSummary = {
+    phase: "post_write_verification",
     ingredientId,
     productsAffected: 0,
     recommendationsCreated: 0,
+    productsSkipped: 0,
+    errors: [],
     details: [],
   };
-
-  // 1) Traer ingredient con su nuevo avg_unit_cost.
-  const ingRes = await db
-    .from("ingredients")
-    .select("id, name, avg_unit_cost")
-    .eq("id", ingredientId)
-    .maybeSingle();
-  const ingredient = ingRes.data as
-    | { id: string; name: string; avg_unit_cost: number }
-    | null;
-  if (!ingredient) return summary;
-
-  // 2) Recetas que contienen este ingrediente.
-  const riRes = await db
-    .from("recipe_items")
-    .select("id, recipe_id, ingredient_id, qty, unit_cost")
-    .eq("ingredient_id", ingredientId);
-  const recipeItems =
-    (riRes.data as
-      | { id: string; recipe_id: string; ingredient_id: string; qty: string; unit_cost: number }[]
-      | null) ?? [];
-  if (recipeItems.length === 0) return summary;
-
-  // 3) Recetas únicas → producto asociado.
-  const recipeIds = [...new Set(recipeItems.map((ri) => ri.recipe_id))];
-  const recipesRes = await db
-    .from("recipes")
-    .select("id, product_id")
-    .in("id", recipeIds);
-  const recipes =
-    (recipesRes.data as { id: string; product_id: string }[] | null) ?? [];
-
-  // 4) Por cada producto: recalcular costo total = suma de
-  //    recipe_items.unit_cost (que actualizamos al nuevo precio del
-  //    ingredient).
-  const productIds = recipes.map((r) => r.product_id);
-  const productsRes = await db
-    .from("products")
-    .select("id, name, price, cost, business_id")
-    .in("id", productIds);
-  const products =
-    (productsRes.data as
-      | { id: string; name: string; price: number; cost: number; business_id: string }[]
-      | null) ?? [];
-
-  // 5) Update recipe_items.unit_cost de las filas afectadas con el
-  //    nuevo precio del ingrediente. (Usamos el precio promedio
-  //    como proxy del costo unitario por kg/u del insumo.)
-  await db
-    .from("recipe_items")
-    .update({ unit_cost: ingredient.avg_unit_cost })
-    .eq("ingredient_id", ingredientId);
-
-  // 6) Para cada producto afectado, sumar todos sus recipe_items y
-  //    actualizar products.cost.
-  for (const product of products) {
-    const recipe = recipes.find((r) => r.product_id === product.id);
-    if (!recipe) continue;
-
-    const allItemsRes = await db
-      .from("recipe_items")
-      .select("unit_cost")
-      .eq("recipe_id", recipe.id);
-    const allItems = (allItemsRes.data as { unit_cost: number }[] | null) ?? [];
-    const newCost = allItems.reduce((s, ri) => s + Number(ri.unit_cost ?? 0), 0);
-
-    const oldMargin =
-      product.price > 0 ? ((product.price - Number(product.cost)) / product.price) * 100 : 0;
-    const newMargin =
-      product.price > 0 ? ((product.price - newCost) / product.price) * 100 : 0;
-    const marginDeltaPct = oldMargin - newMargin;
-
-    await db
-      .from("products")
-      .update({ cost: newCost })
-      .eq("id", product.id);
-
-    summary.details.push({
-      productId: product.id,
-      productName: product.name,
-      oldCost: Number(product.cost),
-      newCost,
-      oldMargin,
-      newMargin,
-    });
-    summary.productsAffected++;
-
-    // 7) Si el margen bajó > threshold, generar recomendación IA.
-    if (marginDeltaPct >= MARGIN_ALERT_THRESHOLD_PCT) {
-      const suggestedPrice = Math.round(newCost / (oldMargin / 100));
-      await db.from("ai_recommendations").insert({
-        business_id: businessId,
-        area: "product",
-        priority: marginDeltaPct >= 8 ? "high" : "medium",
-        title: `${product.name} perdió ${marginDeltaPct.toFixed(1)}% de margen`,
-        detail: `El aumento de ${ingredient.name} llevó el costo de $${product.cost.toLocaleString("es-AR")} a $${newCost.toLocaleString("es-AR")}. Subir el precio a $${suggestedPrice.toLocaleString("es-AR")} recupera el margen original.`,
-        estimated_impact: Math.round((suggestedPrice - product.price) * 50), // proxy: 50 ventas/mes
-        confidence: 0.85,
-        status: "open",
-      });
-      summary.recommendationsCreated++;
-    }
+  if (!businessId || !ingredientId) {
+    summary.errors.push({ code: "invalid_scope", message: "Falta el negocio o el insumo a recalcular." });
+    return summary;
   }
 
+  let items: AffectedItem[];
+  try {
+    const ingredientResult = await readResult(db.from("ingredients")
+      .select("id, business_id")
+      .eq("business_id", businessId).eq("id", ingredientId).maybeSingle(), "ingredient_read_failed");
+    const ingredient = ingredientResult.data as { id: string; business_id: string } | null;
+    if (!ingredient || ingredient.id !== ingredientId || ingredient.business_id !== businessId) {
+      throw new RecalcError("ingredient_unavailable", "El insumo no está disponible en este negocio.");
+    }
+
+    const affected = await readResult(db.from("recipe_items")
+      .select("recipe_id, ingredient_id, recipes!inner(id, product_id, products!inner(id, business_id))", { count: "exact" })
+      .eq("ingredient_id", ingredientId)
+      .eq("recipes.products.business_id", businessId), "recipe_lookup_failed");
+    // An API row limit can truncate a successful query. Do not report partial
+    // discovery as a complete recalculation of all affected recipes.
+    if (!Array.isArray(affected.data) || affected.count !== affected.data.length) {
+      throw new RecalcError("recipe_lookup_incomplete", "No se pudo leer la lista completa de recetas afectadas.");
+    }
+    items = affected.data as AffectedItem[];
+    if (items.some((item) => item.ingredient_id !== ingredientId || !item.recipe_id ||
+      item.recipes?.id !== item.recipe_id || !item.recipes.product_id ||
+      item.recipes.products?.id !== item.recipes.product_id || item.recipes.products.business_id !== businessId)) {
+      throw new RecalcError("recipe_scope_mismatch", "No se pudo verificar que las recetas pertenezcan a este negocio.");
+    }
+  } catch (error) {
+    summary.errors.push(issue(error));
+    return summary;
+  }
+
+  const recipesByProduct = new Map(items.map((item) => [item.recipes.product_id, item.recipe_id]));
+  for (const [productId, recipeId] of recipesByProduct) {
+    try {
+      const result = await readResult(db.rpc("recalc_product_recipe_cost", {
+        p_business_id: businessId,
+        p_product_id: productId,
+      }), "product_recalc_failed");
+      const recalculated = result.data as RecalcRpcResult | null;
+      if (!recalculated || recalculated.ok !== true) {
+        const code = typeof recalculated?.error === "string" ? recalculated.error : "product_recalc_unconfirmed";
+        throw new RecalcError(code, RPC_ERROR_MESSAGES[code] ?? "No se pudo completar el recálculo del producto.");
+      }
+      if (recalculated.product_id !== productId || typeof recalculated.product_name !== "string" ||
+        typeof recalculated.updated !== "boolean") {
+        throw new RecalcError("product_recalc_unconfirmed", "La base de datos no confirmó el resultado del producto esperado.");
+      }
+      const oldMargin = calculateGrossMargin(recalculated.price, recalculated.old_cost);
+      const newMargin = calculateGrossMargin(recalculated.price, recalculated.new_cost);
+      if (recalculated.updated) summary.productsAffected++;
+      summary.details.push({
+        productId,
+        productName: recalculated.product_name,
+        oldCost: Number(recalculated.old_cost),
+        newCost: Number(recalculated.new_cost),
+        oldMargin,
+        newMargin,
+      });
+
+    } catch (error) {
+      summary.productsSkipped++;
+      summary.errors.push(issue(error, { productId, recipeId }));
+    }
+  }
   return summary;
 }
