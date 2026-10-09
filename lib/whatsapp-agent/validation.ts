@@ -1,3 +1,4 @@
+import { isSaleWrite, validateSaleCall } from "../sales/agent";
 import { normalizeUnit } from "../recipes/quantities";
 import { canonicalDebtCall, isDebtPlanTool } from "./debt-contract";
 import { validateDebtToolCall } from "./debt-validation";
@@ -87,6 +88,7 @@ function validatePeriod(argumentsValue: Record<string, unknown>, from: string, t
 }
 
 export function validateToolCall(call: ToolCall): ToolValidation {
+  if (isSaleWrite(call.name)) return validateSaleCall(call);
   if (isDebtPlanTool(call.name)) return validateDebtToolCall(canonicalDebtCall(call));
   const schema = schemas[call.name];
   if (!schema || !call.arguments || typeof call.arguments !== "object" || Array.isArray(call.arguments)) {

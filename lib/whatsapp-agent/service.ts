@@ -1,9 +1,10 @@
+import { isSaleWrite, prepareSaleTool } from "../sales/agent";
 import { isDebtPlanTool } from "./debt-contract";
 import { prepareDebtTool } from "./debt-adapter";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { runAgent } from "./core";
 import { interpretHeuristically } from "./interpreter";
-import { audit, claimMessage, consumePending, executeTool, getPending, resolveActor, savePending, resolveAuthorizedConversation, type AuthorizedConversation } from "./supabase-adapter";
+import { claimSalePending, cancelSalePending, claimDebtPending, cancelDebtPending, audit, claimMessage, consumePending, executeTool, getPending, resolveActor, savePending, resolveAuthorizedConversation, type AuthorizedConversation } from "./supabase-adapter";
 import type { AgentActor, IncomingAgentMessage } from "./types";
 
 export function scopeActorToConversation(
@@ -45,7 +46,11 @@ export async function processWhatsAppAgentMessage(input: IncomingAgentMessage) {
     getPending: (actor) => getPending(db, actor, conversationId),
     savePending: (operation) => savePending(db, operation, conversationId),
     consumePending: (id, actor, requireUnexpired) => consumePending(db, id, actor, requireUnexpired, conversationId),
-    prepare: (actor, call) => isDebtPlanTool(call.name) ? prepareDebtTool(db, actor, call) : Promise.resolve(call),
+    claimSalePending: (id,actor,recovery) => claimSalePending(db,id,actor,recovery,conversationId),
+    cancelSalePending: (id,actor) => cancelSalePending(db,id,actor,conversationId),
+    claimDebtPending: (id, actor, recovery) => claimDebtPending(db, id, actor, recovery, conversationId),
+    cancelDebtPending: (id, actor) => cancelDebtPending(db, id, actor, conversationId),
+    prepare: (actor, call) => isDebtPlanTool(call.name) ? prepareDebtTool(db, actor, call) : isSaleWrite(call.name) ? prepareSaleTool(db, actor, call) : Promise.resolve(call),
     execute: (actor, call) => executeTool(db, actor, call),
     audit: (event) => audit(db, event, conversationId),
     now: () => new Date(),

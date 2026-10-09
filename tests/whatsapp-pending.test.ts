@@ -10,7 +10,7 @@ const original = loader._load;
 loader._load = function(name: string, ...args: any[]) {
   return name === "@/lib/permissions" ? { permissionsFor } : original.call(this, name, ...args);
 };
-const { consumePending, getPending, savePending, resolveActor, resolveAuthorizedConversation } = require("../lib/whatsapp-agent/supabase-adapter");
+const { claimDebtPending, cancelDebtPending, consumePending, getPending, savePending, resolveActor, resolveAuthorizedConversation } = require("../lib/whatsapp-agent/supabase-adapter");
 loader._load = original;
 
 const actor: AgentActor = { userId: "u", memberId: "m", businessId: "b", phone: "5491111111111", name: "Ana", role: "owner", enabledModules: ["debts"], branchIds: null };
@@ -238,4 +238,18 @@ test("malformed pending lookup and CAS responses never hide recovery or authoriz
     const q: any = { update(){return q;},eq(){return q;},is(){return q;},gt(){return q;},select(){return q;},maybeSingle(){return Promise.resolve({data:value,error:null});} };
     await assert.rejects(consumePending({from:()=>q},"pending-1",actor,true,"conversation-a"),/pending_response_unknown/);
   }
+});
+
+test("debt claim and cancel adapters send only verified scope and fail closed on malformed responses", async () => {
+  const calls: any[]=[]; let response: any={data:true,error:null};
+  const db:any={rpc:async(name:string,args:unknown)=>{calls.push({name,args});return response;}};
+  assert.equal(await claimDebtPending(db,"pending",actor,false,"conversation"),true);
+  assert.deepEqual(calls[0],{name:"claim_debt_pending_execution",args:{p_business_id:actor.businessId,p_member_id:actor.memberId,p_conversation_id:"conversation",p_pending_id:"pending",p_recovery:false}});
+  response={data:false,error:null};assert.equal(await claimDebtPending(db,"pending",actor,true,"conversation"),false);
+  assert.equal(calls[1].args.p_recovery,true);
+  for(response of [null,{},[],{data:null},{data:"true"},{data:{}},{data:[true]},{data:true,error:{message:"unknown"}}])await assert.rejects(()=>claimDebtPending(db,"pending",actor,false,"conversation"),/pending_response_unknown/);
+  response={data:{consumed:true,resultUncertain:true},error:null};
+  assert.deepEqual(await cancelDebtPending(db,"pending",actor,"conversation"),{consumed:true,resultUncertain:true});
+  assert.deepEqual(calls.at(-1),{name:"cancel_debt_pending_execution",args:{p_business_id:actor.businessId,p_member_id:actor.memberId,p_conversation_id:"conversation",p_pending_id:"pending"}});
+  for(response of [null,{},[],{data:null},{data:{consumed:true}},{data:{consumed:true,resultUncertain:"false"}},{data:{consumed:true,resultUncertain:false},error:{message:"unknown"}}])await assert.rejects(()=>cancelDebtPending(db,"pending",actor,"conversation"),/pending_response_unknown/);
 });

@@ -32,6 +32,7 @@ jobs:
       - run: npm run test:customers:sql
       - run: npm run test:suppliers:sql
       - run: npm run test:debts:sql
+      - run: npm run test:sales:sql
       - run: npm run build
       - run: npx --no-install playwright install --with-deps chromium
       - run: npm run test:ui

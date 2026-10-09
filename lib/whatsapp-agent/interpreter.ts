@@ -1,3 +1,4 @@
+import { isSaleWrite, missingSaleArguments, interpretSaleCall } from "../sales/agent";
 import { isDebtPlanTool, missingDebtArguments } from "./debt-contract";
 import { clarifyDebtCall, interpretDebtCall } from "./debt-interpreter";
 import type { PendingOperation, ToolCall, ToolDefinition } from "./types";
@@ -51,6 +52,8 @@ export async function interpretHeuristically(
   tools: ToolDefinition[],
   pending?: PendingOperation | null,
 ): Promise<ToolCall | null> {
+  const saleCall = interpretSaleCall(text, tools, pending);
+  if (saleCall) return saleCall;
   const normalized = text.trim().toLocaleLowerCase("es");
   if (pending?.kind === "clarification" && isDebtPlanTool(pending.toolCall.name)) return clarifyDebtCall(text, pending, tools);
   if (pending?.kind === "clarification") {
@@ -85,6 +88,7 @@ export async function interpretHeuristically(
 }
 
 export function getMissingArguments(call: ToolCall, tools: readonly ToolDefinition[]): string[] {
+  if (isSaleWrite(call.name)) return missingSaleArguments(call);
   if (isDebtPlanTool(call.name)) return missingDebtArguments(call);
   const tool = tools.find((item) => item.name === call.name);
   return tool?.required.filter((key) => call.arguments[key] === undefined || call.arguments[key] === null || call.arguments[key] === "") ?? [];

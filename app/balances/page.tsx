@@ -1,3 +1,5 @@
+import { getCurrentUserContext } from "@/lib/data/auth";
+import { localDate } from "@/app/ventas/reporting";
 import { balances as balancesRepo } from "@/lib/data";
 import {
   balanceMonthly as fallbackMonthly,
@@ -35,13 +37,16 @@ export default async function BalancesPage() {
       return <BalancesUnavailable message="Supabase no está configurado. No mostramos ceros ni balances demo como fallback." />;
     }
 
-    const today = new Date().toLocaleDateString("en-CA", {
-      timeZone: "America/Argentina/Buenos_Aires",
-    });
+    const ctx=await getCurrentUserContext();
+    if (!ctx.isAuthenticated || !ctx.businessId) return <BalancesUnavailable message="No se pudo resolver el negocio activo." />;
+    const business=await supabase.from("businesses").select("timezone").eq("id",ctx.businessId).maybeSingle();
+    if (business.error || !business.data?.timezone) return <BalancesUnavailable message="No se pudo verificar la zona horaria del negocio." />;
+    const today = localDate(new Date(),business.data.timezone);
     const periodMonth = `${today.slice(0, 7)}-01`;
     const result = await supabase
       .from("balance_snapshots")
-      .select("sales_total,purchases_total,expenses_total,payroll_total,withdrawals_total,debts_pending,debt_payments_total,stock_valued,cash_estimated,gross_margin_pct,operating_result,net_result")
+      .select("sales_data_stale,sales_total,purchases_total,expenses_total,payroll_total,withdrawals_total,debts_pending,debt_payments_total,stock_valued,cash_estimated,gross_margin_pct,operating_result,net_result")
+      .eq("business_id",ctx.businessId)
       .eq("period_month", periodMonth)
       .maybeSingle();
 
@@ -53,7 +58,8 @@ export default async function BalancesPage() {
       );
     }
 
-    const row = result.data as Record<string, number | string | null> | null;
+    const row = result.data as Record<string, number | string | boolean | null> | null;
+    if (row?.sales_data_stale) return <BalancesUnavailable message="Las ventas de este mes cambiaron desde la generación del balance. El snapshot se conserva para auditoría y necesita regenerarse antes de mostrar sus indicadores. Consultá Ventas para ver los ingresos activos." />;
     const snapshot = row
       ? {
           ventasMes: Number(row.sales_total ?? 0),

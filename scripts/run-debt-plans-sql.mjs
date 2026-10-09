@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { nativeDatabase } from "./native-postgres.mjs";
 import { verifyWhatsAppPendingConcurrency } from "./verify-whatsapp-pending-concurrency.mjs";
+import { verifyDebtPendingConcurrency } from "./verify-debt-pending-concurrency.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const migrations = join(root, "supabase", "migrations");
@@ -65,7 +66,9 @@ try {
   await db.exec(await readFile(join(root, stage), "utf8"));
   stage = "supabase/tests/whatsapp-pending.sql";
   await db.exec(await readFile(join(root, stage), "utf8"));
-  if (native) { await verifyConcurrentSessions(db); await verifyWhatsAppPendingConcurrency(db); }
+  stage = "supabase/tests/debt-pending.sql";
+  await db.exec(await readFile(join(root, stage), "utf8"));
+  if (native) { await verifyConcurrentSessions(db); await verifyWhatsAppPendingConcurrency(db); await verifyDebtPendingConcurrency(db); }
   console.log(`PASS debt plans SQL suite (${files.length} real migrations, isolated PostgreSQL, rolled-back fixtures)`);
 } catch (error) {
   console.error(`FAIL ${stage}: ${error.message}`);

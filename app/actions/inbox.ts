@@ -13,7 +13,6 @@ import type {
   ExtractedDailyClosure,
   ExtractedExpense,
   ExtractedPurchase,
-  ExtractedSale,
   MovementType,
 } from "@/lib/ai/types";
 
@@ -84,6 +83,7 @@ function refreshPaths() {
   revalidatePath("/deudas");
   revalidatePath("/balances");
   revalidatePath("/stock");
+  revalidatePath("/ventas");
   revalidatePath("/auditoria");
 }
 
@@ -149,38 +149,6 @@ async function createPurchase(
   }
 
   return purchaseId;
-}
-
-async function createSale(
-  db: any,
-  businessId: string,
-  branchId: string | null,
-  fields: ExtractedSale,
-): Promise<string | null> {
-  // Si vienen múltiples canales, creamos un sale por canal.
-  const channels = fields.channels?.length
-    ? fields.channels
-    : fields.total_amount
-      ? [{ channel: "salon", amount: fields.total_amount }]
-      : [];
-  if (channels.length === 0) return null;
-
-  const inserts = channels.map((c) => ({
-    business_id: businessId,
-    branch_id: branchId,
-    channel: normalizeSalesChannel(c.channel),
-    amount: c.amount,
-    occurred_at: new Date().toISOString(),
-  }));
-  const res = await db.from("sales").insert(inserts).select("id");
-  const rows = res.data as { id: string }[] | null;
-  return rows?.[0]?.id ?? null;
-}
-
-function normalizeSalesChannel(channel: string): string {
-  const c = channel.toLowerCase().replace(/\s+/g, "_");
-  const allowed = ["salon", "delivery", "whatsapp", "pedidos_ya", "rappi", "mp_qr"];
-  return allowed.includes(c) ? c : "salon";
 }
 
 async function createExpense(
@@ -330,6 +298,7 @@ export async function approveExtractionAction(extractionId: string, debtReviewDi
     if (!result.data.target_record_id) return { ok: false, persisted: false, error: "stock_approval_result_unconfirmed" };
     return { ok: true, persisted: true, target_entity: "stock_movements", target_record_id: result.data.target_record_id };
   }
+  if (extraction.type === "sale") return { ok: false, persisted: false, error: "sale_review_required" };
   if (extraction.status === "approved" && !["debt_created", "debt_payment"].includes(extraction.type)) {
     return { ok: true, persisted: true, target_entity: extraction.target_entity };
   }
@@ -366,9 +335,6 @@ export async function approveExtractionAction(extractionId: string, debtReviewDi
   switch (extraction.type as MovementType) {
     case "purchase":
       targetRecordId = await createPurchase(db, businessId, branchId, extraction.fields as ExtractedPurchase);
-      break;
-    case "sale":
-      targetRecordId = await createSale(db, businessId, branchId, extraction.fields as ExtractedSale);
       break;
     case "expense":
       targetRecordId = await createExpense(db, businessId, branchId, extraction.fields as ExtractedExpense);

@@ -17,14 +17,13 @@
  */
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { localDate } from "@/app/ventas/reporting";
+import { getSalesPageDataAction } from "@/app/actions/sales-page";
 import type { Database } from "@/lib/supabase/types";
 import * as demo from "./demo";
 import { applyBranchFilter, getEffectiveBranchIds } from "./branch-filter";
 import { getCurrentUserContext } from "./auth";
 import {
-  aggregateDailySalesTable,
-  aggregateSalesByChannel,
-  aggregateSalesByDay,
   mapBusiness,
   mapCustomer,
   mapDailyClosure,
@@ -256,44 +255,15 @@ export const products = {
 };
 
 // ---------- VENTAS · DB con branch filtering ----------
-async function loadSalesRows(): Promise<Tables["sales"]["Row"][] | null> {
-  const supabase = await createSupabaseServerClient();
-  if (!supabase) return null;
-  const db = supabase as any;
-  const ctx = await getCurrentUserContext();
-  const branchIds = await getEffectiveBranchIds(db, ctx);
-
-  // Últimos 30 días para tener data para todos los gráficos.
-  const since = new Date(Date.now() - 30 * 86400_000).toISOString();
-  let query = db
-    .from("sales")
-    .select("*")
-    .gte("occurred_at", since)
-    .order("occurred_at", { ascending: false });
-  if (branchIds !== null) {
-    const ids = branchIds.length ? branchIds : ["00000000-0000-0000-0000-000000000000"];
-    query = query.in("branch_id", ids);
-  }
-  const res = await query;
-  return (res.data as Tables["sales"]["Row"][] | null) ?? null;
+async function loadSalesReport() {
+  const result = await getSalesPageDataAction("last_30_days");
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 }
-
 export const sales = {
-  async byChannel() {
-    const rows = await loadSalesRows();
-    if (!rows || rows.length === 0) return [];
-    return aggregateSalesByChannel(rows);
-  },
-  async daily() {
-    const rows = await loadSalesRows();
-    if (!rows || rows.length === 0) return [];
-    return aggregateDailySalesTable(rows).slice(0, 7);
-  },
-  async byDay() {
-    const rows = await loadSalesRows();
-    if (!rows || rows.length === 0) return [];
-    return aggregateSalesByDay(rows).slice(-11);
-  },
+  async byChannel() { return (await loadSalesReport()).salesByChannel; },
+  async daily() { return (await loadSalesReport()).dailySalesTable; },
+  async byDay() { return (await loadSalesReport()).salesByDay; },
 };
 
 // ---------- COMPRAS ----------
@@ -483,16 +453,20 @@ export const balances = {
     const supabase = await createSupabaseServerClient();
     if (!supabase) return demo.balances.snapshot();
     const db = supabase as any;
-    // Si hay snapshot del mes en curso, usarlo. Si no, fallback demo.
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    const isoMonth = monthStart.toISOString().slice(0, 10);
+    const ctx=await getCurrentUserContext();
+    if (!ctx.isAuthenticated || !ctx.businessId) throw new Error("balance_scope_unavailable");
+    const business=await db.from("businesses").select("timezone").eq("id",ctx.businessId).maybeSingle();
+    if (business.error || !business.data?.timezone) throw new Error("balance_timezone_unavailable");
+    const isoMonth = `${localDate(new Date(),business.data.timezone).slice(0,7)}-01`;
     const res = await db
       .from("balance_snapshots")
       .select("*")
+      .eq("business_id",ctx.businessId)
       .eq("period_month", isoMonth)
       .maybeSingle();
     const row = res.data as Tables["balance_snapshots"]["Row"] | null;
+    if (res.error) throw new Error("balance_read_failed");
+    if (row?.sales_data_stale) throw new Error("balance_sales_snapshot_stale");
     if (!row) return EMPTY_BALANCE;
     return {
       ventasMes: Number(row.sales_total),

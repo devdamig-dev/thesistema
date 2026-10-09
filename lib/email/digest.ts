@@ -1,3 +1,4 @@
+import { withSalesRevision } from "../sales/read";
 /**
  * Daily digest matutino · template HTML + builder.
  *
@@ -10,6 +11,7 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isDatabaseMode } from "@/lib/env";
 import { sendEmail, type SendEmailResult } from "./resend";
+import { localDate, localDateTimeToIso, readAllSales, shiftDate, sumSaleAmounts } from "@/app/ventas/reporting";
 import { logActivity } from "@/lib/data/activity";
 
 export type DigestSummary = {
@@ -37,10 +39,10 @@ export async function buildAndSendDigestForBusiness(
   // 1) Resolver business + owner emails
   const bizRes = await db
     .from("businesses")
-    .select("name, organization_id")
+    .select("name, organization_id, timezone")
     .eq("id", businessId)
     .maybeSingle();
-  const biz = bizRes.data as { name: string; organization_id: string } | null;
+  const biz = bizRes.data as { name: string; organization_id: string; timezone: string } | null;
   if (!biz) return null;
 
   // Recipients: roles owner/admin/manager del business
@@ -62,19 +64,14 @@ export async function buildAndSendDigestForBusiness(
     .filter((e): e is string => !!e);
 
   // 2) Recolectar datos
-  const yesterday = new Date();
-  yesterday.setHours(0, 0, 0, 0);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStart = yesterday.toISOString();
-  const todayStart = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
+  if (bizRes.error || typeof biz.timezone !== "string") throw new Error("digest_timezone_unavailable");
+  const today = localDate(new Date(), biz.timezone);
+  const yesterdayDate = shiftDate(today, -1);
+  const yesterdayStart = localDateTimeToIso(`${yesterdayDate}T00:00`, biz.timezone);
+  const todayStart = localDateTimeToIso(`${today}T00:00`, biz.timezone);
 
   const [salesRes, inboxRes, invoicesRes, debtsRes, stockRes, recosRes] = await Promise.all([
-    db
-      .from("sales")
-      .select("amount")
-      .eq("business_id", businessId)
-      .gte("occurred_at", yesterdayStart)
-      .lt("occurred_at", todayStart),
+    withSalesRevision(db,businessId,()=>readAllSales<{ amount: number }>((from, to) => db.from("sales").select("id, amount", { count: "exact" }).eq("business_id", businessId).eq("status", "active").gte("occurred_at", yesterdayStart).lt("occurred_at", todayStart).order("occurred_at").order("id").range(from, to))),
     db
       .from("ai_extractions")
       .select("id", { count: "exact", head: true })
@@ -104,11 +101,7 @@ export async function buildAndSendDigestForBusiness(
       .gte("created_at", yesterdayStart),
   ]);
 
-  const salesYesterday =
-    ((salesRes.data as { amount: number }[]) ?? []).reduce(
-      (s, r) => s + Number(r.amount),
-      0,
-    );
+  const salesYesterday = sumSaleAmounts(salesRes);
 
   const summary: DigestSummary["data"] = {
     salesYesterday,
@@ -124,7 +117,8 @@ export async function buildAndSendDigestForBusiness(
   const html = renderDigestHtml(biz.name, summary);
 
   // 4) Send
-  const subject = `${biz.name} · resumen del ${yesterday.toLocaleDateString("es-AR", {
+  const subject = `${biz.name} · resumen del ${new Date(`${yesterdayDate}T12:00:00Z`).toLocaleDateString("es-AR", {
+    timeZone: "UTC",
     day: "2-digit",
     month: "long",
   })}`;
@@ -158,8 +152,8 @@ export async function buildAndSendDigestForBusiness(
   return { businessId, recipients, emailResult, data: summary };
 }
 
-function fmtARS(n: number) {
-  return `$${n.toLocaleString("es-AR")}`;
+function fmtAmount(n: number) {
+  return new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 }
 
 function renderDigestHtml(businessName: string, d: DigestSummary["data"]): string {
@@ -177,8 +171,8 @@ function renderDigestHtml(businessName: string, d: DigestSummary["data"]): strin
     </div>
     <div style="padding:20px 24px;">
       <div style="font-size:13px;color:#94a3b8;margin-bottom:8px;">Lo que pasó ayer</div>
-      <div style="font-size:28px;font-weight:600;color:#fb923c;">${fmtARS(d.salesYesterday)}</div>
-      <div style="font-size:12px;color:#94a3b8;">facturado en el día</div>
+      <div style="font-size:28px;font-weight:600;color:#fb923c;">${fmtAmount(d.salesYesterday)}</div>
+      <div style="font-size:12px;color:#94a3b8;">registrado en el día · Moneda no informada</div>
     </div>
     <div style="padding:0 24px 24px;">
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.15em;color:#94a3b8;margin:8px 0 10px;">Te esperan</div>

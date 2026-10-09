@@ -1,3 +1,7 @@
+import { withSalesRevision } from "../sales/read";
+import { applyAdminBranchScope } from "../data/branch-scope";
+import { localDate, localDateTimeToIso, shiftDate, readAllSales, sumSaleAmounts } from "../../app/ventas/reporting";
+import { isSaleWrite, executeSaleTool } from "../sales/agent";
 import { isDebtPlanTool } from "./debt-contract";
 import { executeDebtTool } from "./debt-adapter";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -199,6 +203,35 @@ export async function consumePending(
   return true;
 }
 
+
+export async function claimSalePending(db:Db,id:string,actor:AgentActor,recovery:boolean,conversationId:string):Promise<boolean>{
+ const result=await db.rpc("claim_sales_pending_execution",{p_business_id:actor.businessId,p_member_id:actor.memberId,p_conversation_id:conversationId,p_pending_id:id,p_recovery:recovery});
+ if(result.error||typeof result.data!=="boolean")throw new Error("pending_response_unknown");return result.data;
+}
+export async function cancelSalePending(db:Db,id:string,actor:AgentActor,conversationId:string):Promise<{consumed:boolean;resultUncertain:boolean}>{
+ const result=await db.rpc("cancel_sales_pending_execution",{p_business_id:actor.businessId,p_member_id:actor.memberId,p_conversation_id:conversationId,p_pending_id:id});
+ if(result.error||typeof result.data?.consumed!=="boolean"||typeof result.data?.resultUncertain!=="boolean")throw new Error("pending_response_unknown");return result.data;
+}
+
+/** Server-only, same-row claim: a process can die after this without losing the UUID. */
+export async function claimDebtPending(db: Db, id: string, actor: AgentActor, recovery: boolean, conversationId: string): Promise<boolean> {
+  const result = await db.rpc("claim_debt_pending_execution", {
+    p_business_id: actor.businessId, p_member_id: actor.memberId, p_conversation_id: conversationId,
+    p_pending_id: id, p_recovery: recovery,
+  });
+  if (result?.error || typeof result?.data !== "boolean") throw new Error("pending_response_unknown");
+  return result.data;
+}
+
+export async function cancelDebtPending(db: Db, id: string, actor: AgentActor, conversationId: string): Promise<{ consumed: boolean; resultUncertain: boolean }> {
+  const result = await db.rpc("cancel_debt_pending_execution", {
+    p_business_id: actor.businessId, p_member_id: actor.memberId, p_conversation_id: conversationId, p_pending_id: id,
+  });
+  if (result?.error || !result?.data || typeof result.data !== "object" || Array.isArray(result.data)
+    || typeof result.data.consumed !== "boolean" || typeof result.data.resultUncertain !== "boolean") throw new Error("pending_response_unknown");
+  return { consumed: result.data.consumed, resultUncertain: result.data.resultUncertain };
+}
+
 const sanitized = (value: unknown): unknown => {
   if (value === undefined) return null;
   return JSON.parse(
@@ -276,41 +309,34 @@ async function resolveBranchId(db: Db, actor: AgentActor, requested?: string): P
 }
 
 export async function executeTool(db: Db, actor: AgentActor, call: ToolCall): Promise<unknown> {
+  if (isSaleWrite(call.name)) return executeSaleTool(db, actor, call);
   if (isDebtPlanTool(call.name)) return executeDebtTool(db, actor, call);
   const a = call.arguments as any;
   if ("businessId" in a || "business_id" in a) throw new Error("business_id_not_allowed");
 
   if (call.name.startsWith("sales.")) {
-    const today = new Date().toLocaleDateString("en-CA", {
-      timeZone: "America/Argentina/Buenos_Aires",
-    });
+    const business = await db.from("businesses").select("timezone").eq("id",actor.businessId).maybeSingle();
+    if (business.error || !business.data?.timezone) throw new Error("sales_timezone_unavailable");
+    const timezone = business.data.timezone;
+    const today = localDate(new Date().toISOString(),timezone);
     const period = async (from: string, to: string) => {
-      const res = await branchQuery(
-        db
-          .from("sales")
-          .select("amount")
-          .eq("business_id", actor.businessId)
-          .gte("occurred_at", `${from}T00:00:00-03:00`)
-          .lte("occurred_at", `${to}T23:59:59-03:00`),
-        actor,
-      );
-      if (res.error) throw res.error;
-      return {
-        count: res.data.length,
-        total: res.data.reduce((sum: number, row: any) => sum + Number(row.amount ?? 0), 0),
-        from,
-        to,
-      };
+      const start = localDateTimeToIso(`${from}T00:00`,timezone);
+      const end = localDateTimeToIso(`${shiftDate(to,1)}T00:00`,timezone);
+      const rows:any[] = await withSalesRevision(db,actor.businessId,()=>readAllSales((offset,last) => applyAdminBranchScope(db.from("sales")
+        .select("id,amount,sale_kind",{count:"exact"}).eq("business_id",actor.businessId).eq("status","active")
+        .gte("occurred_at",start).lt("occurred_at",end).order("occurred_at").order("id").range(offset,last),actor.branchIds)));
+      return { count:rows.length, detailedTickets:rows.filter(row=>row.sale_kind==="detailed").length,
+        total:sumSaleAmounts(rows),currency:null,from,to };
     };
 
     if (call.name === "sales.getToday") return period(today, today);
     if (call.name === "sales.getPeriod") return period(a.from, a.to);
 
-    const [current, previous] = await Promise.all([
+    const [current, previous] = await withSalesRevision(db,actor.businessId,()=>Promise.all([
       period(a.from, a.to),
       period(a.previousFrom, a.previousTo),
-    ]);
-    return { current, previous, difference: current.total - previous.total };
+    ]));
+    return { current, previous, difference: sumSaleAmounts([{amount:current.total},{amount:-previous.total}]) };
   }
 
   if (call.name === "purchases.list") {

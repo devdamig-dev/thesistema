@@ -283,6 +283,18 @@ export type Database = {
           amount: number;
           occurred_at: string;
           product_id: string | null;
+          status: "active" | "voided";
+          sale_kind: "legacy" | "detailed" | "summary";
+          source: "manual" | "whatsapp" | "inbox" | "api" | "system" | null;
+          payment_method: string | null;
+          customer_id: string | null;
+          notes: string | null;
+          currency: string | null;
+          version: number;
+          void_reason: string | null;
+          voided_at: string | null;
+          voided_by: string | null;
+          created_by: string | null;
         };
         Insert: Partial<Database["public"]["Tables"]["sales"]["Row"]> & {
           business_id: string;
@@ -637,6 +649,7 @@ export type Database = {
           business_id: string;
           period_month: string;
           sales_total: number;
+          sales_data_stale: boolean;
           purchases_total: number;
           expenses_total: number;
           payroll_total: number;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Check,
@@ -43,6 +43,9 @@ import {
 } from "@/lib/mock-data";
 import { formatARS, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { getInboxSaleReviewAction } from "@/app/actions/sales";
+import { InboxSaleReviewDialog } from "./sale-review";
+import type { InboxSaleReview } from "@/lib/sales/inbox";
 import type { InboxDebtPreview } from "@/lib/whatsapp-agent/inbox-debts";
 
 const CHANNEL_ICON = {
@@ -61,6 +64,8 @@ export default function InboxClient({
   presenceMe?: { id: string; name: string };
 }) {
   const router = useRouter();
+  const [saleReview,setSaleReview] = useState<InboxSaleReview|null>(null);
+  const saleReviewLock=useRef(false);
   const [filter, setFilter] = useState<Filter>("todos");
   const [selectedId, setSelectedId] = useState<string>(initialItems[0]?.id ?? "");
   const [statusOverrides, setStatusOverrides] = useState<Record<string, InboxStatus>>({});
@@ -92,6 +97,8 @@ export default function InboxClient({
   };
 
   return (
+    <>
+    {saleReview && <InboxSaleReviewDialog review={saleReview} onClose={()=>setSaleReview(null)} onSaved={()=>{setSaleReview(null);toast({tone:"success",title:"Resumen guardado",description:"Los ingresos se guardaron sin inventar tickets ni descontar stock."});router.refresh();}}/>}
     <div className="space-y-6">
       <SectionHeader
         eyebrow="Inbox IA · WhatsApp"
@@ -308,7 +315,14 @@ export default function InboxClient({
                     toast(ToastPresets.approved("Movimiento"));
                     return;
                   }
+                  if (saleReviewLock.current) return;
+                  saleReviewLock.current=true;
                   startTransition(async () => {
+                    try {
+                      const sale = await getInboxSaleReviewAction(extractionId);
+                      if (sale.ok) { setSaleReview(sale.review); return; }
+                      if (sale.error !== "unsupported_sale_extraction") { toast({tone:"warn",title:"La venta requiere revisión",description:sale.error}); return; }
+                    } finally { saleReviewLock.current=false; }
                     const preview = debtReview?.extractionId === extractionId ? debtReview.preview : null;
                     if (!preview) {
                       const review = await previewInboxDebtAction(extractionId);
@@ -392,6 +406,7 @@ export default function InboxClient({
         </Card>
       </div>
     </div>
+    </>
   );
 }
 

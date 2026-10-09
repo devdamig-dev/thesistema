@@ -31,8 +31,8 @@ function fixture() {
   return {db, rows, debt, calls, queries, persisted, lose:()=>{loseResponse=true;}};
 }
 function harness(f: ReturnType<typeof fixture>, operation: ToolCall) {
-  let pending: PendingOperation|null=null; const seen=new Set<string>();
-  const deps: AgentDependencies = { resolveActor:async()=>actor, claimMessage:async(input)=>{if(seen.has(input.messageId))return false;seen.add(input.messageId);return true;}, interpret:async()=>operation, getPending:async()=>pending, savePending:async value=>pending={...value,id:id(88)}, consumePending:async()=>{if(!pending)return false;pending=null;return true;}, prepare:(a,c)=>prepareDebtTool(f.db,a,c), execute:(a,c)=>executeDebtTool(f.db,a,c), audit:async()=>{}, now:()=>new Date("2026-10-09T12:00:00Z") };
+  let pending: PendingOperation|null=null; const seen=new Set<string>(); let sequence=88;
+  const deps: AgentDependencies = { resolveActor:async()=>actor, claimMessage:async(input)=>{if(seen.has(input.messageId))return false;seen.add(input.messageId);return true;}, interpret:async()=>operation, getPending:async()=>pending, savePending:async value=>pending={...value,id:id(sequence++)}, consumePending:async pendingId=>{if(!pending || pending.id!==pendingId)return false;pending=null;return true;}, claimDebtPending:async(pendingId,_actor,recovery)=>{if(!pending || pending.id!==pendingId || Boolean(pending.resultUncertain)!==recovery)return false;pending={...pending,resultUncertain:true};return true;}, cancelDebtPending:async pendingId=>{if(!pending || pending.id!==pendingId)return {consumed:false,resultUncertain:false};const resultUncertain=!!pending.resultUncertain;pending=null;return {consumed:true,resultUncertain};}, prepare:(a,c)=>prepareDebtTool(f.db,a,c), execute:(a,c)=>executeDebtTool(f.db,a,c), audit:async()=>{}, now:()=>new Date("2026-10-09T12:00:00Z") };
   const send=(text:string,messageId=text)=>runAgent({text,messageId,senderPhone:actor.phone,recipientPhone:"5491122222222"},deps);
   return {deps,send,pending:()=>pending};
 }
@@ -103,3 +103,136 @@ test("correcting an invalid optional due date preserves the response instead of 
 test("legacy payment command stays blocked even with complete metadata; caller cannot reach the unsafe historical RPC",async()=>{const f=fixture();const h=harness(f,{name:"debts.registerPayment",arguments:{creditor:"Banco Nación",amount:10,paidAt:"2026-10-09",paymentMethod:"Efectivo"}});const result=await h.send("request");assert.equal(result.status,"needs_input");assert.match(result.text,/revisión manual/);assert.equal(f.calls.length,0);assert.equal(h.pending(),null);});
 
 test("acknowledging an invalid optional date cannot skip its pending clarification",async()=>{const f=fixture();const h=harness(f,{name:"debts.createPlan",arguments:{creditor:"Banco",creditorType:"bank",takenAt:"2026-10-09",mode:"single",currency:"ARS",originalAmountCents:10000,totalFinancedCents:10000,dueDate:"2026-02-30"}});await h.send("request");h.deps.interpret=interpretHeuristically;for(const answer of ["Sí","ok","confirmo","dale"]){assert.equal((await h.send(answer)).status,"needs_input");assert.equal(h.pending()?.clarificationKey,"dueDate");assert.equal(f.calls.length,0);}assert.equal((await h.send("2026-03-01")).status,"needs_confirmation");assert.equal(h.pending()?.toolCall.arguments.dueDate,"2026-03-01");});
+
+function recoveryOperations(f: ReturnType<typeof fixture>): ToolCall[] {
+  f.rows.debt_payments.push({ id: paymentId, business_id: businessId, branch_id: branchId, debt_id: debtId, amount: "1000.00", currency: "ARS", paid_at: "2026-10-09", payment_method: "Efectivo", created_by: actorId, created_at: "2026-10-09T00:00:00Z", origin: "manual", allocation_rule: "oldest_due", selected_installment_id: null, voided_at: null });
+  f.rows.debt_payment_allocations.push({ business_id: businessId, branch_id: branchId, debt_id: debtId, payment_id: paymentId, installment_id: id(21), amount: "1000.00" });
+  f.debt.pending_amount = "899000.00";
+  return [createCall(), { ...createCall(), name: "debts.create" }, payCall(),
+    { name: "debts.voidPlanPayment", arguments: { debtId, paymentId, reason: "Pago duplicado" } },
+    { name: "debts.editPlan", arguments: { debtId, kind: "notes", notes: "Nota revisada" } },
+    { name: "debts.editPlan", arguments: { debtId, kind: "installment", installmentNumber: 2, dueDate: "2026-12-11", notes: null } },
+  ];
+}
+const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
+
+test("all debt mutations recover the durable UUID after process death before or after financial commit", async () => {
+  for (const afterCommit of [false, true]) for (let index=0; index<6; index++) {
+    const f=fixture(); const operation=recoveryOperations(f)[index]; const h=harness(f,operation);
+    assert.equal((await h.send("request")).status,"needs_confirmation",operation.name);
+    const saved=structuredClone(h.pending()!);
+    if(operation.name==="debts.create")assert.equal(saved.toolCall.name,"debts.createPlan","safe alias is canonical before persistence");
+    assert.equal(await h.deps.claimDebtPending!(saved.id,actor,false),true);
+    assert.equal(h.pending()?.resultUncertain,true,"marker committed before financial call");
+    if (afterCommit) await h.deps.execute(actor,saved.toolCall);
+    // Deliberately omit response handling and cleanup: a new request sees only storage.
+    const restarted={...h.deps,prepare:async()=>{throw new Error("recovery must never prepare a new UUID");}};
+    const reply=await runAgent({text:"Sí",messageId:"restart",senderPhone:actor.phone,recipientPhone:"5491122222222"},restarted);
+    assert.equal(reply.status,"completed",operation.name);
+    assert.equal(f.calls.length,afterCommit?2:1);
+    assert.ok(f.calls.every(call=>call.args.p_idempotency_key===saved.toolCall.arguments.requestId));
+    if(afterCommit)assert.deepEqual(f.calls[0],f.calls[1]);
+    assert.equal(f.persisted.size,1); assert.equal(h.pending(),null);
+  }
+});
+
+test("simultaneous recovery confirmations use identical debt payload and one financial identity", async () => {
+  const f=fixture(); const h=harness(f,payCall()); await h.send("request");
+  const initial=structuredClone(h.pending()!); await h.deps.claimDebtPending!(initial.id,actor,false);
+  const replies=await Promise.all([h.send("Sí","recovery-a"),h.send("Sí","recovery-b")]);
+  assert.ok(replies.every(reply=>reply.status==="completed"));
+  assert.equal(f.calls.length,2); assert.deepEqual(f.calls[0],f.calls[1]); assert.equal(f.persisted.size,1);
+  assert.equal(f.calls[0].args.p_idempotency_key,initial.toolCall.arguments.requestId);
+});
+
+test("lost claim response never executes in that worker and retains the durable recovery identity", async () => {
+  const f=fixture(); const h=harness(f,createCall()); await h.send("request");
+  const initial=structuredClone(h.pending()!); const claim=h.deps.claimDebtPending!;
+  h.deps.claimDebtPending=async(...args)=>{await claim(...args);throw new Error("claim response lost");};
+  const reply=await h.send("Sí","claim-lost");
+  assert.equal(reply.status,"failed"); assert.equal(f.calls.length,0); assert.equal(h.pending()?.resultUncertain,true);
+  assert.match(reply.text,new RegExp(String(initial.toolCall.arguments.requestId))); assert.doesNotMatch(reply.text,/No se realizó ningún cambio/);
+  h.deps.claimDebtPending=claim;
+  assert.equal((await h.send("Sí","recover")).status,"completed");
+  assert.equal(f.calls[0].args.p_idempotency_key,initial.toolCall.arguments.requestId);
+});
+
+test("cancellation wins before claim and a stale confirmation cannot resurrect the request", async () => {
+  const f=fixture(); const h=harness(f,payCall()); await h.send("request");
+  const claim=h.deps.claimDebtPending!;
+  h.deps.claimDebtPending=async(...args)=>{await h.deps.cancelDebtPending!(args[0],actor);return claim(...args);};
+  assert.equal((await h.send("Sí")).status,"rejected"); assert.equal(f.calls.length,0); assert.equal(h.pending(),null);
+});
+
+test("stale cancellation reads the post-claim uncertainty rather than promising rollback", async () => {
+  const f=fixture(); const h=harness(f,payCall()); await h.send("request");
+  const stale=structuredClone(h.pending()!); await h.deps.claimDebtPending!(stale.id,actor,false);
+  h.deps.getPending=async()=>stale;
+  const reply=await h.send("Cancelar"); assert.equal(reply.status,"cancelled");
+  assert.match(reply.text,/podría haberse guardado/); assert.doesNotMatch(reply.text,/No se realizó ningún cambio/); assert.equal(h.pending(),null);
+});
+
+test("late failure or success cannot resurrect cancelled work or consume a newer debt operation", async () => {
+  for(const succeeds of [false,true]) {
+    const f=fixture(); const h=harness(f,payCall()); await h.send("request");
+    const original=structuredClone(h.pending()!); const entered=deferred(); const release=deferred(); const execute=h.deps.execute;
+    h.deps.execute=async(...args)=>{entered.resolve();await release.promise;if(!succeeds)throw new Error("debt_response_unknown");return execute(...args);};
+    const running=h.send("Sí","first-confirm"); await entered.promise;
+    assert.equal(h.pending()?.resultUncertain,true); assert.equal(h.pending()?.id,original.id);
+    const cancelled=await h.send("Cancelar","cancel-during"); assert.equal(cancelled.status,"cancelled"); assert.match(cancelled.text,/podría haberse guardado/);
+    assert.equal((await h.send("new request","new-request")).status,"needs_confirmation");
+    const newer=structuredClone(h.pending()!); assert.notEqual(newer.id,original.id); assert.notEqual(newer.toolCall.arguments.requestId,original.toolCall.arguments.requestId);
+    release.resolve(); const reply=await running;
+    assert.equal(reply.status,succeeds?"completed":"failed"); if(!succeeds)assert.match(reply.text,/No reactivé/);
+    assert.deepEqual(h.pending(),newer,"late handler cannot mutate replacement");
+  }
+});
+
+test("a rejected concurrent recovery cannot erase another in-flight attempt", async () => {
+  const f=fixture(); const h=harness(f,payCall()); await h.send("request");
+  const entered=deferred(); const recoveryEntered=deferred(); const release=deferred(); let calls=0;
+  h.deps.execute=async()=>{const first=calls++===0;if(first)entered.resolve();else recoveryEntered.resolve();await release.promise;throw new Error(first?"stale_version":"debt_response_unknown");};
+  const initial=h.send("Sí","initial"); await entered.promise; const saved=structuredClone(h.pending()!);
+  const recovery=h.send("Sí","recovery");await recoveryEntered.promise;release.resolve();
+  const replies=await Promise.all([initial,recovery]);assert.deepEqual(replies.map(r=>r.status),["needs_input","failed"]);
+  assert.deepEqual(h.pending(),saved);assert.ok(replies.every(r=>!r.text.includes("No se registró este intento")));
+});
+
+test("cleanup and audit failures after confirmed commit report success and retain retry without rollback claims", async () => {
+  const f=fixture(); const h=harness(f,payCall()); await h.send("request"); const saved=structuredClone(h.pending()!);
+  h.deps.consumePending=async()=>{throw new Error("cleanup unavailable");};h.deps.audit=async()=>{throw new Error("audit unavailable");};
+  const reply=await h.send("Sí"); assert.equal(reply.status,"completed"); assert.match(reply.text,/incidencia interna/);
+  assert.doesNotMatch(reply.text,/No se realizó ningún cambio/);assert.equal(f.persisted.size,1);
+  assert.equal(h.pending()?.id,saved.id);assert.equal(h.pending()?.resultUncertain,true);
+});
+
+test("expired stale debt confirmation cannot auto-consume a concurrently claimed recovery", async () => {
+  const f=fixture();const h=harness(f,payCall());await h.send("request");const stale=structuredClone(h.pending()!);
+  await h.deps.claimDebtPending!(stale.id,actor,false);stale.expiresAt="2026-10-08T00:00:00Z";
+  h.deps.getPending=async()=>stale;
+  const reply=await h.send("new operation");assert.equal(reply.status,"needs_input");assert.equal(f.calls.length,0);
+  assert.equal(h.pending()?.resultUncertain,true);assert.equal(h.pending()?.id,stale.id);
+  const cancelled=await h.send("Cancelar");assert.match(cancelled.text,/podría haberse guardado/);
+});
+
+test("untrusted interpretation cannot adopt request IDs, snapshots or pending execution markers", async () => {
+  for(const field of ["requestId","expectedVersion","__resultUncertain","__clarificationKey"]) {
+    const f=fixture();const op=createCall();op.arguments[field]=field==="requestId"?requestId:field==="expectedVersion"?0:true;
+    const h=harness(f,op);const reply=await h.send("request");assert.equal(reply.status,"rejected",field);assert.equal(h.pending(),null);assert.equal(f.calls.length,0);
+  }
+});
+
+test("missing durable-claim dependency fails closed without falling back to consume-before-write", async () => {
+  const f=fixture();const h=harness(f,createCall());await h.send("request");const original=structuredClone(h.pending()!);
+  delete h.deps.claimDebtPending;
+  assert.equal((await h.send("Sí")).status,"rejected");assert.equal(f.calls.length,0);assert.deepEqual(h.pending(),original);
+});
+
+test("a damaged confirmed recovery is retained for review and never rewritten as a clarification", async () => {
+  const f=fixture();const h=harness(f,payCall());await h.send("request");const original=h.pending()!;
+  await h.deps.claimDebtPending!(original.id,actor,false);
+  const damaged=structuredClone(h.pending()!);delete damaged.toolCall.arguments.paymentMethod;
+  h.deps.getPending=async()=>damaged;h.deps.savePending=async()=>{throw new Error("must not rewrite recovery");};
+  const reply=await h.send("Sí");assert.equal(reply.status,"needs_input");assert.equal(f.calls.length,0);assert.equal(h.pending()?.id,original.id);assert.equal(h.pending()?.resultUncertain,true);
+  assert.doesNotMatch(reply.text,/No se realizó ningún cambio/);
+});

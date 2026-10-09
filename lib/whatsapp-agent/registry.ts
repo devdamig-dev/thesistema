@@ -3,6 +3,9 @@ import type { ModuleKey, Role } from "../permissions";
 import type { AgentActor, ToolDefinition } from "./types";
 
 export const WHATSAPP_TOOLS: readonly ToolDefinition[] = [
+  { name: "sales.create", description: "Registrar venta detallada con cantidades y precios explícitos", module: "sales", permission: "sales.create", risk: "SENSITIVE", required: [] },
+  { name: "sales.edit", description: "Editar venta detallada con control de versión", module: "sales", permission: "sales.create", risk: "SENSITIVE", required: [] },
+  { name: "sales.void", description: "Anular venta con motivo e historial", module: "sales", permission: "sales.create", risk: "SENSITIVE", required: [] },
   { name: "sales.getToday", description: "Consultar ventas de hoy", module: "sales", permission: "sales.view", risk: "READ", required: [] },
   { name: "sales.getPeriod", description: "Consultar ventas por período", module: "sales", permission: "sales.view", risk: "READ", required: ["from", "to"] },
   { name: "sales.comparePeriods", description: "Comparar ventas entre períodos", module: "sales", permission: "sales.view", risk: "READ", required: ["from", "to", "previousFrom", "previousTo"] },

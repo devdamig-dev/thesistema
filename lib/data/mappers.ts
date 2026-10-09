@@ -6,6 +6,7 @@
  * entre demo y database no requiera tocar páginas ni componentes.
  */
 
+import { summarizeSales } from "@/app/ventas/reporting";
 import type { Database } from "@/lib/supabase/types";
 
 type Tables = Database["public"]["Tables"];
@@ -108,97 +109,9 @@ export function mapExpense(e: ExpenseRow) {
 // ---------- SALES ----------
 type SaleRow = Tables["sales"]["Row"];
 
-const CHANNEL_LABEL: Record<string, string> = {
-  salon: "Salón",
-  delivery: "Delivery propio",
-  whatsapp: "WhatsApp",
-  pedidos_ya: "PedidosYa",
-  rappi: "Rappi",
-  mp_qr: "Mercado Pago QR",
-};
-
-export function aggregateSalesByChannel(rows: SaleRow[]): {
-  canal: string;
-  total: number;
-  share: number;
-  ticket: number;
-  delta: number;
-}[] {
-  if (rows.length === 0) return [];
-  const map = new Map<string, { total: number; count: number }>();
-  for (const r of rows) {
-    const channel = (r.channel ?? "salon") as string;
-    const entry = map.get(channel) ?? { total: 0, count: 0 };
-    entry.total += Number(r.amount);
-    entry.count += 1;
-    map.set(channel, entry);
-  }
-  const grandTotal = [...map.values()].reduce((s, e) => s + e.total, 0);
-  return [...map.entries()]
-    .map(([channel, e]) => ({
-      canal: CHANNEL_LABEL[channel] ?? channel,
-      total: e.total,
-      share: grandTotal > 0 ? (e.total / grandTotal) * 100 : 0,
-      ticket: e.count > 0 ? Math.round(e.total / e.count) : 0,
-      delta: 0, // sin baseline histórico → 0; en sprint próximo sumamos comparativa
-    }))
-    .sort((a, b) => b.total - a.total);
-}
-
-export function aggregateSalesByDay(rows: SaleRow[]): {
-  day: string;
-  ventas: number;
-  costo: number;
-}[] {
-  if (rows.length === 0) return [];
-  const map = new Map<string, number>();
-  for (const r of rows) {
-    const day = new Date(r.occurred_at).toISOString().slice(0, 10);
-    map.set(day, (map.get(day) ?? 0) + Number(r.amount));
-  }
-  return [...map.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : 1))
-    .map(([day, ventas]) => ({
-      day: new Date(day).toLocaleDateString("es-AR", { day: "2-digit", month: "short" }),
-      ventas,
-      // Estimación de costo 65% — luego lo recalculamos con cost real.
-      costo: Math.round(ventas * 0.65),
-    }));
-}
-
-export function aggregateDailySalesTable(rows: SaleRow[]): {
-  fecha: string;
-  salon: number;
-  delivery: number;
-  pya: number;
-  wa: number;
-  total: number;
-}[] {
-  if (rows.length === 0) return [];
-  const map = new Map<string, Record<string, number>>();
-  for (const r of rows) {
-    const day = new Date(r.occurred_at).toISOString().slice(0, 10);
-    const channel = (r.channel ?? "salon") as string;
-    const entry = map.get(day) ?? { salon: 0, delivery: 0, pya: 0, wa: 0, total: 0 };
-    const amount = Number(r.amount);
-    if (channel === "salon") entry.salon += amount;
-    else if (channel === "delivery") entry.delivery += amount;
-    else if (channel === "pedidos_ya") entry.pya += amount;
-    else if (channel === "whatsapp") entry.wa += amount;
-    entry.total += amount;
-    map.set(day, entry);
-  }
-  return [...map.entries()]
-    .sort(([a], [b]) => (a < b ? 1 : -1))
-    .map(([day, e]) => ({
-      fecha: new Date(day).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }),
-      salon: e.salon,
-      delivery: e.delivery,
-      pya: e.pya,
-      wa: e.wa,
-      total: e.total,
-    }));
-}
+export function aggregateSalesByChannel(rows: SaleRow[], timezone: string) { return summarizeSales(rows, timezone).salesByChannel; }
+export function aggregateSalesByDay(rows: SaleRow[], timezone: string) { return summarizeSales(rows, timezone).salesByDay; }
+export function aggregateDailySalesTable(rows: SaleRow[], timezone: string) { return summarizeSales(rows, timezone).dailySalesTable; }
 
 // ---------- STOCK ----------
 type StockItemRow = Tables["stock_items"]["Row"];

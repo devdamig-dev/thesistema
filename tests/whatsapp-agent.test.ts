@@ -18,7 +18,9 @@ function harness(options: { actor?: AgentActor | null; pending?: PendingOperatio
     interpret: interpretHeuristically,
     getPending: async () => pending,
     savePending: async (operation) => (pending = { ...operation, id: "pending-1" }),
-    consumePending: async () => { if (!pending) return false; pending = null; return true; },
+    consumePending: async (id) => { if (!pending || pending.id !== id) return false; pending = null; return true; },
+    claimDebtPending: async (id, _actor, recovery) => { if (!pending || pending.id !== id || !!pending.resultUncertain !== recovery) return false; pending = { ...pending, resultUncertain: true }; return true; },
+    cancelDebtPending: async (id) => { if (!pending || pending.id !== id) return { consumed: false, resultUncertain: false }; const resultUncertain = !!pending.resultUncertain; pending = null; return { consumed: true, resultUncertain }; },
     prepare: async (_actor, call) => ({ ...call, arguments: { ...call.arguments, ...preparedFields, ...(call.arguments.allocationRule === "selected_installment" ? { installmentId: "00000000-0000-4000-8000-000000000004" } : {}) } }),
     execute: async (resolvedActor, call) => { executions.push({ actor: resolvedActor, call }); if (options.fail) throw new Error("database down"); return { businessId: resolvedActor.businessId, ok: true }; },
     audit: async (event) => { audits.push(event); },
@@ -109,7 +111,8 @@ test("failed consumption never executes and failed cancellation does not report 
     const h = harness();
     h.deps.interpret = async () => ({ name: "debts.registerPlanPayment", arguments: { creditor: "Pablo", amountCents: 5000000, allocationRule: "oldest_due", paymentMethod: "Transferencia", paidAt: "2026-10-09" } });
     await runAgent(input("Marcá como pagada la deuda de Pablo"), h.deps);
-    h.deps.consumePending = async () => { throw new Error("database unavailable"); };
+    h.deps.claimDebtPending = async () => { throw new Error("database unavailable"); };
+    h.deps.cancelDebtPending = async () => { throw new Error("database unavailable"); };
     assert.equal((await runAgent(input(answer, "failed-consume"), h.deps)).status, "failed");
     assert.equal(h.executions.length, 0);
     assert.ok(h.pending());
@@ -120,9 +123,9 @@ test("expired or concurrently consumed row cannot authorize a write", async () =
   const h = harness();
   h.deps.interpret = async () => ({ name: "debts.registerPlanPayment", arguments: { creditor: "Pablo", amountCents: 5000000, allocationRule: "oldest_due", paymentMethod: "Transferencia", paidAt: "2026-10-09" } });
   await runAgent(input("Marcá como pagada la deuda de Pablo"), h.deps);
-  h.deps.consumePending = async (_id, scopedActor, requireUnexpired) => {
+  h.deps.claimDebtPending = async (_id, scopedActor, recovery) => {
     assert.equal(scopedActor.businessId, actor.businessId);
-    assert.equal(requireUnexpired, true);
+    assert.equal(recovery, false);
     return false;
   };
   assert.equal((await runAgent(input("Sí", "lost-consume"), h.deps)).status, "rejected");

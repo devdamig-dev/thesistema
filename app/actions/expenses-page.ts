@@ -84,7 +84,7 @@ export async function getExpensesPageDataAction(): Promise<
     purchasesQuery,
     ctx.assignedBranchIds === null ? supabase
       .from("balance_snapshots")
-      .select("gross_margin_pct")
+      .select("gross_margin_pct,sales_data_stale")
       .eq("business_id", ctx.businessId)
       .order("period_month", { ascending: false })
       .limit(1)
@@ -121,8 +121,8 @@ export async function getExpensesPageDataAction(): Promise<
     (sum, row) => sum + Number(row.total ?? 0),
     0,
   );
-  const balance = balanceRes.data as { gross_margin_pct: number | string | null } | null;
-  const grossMarginPct = balance?.gross_margin_pct == null ? null : Number(balance.gross_margin_pct);
+  const balance = balanceRes.data as { gross_margin_pct: number | string | null; sales_data_stale: boolean } | null;
+  const grossMarginPct = balance?.sales_data_stale || balance?.gross_margin_pct == null ? null : Number(balance.gross_margin_pct);
 
   return { ok: true, data: { expenses, totalFixed, totalVariable, grossMarginPct, branches: branchesRes.data ?? [] } };
 }
