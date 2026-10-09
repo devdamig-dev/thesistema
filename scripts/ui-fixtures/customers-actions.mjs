@@ -25,3 +25,10 @@ export async function saveCustomerAction(input) {
   if (state.response === 'throw-after-commit') throw new Error('QA ficticio: transporte interrumpido después de guardar.');
   return { ok: true, persisted: true, customer: clone(row) };
 }
+
+export async function getCustomerSalesHistoryAction(id) {
+  await pause();
+  if (state.failHistory) return { ok: false, error: 'QA ficticio: historial no disponible.' };
+  const customer = state.customers.find(row => row.id === id);
+  return customer ? { ok: true, customerName: customer.name, timezone: 'America/Argentina/Buenos_Aires', rows: id === '11111111-1111-4111-8111-111111111111' ? [{ id: '11111111-1111-4111-8111-111111111190', occurredAt: '2026-10-09T12:00:00Z', amount: '25000.25', branch: 'Sucursal QA permitida', source: 'manual', status: 'active', description: '2 × Producto QA vinculado' }] : [] } : { ok: false, error: 'Cliente no disponible.' };
+}

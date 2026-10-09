@@ -9,8 +9,11 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "rm -rf .test-dist && tsc -p tests/tsconfig.json && node --test .test-dist/tests/*.test.js",
+    "test:replenishment:sql": "node scripts/run-catalog-sql.mjs replenishment",
     "test:db:stock": "node scripts/run-catalog-sql.mjs stock-ledger",
     "test:db:catalog": "node scripts/run-catalog-sql.mjs",
+    "test:catalog:snapshot": "node scripts/run-catalog-sql.mjs catalog-snapshot",
+    "test:products:sql": "node scripts/run-catalog-sql.mjs catalog-products",
     "test:ui:catalog": "node scripts/run-catalog-ui.mjs",
     "test:customers:sql": "node scripts/run-customers-sql.mjs",
     "test:suppliers:sql": "node scripts/run-suppliers-sql.mjs",
@@ -24,7 +27,7 @@
     "test:ui": "node scripts/run-management-ui.mjs",
     "test:ui:bundle": "BUNDLE_ONLY=1 npm run test:ui",
     "test:ui:fixtures": "node --test tests/management-ui-fixtures.test.mjs tests/sales-ui-fixtures.test.mjs",
-    "test:db:native": "node scripts/run-catalog-sql.mjs --native-docker && node scripts/run-catalog-sql.mjs stock-ledger --native-docker && node scripts/run-customers-sql.mjs --native-docker && node scripts/run-suppliers-sql.mjs --native-docker && node scripts/run-debt-plans-sql.mjs --native-docker && node scripts/run-sales-sql.mjs --native-docker && node scripts/run-employees-sql.mjs --native-docker && node tests/closures-sql.mjs --native-docker && node scripts/run-expenses-sql.mjs --native-docker && node scripts/run-purchases-sql.mjs --native-docker && node tests/invoice-manual-sql.mjs --native-docker && node scripts/run-purchase-transports-sql.mjs --native-docker && node scripts/run-inbox-advances-sql.mjs --native-docker",
+    "test:db:native": "node scripts/run-catalog-sql.mjs --native-docker && node scripts/run-catalog-sql.mjs catalog-products --native-docker && node scripts/run-catalog-sql.mjs catalog-snapshot --native-docker && node scripts/run-catalog-sql.mjs stock-ledger --native-docker && node scripts/run-catalog-sql.mjs replenishment --native-docker && node scripts/run-customers-sql.mjs --native-docker && node scripts/run-suppliers-sql.mjs --native-docker && node scripts/run-debt-plans-sql.mjs --native-docker && node scripts/run-sales-sql.mjs --native-docker && node scripts/run-employees-sql.mjs --native-docker && node tests/closures-sql.mjs --native-docker && node scripts/run-expenses-sql.mjs --native-docker && node scripts/run-purchases-sql.mjs --native-docker && node tests/invoice-manual-sql.mjs --native-docker && node scripts/run-purchase-transports-sql.mjs --native-docker && node scripts/run-inbox-advances-sql.mjs --native-docker",
     "test:sales:sql": "node scripts/run-sales-sql.mjs",
     "test:sales:concurrency": "node scripts/run-sales-sql.mjs --native-concurrency",
     "test:ui:sales": "node scripts/run-sales-ui.mjs",
@@ -36,7 +39,9 @@
     "test:closures:sql": "node tests/closures-sql.mjs",
     "test:invoices:sql": "node tests/invoice-manual-sql.mjs",
     "test:purchases:transports": "node scripts/run-purchase-transports-sql.mjs",
-    "test:advances:sql": "node scripts/run-inbox-advances-sql.mjs"
+    "test:advances:sql": "node scripts/run-inbox-advances-sql.mjs",
+    "test:db:upgrade:native": "node scripts/run-native-upgrade-rehearsal.mjs && node scripts/run-native-upgrade-rehearsal.mjs --legacy-debt-drift",
+    "test:db:upgrade": "node scripts/run-upgrade-rehearsal.mjs && node scripts/run-upgrade-rehearsal.mjs --legacy-debt-drift"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",

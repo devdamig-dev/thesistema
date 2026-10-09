@@ -216,3 +216,27 @@ test("only definitive post-idempotency transaction rejection can clear earlier u
     const result = await actions.registerDebtPlanPaymentAction(paymentInput()); assert.equal(result.ok, false); if (!result.ok) assert.equal(!!result.definitiveRejected, expected);
   }
 });
+
+
+test("administrative cancellation needs explicit semantics and sends one scoped versioned RPC", async () => {
+  const input = { requestId, debtId, expectedVersion: 1, reason: "Registro duplicado", administrativeOnlyConfirmed: true };
+  reset(); assert.equal((await actions.cancelDebtPlanRecordAction(input)).ok, true);
+  assert.deepEqual(calls[0], { name: "cancel_debt_plan_record", args: { p_debt_id: debtId, p_expected_version: 1, p_reason: "Registro duplicado", p_idempotency_key: requestId } });
+  for (const change of [{ administrativeOnlyConfirmed: false }, { reason: " " }, { expectedVersion: -1 }, { actorId: "spoofed" }]) {
+    reset(); assert.equal((await actions.cancelDebtPlanRecordAction({ ...input, ...change })).ok, false); assert.equal(calls.length, 0);
+  }
+  reset(); ctx.assignedBranchIds = [otherBranch]; assert.equal((await actions.cancelDebtPlanRecordAction(input)).ok, false); assert.equal(calls.length, 0);
+  reset(); ctx.role = "accountant"; assert.equal((await actions.cancelDebtPlanRecordAction(input)).ok, false); assert.equal(calls.length, 0);
+  reset(); legacy = true; assert.equal((await actions.cancelDebtPlanRecordAction(input)).ok, false); assert.equal(calls.length, 0);
+  reset(); const result = await rawActions.cancelDebtPlanRecordAction(input, { actorId: "another", businessId }); assert.equal(result.ok, false); assert.equal(calls.length, 0);
+  reset(); throwRpc = true; const lost = await actions.cancelDebtPlanRecordAction(input); assert.equal(lost.ok, false); if (!lost.ok) assert.equal(lost.uncertain, true);
+  reset(); rpcResult = { data: { ok: true, found: true, debt_id: debtId }, error: null };
+  assert.deepEqual(await actions.getDebtOperationResultAction({ operation: "cancel", requestId, debtId }), { ok: true, found: true, debtId });
+});
+test("cancelled read model retains paid history and exact historical unpaid balance", () => {
+  const cancelled = { ...row(), status: "cancelled", cancelled_at: "2026-10-09T23:30:00Z", cancelled_on: "2026-10-10", cancelled_by: actorId, cancel_reason: "Duplicado" };
+  const view = mapDebtView(cancelled, [part], [paymentRow()], [allocation], [], "2026-10-10", access);
+  assert.equal(view.status, "cancelled"); assert.equal(view.pendingCents, 5000); assert.equal(view.payments.length, 1);
+  assert.equal(view.ledger?.cancelled?.cancelledAt, "2026-10-10"); assert.equal(view.projection?.nextDueDate, null);
+  assert.throws(() => mapDebtView({ ...cancelled, status: "active" }, [part], [paymentRow()], [allocation], [], "2026-10-10", access), /cancellation_state_mismatch/);
+});

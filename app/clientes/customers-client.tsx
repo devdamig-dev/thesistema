@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { getCustomersPageDataAction, type CustomersPageResult } from "@/app/actions/customers-page";
+import { getCustomerSalesHistoryAction, type CustomerSalesHistoryResult } from "@/app/actions/customer-history";
 import { saveCustomerAction } from "@/app/actions/customers";
 import { validateCustomerInput, type CustomerInput, type CustomerRow } from "@/lib/customers/validation";
 
@@ -37,6 +38,17 @@ export function CustomersClient({ databaseMode, initial }: { databaseMode: boole
   const [changeStatus, setChangeStatus] = useState<CustomerRow | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [historyCustomer, setHistoryCustomer] = useState<CustomerRow | null>(null);
+  const [historyResult, setHistoryResult] = useState<CustomerSalesHistoryResult | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setHistoryResult(null);
+    if (!historyCustomer || !databaseMode) { setHistoryLoading(false); return; }
+    setHistoryLoading(true);
+    void getCustomerSalesHistoryAction(historyCustomer.id).then(value => { if (!cancelled) setHistoryResult(value); }).catch(() => { if (!cancelled) setHistoryResult({ ok: false, error: "No pudimos leer el historial completo." }); }).finally(() => { if (!cancelled) setHistoryLoading(false); });
+    return () => { cancelled = true; };
+  }, [historyCustomer, databaseMode]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("active");
   const data = result.ok ? result.data : null;
@@ -46,6 +58,7 @@ export function CustomersClient({ databaseMode, initial }: { databaseMode: boole
 
   async function reload() {
     if (!databaseMode) return;
+    setHistoryCustomer(null);
     setLoading(true);
     try {
       const loaded = await getCustomersPageDataAction();
@@ -102,11 +115,21 @@ export function CustomersClient({ databaseMode, initial }: { databaseMode: boole
         <CardContent><div className="flex flex-col gap-3 sm:flex-row"><label className="flex-1 text-xs text-ink-muted">Buscar en la lista<input className={inputClass} type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Nombre, teléfono, email o canal" /></label><label className="text-xs text-ink-muted">Estado<select aria-label="Estado" className={inputClass} value={status} onChange={(e) => setStatus(e.target.value)}><option value="active">Activos</option><option value="archived">Archivados</option><option value="all">Todos</option></select></label></div></CardContent>
         {filtered.length === 0 ? <CardContent><p className="rounded-lg border border-dashed border-line p-6 text-center text-sm text-ink-muted">{rows.length ? "No hay clientes que coincidan con estos filtros." : "Todavía no hay clientes registrados."}</p></CardContent>
           : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-y border-line bg-bg-subtle text-xs text-ink-muted"><tr><th className="px-5 py-3">Cliente</th><th className="px-5 py-3">Contacto</th><th className="px-5 py-3">Canal</th><th className="px-5 py-3">Estado</th>{data.canManage && <th className="px-5 py-3">Acciones</th>}</tr></thead><tbody>
-            {filtered.map((row) => <tr key={row.id} className="border-b border-line/60 align-top last:border-0"><td className="px-5 py-3"><p className="font-medium">{row.name}</p>{row.notes && <p className="mt-1 max-w-sm whitespace-pre-wrap break-words text-xs text-ink-muted">{row.notes}</p>}</td><td className="px-5 py-3"><p className="break-all">{row.email || "Sin email"}</p><p className="text-xs text-ink-muted">{row.phone || "Sin teléfono"}</p></td><td className="px-5 py-3">{row.channel || "Sin canal"}</td><td className="px-5 py-3"><Badge tone={row.active ? "success" : "default"}>{row.active ? "Activo" : "Archivado"}</Badge></td>{data.canManage && <td className="px-5 py-3"><div className="flex flex-wrap gap-2"><Button size="sm" disabled={busy || loading || verificationRequired} aria-label={`Editar ${row.name}`} onClick={() => { setForm(asInput(row)); setFormError(null); }}><Pencil className="h-3 w-3" />Editar</Button><Button size="sm" disabled={busy || loading || verificationRequired} aria-label={`${row.active ? "Archivar" : "Restaurar"} ${row.name}`} onClick={() => { setChangeStatus(row); setFormError(null); }}>{row.active ? <Archive className="h-3 w-3" /> : <RotateCcw className="h-3 w-3" />}{row.active ? "Archivar" : "Restaurar"}</Button></div></td>}</tr>)}
+            {filtered.map((row) => <tr key={row.id} className="border-b border-line/60 align-top last:border-0"><td className="px-5 py-3"><p className="font-medium">{row.name}</p>{databaseMode && <Button size="sm" variant="ghost" aria-label={`Historial de ventas de ${row.name}`} onClick={() => setHistoryCustomer(row)}>Ver ventas relacionadas</Button>}{row.notes && <p className="mt-1 max-w-sm whitespace-pre-wrap break-words text-xs text-ink-muted">{row.notes}</p>}</td><td className="px-5 py-3"><p className="break-all">{row.email || "Sin email"}</p><p className="text-xs text-ink-muted">{row.phone || "Sin teléfono"}</p></td><td className="px-5 py-3">{row.channel || "Sin canal"}</td><td className="px-5 py-3"><Badge tone={row.active ? "success" : "default"}>{row.active ? "Activo" : "Archivado"}</Badge></td>{data.canManage && <td className="px-5 py-3"><div className="flex flex-wrap gap-2"><Button size="sm" disabled={busy || loading || verificationRequired} aria-label={`Editar ${row.name}`} onClick={() => { setForm(asInput(row)); setFormError(null); }}><Pencil className="h-3 w-3" />Editar</Button><Button size="sm" disabled={busy || loading || verificationRequired} aria-label={`${row.active ? "Archivar" : "Restaurar"} ${row.name}`} onClick={() => { setChangeStatus(row); setFormError(null); }}>{row.active ? <Archive className="h-3 w-3" /> : <RotateCcw className="h-3 w-3" />}{row.active ? "Archivar" : "Restaurar"}</Button></div></td>}</tr>)}
           </tbody></table></div>}
       </Card>
       <p className="text-xs text-ink-muted">Las ventas cargadas con un cliente quedan vinculadas y se pueden consultar en Ventas. No se calculan visitas, gasto ni ticket promedio a partir de registros sin vincular.</p>
     </>}
+    {historyCustomer && <CustomerDialog title={`Ventas de ${historyCustomer.name}`} busy={false} onClose={() => setHistoryCustomer(null)}>
+      <p className="mb-3 text-sm text-ink-muted">Sólo ventas vinculadas a este cliente, en las sucursales que podés consultar. Moneda no informada; las anuladas se conservan como historial.</p>
+      {historyLoading && <p role="status">Cargando historial…</p>}
+      {historyResult && !historyResult.ok && <p role="alert" className="text-sm text-warn-500">{historyResult.error}</p>}
+      {historyResult?.ok && (historyResult.rows.length ? <div className="max-h-[60vh] space-y-3 overflow-y-auto">{historyResult.rows.map(sale => <div key={sale.id} className="rounded-lg border border-line p-3 text-sm">
+        <p className="font-medium">{new Intl.DateTimeFormat("es-AR", { dateStyle: "short", timeStyle: "short", timeZone: historyResult.timezone }).format(new Date(sale.occurredAt))} · {sale.branch}</p>
+        <p className="break-words">{sale.description}</p><p>{new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(sale.amount))} · {sale.status === "voided" ? "Anulada" : "Activa"}</p>
+        <p className="text-xs text-ink-muted">Origen: {({ manual: "Carga manual", whatsapp: "WhatsApp", inbox: "Inbox", ocr: "Factura OCR", api: "API", system: "Sistema" } as Record<string, string>)[sale.source ?? ""] ?? "No informado"}</p>
+      </div>)}</div> : <p>No hay ventas vinculadas a este cliente en las sucursales permitidas.</p>)}
+    </CustomerDialog>}
     {form && <CustomerDialog title={form.id ? "Editar cliente" : "Nuevo cliente"} busy={busy} onClose={closeEditor}><form onSubmit={(e) => { e.preventDefault(); void save(form); }} className="space-y-4">
       <fieldset disabled={busy || verificationRequired} className="space-y-4">
         <label className="block text-sm">Nombre *<input autoFocus required maxLength={200} className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} autoComplete="name" /></label>

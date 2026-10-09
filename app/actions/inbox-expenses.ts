@@ -35,10 +35,11 @@ export async function getInboxExpenseReviewAction(extractionId: string): Promise
       if (ctx.assignedBranchIds !== null) query = query.in("id", ctx.assignedBranchIds.length ? ctx.assignedBranchIds : ["00000000-0000-0000-0000-000000000000"]);
       return query;
     });
+    const suppliers = await readExpenseRows<{ id: string; name: string; active: boolean }>((from, to) => db.from("suppliers").select("id,name,active", { count: "exact" }).eq("business_id", businessId).eq("active", true).order("id").range(from, to));
     if (branchId && !branches.some((branch) => branch.id === branchId)) throw new Error("La sucursal de origen no está disponible.");
     const fields = e.fields;
     if (!fields || typeof fields !== "object" || Array.isArray(fields)) throw new Error("La extracción necesita una revisión válida.");
-    return { ok: true, review: { extractionId, businessId, userId, branchId, branches, expectedFields: fields, name: typeof fields.concept === "string" ? fields.concept : "", category: typeof fields.category === "string" ? fields.category : "", amount: typeof fields.amount === "number" && Number.isFinite(fields.amount) || typeof fields.amount === "string" ? String(fields.amount) : "", dueDate: typeof fields.due_date === "string" ? fields.due_date : null } };
+    return { ok: true, review: { extractionId, businessId, userId, branchId, branches, suppliers, expectedFields: fields, name: typeof fields.concept === "string" ? fields.concept : "", category: typeof fields.category === "string" ? fields.category : "", amount: typeof fields.amount === "number" && Number.isFinite(fields.amount) || typeof fields.amount === "string" ? String(fields.amount) : "", dueDate: typeof fields.due_date === "string" ? fields.due_date : null } };
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "No pudimos leer la revisión." }; }
 }
 export async function approveInboxExpenseAction(input: unknown): Promise<ExpenseResult> {

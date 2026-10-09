@@ -11,6 +11,7 @@ const suites = [
   ['suppliers', 'scripts/run-suppliers-ui.mjs'],
   ['stock', 'scripts/run-stock-ui.mjs'],
   ['debts', 'tests/debt-plan-ui.browser.mjs'],
+  ['bank-installments', 'tests/bank-installment-ui.browser.mjs'],
   ['inbox-debts', 'tests/inbox-debt-ui.browser.mjs'],
   ['sales', 'scripts/run-sales-ui.mjs'],
   ['inbox-sales', 'tests/inbox-sales-ui.browser.mjs'],

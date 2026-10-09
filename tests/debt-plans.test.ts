@@ -6,6 +6,7 @@ import {
   MAX_DEBT_LEDGER_PAYMENTS,
   DebtPlanError,
   allocateDebtPayment,
+  cancelDebtRecord,
   centsToDecimalMoney,
   decimalMoneyToCents,
   generateDebtPlan,
@@ -62,6 +63,35 @@ test("bank example creates three exact 300,000 installments", () => {
   assert.equal(result.totalFinancedCents, 90_000_000);
   assert.deepEqual(result.installments.map((part) => [part.totalAmountCents, part.dueDate]), [[30_000_000, "2026-11-10"], [30_000_000, "2026-12-10"], [30_000_000, "2027-01-10"]]);
   assert.equal(result.amountSource, "explicit_total");
+});
+test("exact bank case: three ARS 200,000 installments support partial, full installment and final settlement", () => {
+  const input = planInput({ originalAmountCents: 60_000_000, financing: { installmentAmountCents: 20_000_000 } });
+  const plan = generateDebtPlan(input);
+  assert.equal(plan.amountSource, "explicit_installment");
+  assert.equal(plan.totalFinancedCents, 60_000_000);
+  assert.deepEqual(plan.installments.map((part) => [part.totalAmountCents, part.dueDate]), [
+    [20_000_000, "2026-11-10"], [20_000_000, "2026-12-10"], [20_000_000, "2027-01-10"],
+  ]);
+  const initial = ledger(input);
+  const [first, second, third] = initial.installments;
+  const partial = allocateDebtPayment(initial, payment({ amountCents: 10_000_000, allocation: { rule: "selected_installment", installmentId: first.id } }), access);
+  assert.equal(partial.pendingAmountCents, 50_000_000);
+  assert.deepEqual(project(partial.snapshot).installments.map((part) => [part.pendingAmountCents, part.status]), [[10_000_000, "partial"], [20_000_000, "pending"], [20_000_000, "pending"]]);
+  rejects(() => allocateDebtPayment(partial.snapshot, payment({ paymentId: "too-much", expectedVersion: 1, amountCents: 10_000_001, allocation: { rule: "selected_installment", installmentId: first.id } }), access), "amount_exceeds_installment_pending");
+  const fullInstallment = allocateDebtPayment(partial.snapshot, payment({ paymentId: "payment-b", expectedVersion: 1, amountCents: 20_000_000, allocation: { rule: "selected_installment", installmentId: second.id } }), access);
+  assert.equal(fullInstallment.pendingAmountCents, 30_000_000);
+  assert.equal(project(fullInstallment.snapshot).paidInstallmentCount, 1);
+  assert.deepEqual(project(fullInstallment.snapshot).installments.map((part) => [part.pendingAmountCents, part.status]), [[10_000_000, "partial"], [0, "paid"], [20_000_000, "pending"]]);
+  const settled = allocateDebtPayment(fullInstallment.snapshot, payment({ paymentId: "payment-c", expectedVersion: 2, amountCents: 30_000_000 }), access);
+  assert.deepEqual(settled.payment.allocations, [{ installmentId: first.id, amountCents: 10_000_000 }, { installmentId: third.id, amountCents: 20_000_000 }]);
+  assert.equal(settled.pendingAmountCents, 0);
+  assert.equal(project(settled.snapshot).status, "paid");
+  assert.equal(project(settled.snapshot).paidInstallmentCount, 3);
+  assert.equal(project(settled.snapshot).paidAmountCents, 60_000_000);
+  assert.equal(project(settled.snapshot).nextDueDate, null);
+  assert.equal(settled.snapshot.version, 3);
+  assert.equal(settled.snapshot.payments.length, 3);
+  assert.equal(initial.payments.length, 0, "the original ledger is never mutated");
 });
 test("last installment absorbs all cents, with exact totals across counts", () => {
   for (const count of [1, 2, 3, 7, 12, 100, MAX_DEBT_INSTALLMENTS]) {
@@ -573,4 +603,33 @@ test("append at the ledger history bound fails instead of returning an invalid s
   initial.payments = Array.from({ length: MAX_DEBT_LEDGER_PAYMENTS }, (_, i) => ({ ...first, id: `history-${i}` }));
   initial.version = MAX_DEBT_LEDGER_PAYMENTS;
   rejects(() => allocateDebtPayment(initial, payment({ amountCents: 1, expectedVersion: initial.version }), access), "payment_history_limit");
+});
+
+
+test("administrative cancellation preserves historical debt/payment arithmetic while excluding commitments", () => {
+  const paid = allocateDebtPayment(ledger(), payment(), access).snapshot;
+  const cancelled = cancelDebtRecord(paid, { ...scope, expectedVersion: 1, cancelledAt: "2026-10-09", reason: "Registro duplicado" }, access);
+  assert.equal(cancelled.version, 2);
+  assert.deepEqual(cancelled.payments, paid.payments);
+  assert.deepEqual(cancelled.installments, paid.installments);
+  assert.deepEqual(cancelled.cancelled, { cancelledAt: "2026-10-09", actorId: access.actorId, reason: "Registro duplicado" });
+  const projection = project(cancelled, "2026-12-01");
+  assert.equal(projection.status, "cancelled");
+  assert.equal(projection.pendingAmountCents, 80_000_000, "unpaid historical balance is not forgiven or replaced with a payment");
+  assert.equal(projection.paidAmountCents, 10_000_000);
+  assert.equal(projection.nextDueDate, null);
+  assert.equal(projection.overdueAmountCents + projection.next7DaysCents + projection.next30DaysCents + projection.next60DaysCents + projection.dueThisMonthCents, 0);
+  const portfolio = projectDebtPortfolio([cancelled], { currency: "ARS", asOfDate: "2026-12-01" }, access);
+  assert.equal(portfolio.debtCount, 0); assert.equal(portfolio.pendingAmountCents, 0);
+  rejects(() => allocateDebtPayment(cancelled, payment({ paymentId: "later", expectedVersion: 2 }), access), "debt_cancelled");
+  rejects(() => voidDebtPayment(cancelled, reversal({ expectedVersion: 2 }), access), "debt_cancelled");
+  rejects(() => cancelDebtRecord(cancelled, { ...scope, expectedVersion: 2, cancelledAt: "2026-10-09", reason: "Again" }, access), "debt_cancelled");
+});
+test("administrative cancellation requires scoped write permission, current version and explicit valid reason", () => {
+  const input = { ...scope, expectedVersion: 0, cancelledAt: "2026-10-09", reason: "Registro duplicado" };
+  rejects(() => cancelDebtRecord(ledger(), input, { ...access, permissions: ["debts.view"] }), "permission_denied");
+  rejects(() => cancelDebtRecord(ledger(), { ...input, expectedVersion: 1 }, access), "stale_version");
+  rejects(() => cancelDebtRecord(ledger(), { ...input, reason: " " }, access), "invalid_text");
+  rejects(() => cancelDebtRecord(ledger(), { ...input, debtId: "other" }, access), "debt_mismatch");
+  rejects(() => cancelDebtRecord(ledger(), { ...input, actorId: "forged" }, access), "unknown_field");
 });

@@ -23,6 +23,55 @@ await runUiHarness({
       await check(`${prefix}: stock e historial sin overflow de página`, () => noOverflow(page));
       await screenshot(`${prefix}-stock-history`);
 
+      await check(`${prefix}: reposición real separa stock, consumo físico, recetas y compras sin pronóstico`, async () => {
+        const branches = await page.evaluate(() => window.qa.branches);
+        await page.getByLabel('Sucursal de reposición').selectOption(branches[0].id);
+        await page.getByLabel('Reposición desde').fill('2026-10-01');
+        await page.getByLabel('Reposición hasta').fill('2026-10-08');
+        await page.evaluate(() => { window.qa.holdReplenishment = true; });
+        await clickTwice(page.getByRole('button', { name: 'Consultar reposición', exact: true }));
+        await page.waitForFunction(() => window.qa.replenishmentQueries.length === 1);
+        assert.equal(await page.getByRole('button', { name: 'Consultar reposición', exact: true }).isDisabled(), true);
+        await page.evaluate(() => window.qa.releaseReplenishment());
+        const report = page.getByLabel('Informe de reposición');
+        await report.waitFor();
+        await report.locator('summary').click();
+        await report.getByText(/Actual: 20 kg. Mínimo: 5 kg/).waitFor();
+        await report.getByText(/Salidas registradas: 3 kg. Mermas: 0,25 kg. Ajustes netos: -0,5 kg/).waitFor();
+        await report.getByText(/Pizza QA Ficticia: 10 vendidos → 2 kg teóricos/).waitFor();
+        await report.getByText(/Entrega QA ficticia, 5 kg. Compra 88888888/).waitFor();
+        await report.getByText(/no predice cuándo se agotará/).waitFor();
+        assert.deepEqual(await page.evaluate(() => window.qa.replenishmentQueries[0]), { branchId: branches[0].id, from: '2026-10-01', to: '2026-10-08' });
+        const fieldBoxes = await Promise.all(['Sucursal de reposición', 'Reposición desde', 'Reposición hasta'].map(name => page.getByLabel(name).boundingBox()));
+        for (const box of fieldBoxes) assert.ok(box && box.width >= 150, 'replenishment controls remain readable');
+        for (let i = 0; i < fieldBoxes.length; i++) for (let j = i + 1; j < fieldBoxes.length; j++) {
+          const a = fieldBoxes[i], b = fieldBoxes[j];
+          assert.ok(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y, 'replenishment controls do not overlap');
+        }
+        await noOverflow(page); await screenshot(`${prefix}-replenishment`);
+      });
+      await check(`${prefix}: reposición descarta consultas obsoletas, admite vacío, limpieza y recuperación de error`, async () => {
+        const branches = await page.evaluate(() => window.qa.branches);
+        await page.getByRole('button', { name: 'Limpiar consulta', exact: true }).click();
+        await page.evaluate(() => { window.qa.holdReplenishment = true; });
+        await page.getByRole('button', { name: 'Consultar reposición', exact: true }).click();
+        await page.getByText('Consultando datos del período…', { exact: true }).waitFor();
+        await page.getByLabel('Sucursal de reposición').selectOption(branches[1].id);
+        await page.evaluate(() => window.qa.releaseReplenishment());
+        assert.equal(await page.getByLabel('Informe de reposición').count(), 0);
+        await page.getByRole('button', { name: 'Consultar reposición', exact: true }).click();
+        await page.getByText('No hay insumos registrados.', { exact: true }).waitFor();
+        await page.getByLabel('Sucursal de reposición').selectOption(branches[0].id);
+        await page.evaluate(() => { window.qa.replenishmentMode = 'error'; });
+        await page.getByRole('button', { name: 'Consultar reposición', exact: true }).click();
+        await page.getByText('QA ficticio: no se pudo verificar la versión del informe.', { exact: true }).waitFor();
+        await page.evaluate(() => { window.qa.replenishmentMode = 'success'; });
+        await page.getByRole('button', { name: 'Consultar reposición', exact: true }).click();
+        await page.getByLabel('Informe de reposición').waitFor();
+        await page.getByRole('button', { name: 'Limpiar consulta', exact: true }).click();
+        assert.equal(await page.getByLabel('Informe de reposición').count(), 0);
+      });
+
       await check(`${prefix}: historial muestra origen, responsable, saldo y legacy sin inventar datos`, async () => {
         const initial = historyRow('Ingreso QA ficticio inicial');
         await initial.getByText('Carga manual', { exact: true }).waitFor();

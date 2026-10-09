@@ -8,17 +8,18 @@ import { canSeeModule, hasPermission } from "@/lib/permissions";
 import { mutateExpense } from "@/lib/expenses/service";
 import { readExpenseRevision, readExpenseRows } from "@/lib/expenses/read";
 import { EXPENSE_UUID } from "@/lib/expenses/validation";
-import type { ChangeExpenseStateInput, ExpenseMutation, ExpenseResult, SaveExpenseInput } from "@/lib/expenses/types";
+import type { ChangeExpenseStateInput, ExpenseOperatingFields, ExpenseMutation, ExpenseResult, SaveExpenseInput } from "@/lib/expenses/types";
 export type ExpenseInput = SaveExpenseInput;
-export type ExpenseRow = {
+export type ExpenseRow = ExpenseOperatingFields & {
   id: string; nombre: string; categoria: string; monto: number; amount: string; vencimiento: string | null;
   estado: string; sucursal: string; branchId: string; version: number; recordStatus: "active" | "voided";
-  source: string | null; voidReason: string | null;
+  source: string | null; voidReason: string | null; supplierName: string | null;
 };
+export type ExpenseSupplier = { id: string; name: string; active: boolean };
 export type ExpenseBranch = { id: string; name: string };
 export type ExpensesPageData = {
   expenses: ExpenseRow[]; totalFixed: number; totalVariable: number; grossMarginPct: number | null;
-  branches: ExpenseBranch[]; businessId: string; userId: string; canManage: boolean;
+  branches: ExpenseBranch[]; suppliers: ExpenseSupplier[]; businessId: string; userId: string; canManage: boolean;
 };
 
 async function context(permission: "expenses.view" | "expenses.create") {
@@ -43,19 +44,21 @@ export async function getExpensesPageDataAction(): Promise<{ ok: true; data: Exp
     const scope = (query: any) => ctx.assignedBranchIds === null ? query : query.in("branch_id", ctx.assignedBranchIds.length ? ctx.assignedBranchIds : ["00000000-0000-0000-0000-000000000000"]);
     let branchesQuery = db.from("branches").select("id,name").eq("business_id", businessId).order("is_main", { ascending: false }).order("created_at");
     if (ctx.assignedBranchIds !== null) branchesQuery = branchesQuery.in("id", ctx.assignedBranchIds.length ? ctx.assignedBranchIds : ["00000000-0000-0000-0000-000000000000"]);
-    const [rows, purchases, balance, branches] = await Promise.all([
-      readExpenseRows<any>((from, to) => scope(db.from("expenses").select("id,name,category,amount::text,due_date,status,branch_id,version,record_status,source,void_reason,branches(name)", { count: "exact" }).eq("business_id", businessId).order("id").range(from, to))),
+    const [rows, purchases, balance, branches, suppliers] = await Promise.all([
+      readExpenseRows<any>((from, to) => scope(db.from("expenses").select("id,name,category,amount::text,due_date,status,branch_id,version,record_status,source,void_reason,expense_date,payment_method,supplier_id,is_recurring,periodicity,branches(name)", { count: "exact" }).eq("business_id", businessId).order("id").range(from, to))),
       readExpenseRows<{ total: string | number | null }>((from, to) => scope(db.from("purchases").select("id,total", { count: "exact" }).eq("business_id", businessId).eq("record_status", "active").gte("purchased_at", monthStart).order("id").range(from, to))),
       ctx.assignedBranchIds === null ? db.from("balance_snapshots").select("gross_margin_pct,sales_data_stale,expenses_data_stale,purchases_data_stale,payroll_data_stale").eq("business_id", businessId).order("period_month", { ascending: false }).limit(1).maybeSingle() : Promise.resolve({ data: null, error: null }),
       branchesQuery,
+      readExpenseRows<ExpenseSupplier>((from, to) => db.from("suppliers").select("id,name,active", { count: "exact" }).eq("business_id", businessId).order("id").range(from, to)),
     ]);
     if (balance.error || branches.error) throw new Error("No pudimos cargar el balance o las sucursales.");
     if (await readExpenseRevision(db, businessId) !== before) throw new Error("Los gastos cambiaron durante la lectura. Volvé a cargar.");
-    const expenses: ExpenseRow[] = rows.map((row) => ({ id: row.id, nombre: row.name, categoria: row.category, monto: Number(row.amount), amount: String(row.amount), vencimiento: row.due_date, estado: row.status, sucursal: row.branches?.name ?? "Sucursal", branchId: row.branch_id, version: row.version, recordStatus: row.record_status, source: row.source, voidReason: row.void_reason }));
+    const supplierNames = new Map(suppliers.map((item) => [item.id, item.name]));
+    const expenses: ExpenseRow[] = rows.map((row) => ({ id: row.id, nombre: row.name, categoria: row.category, monto: Number(row.amount), amount: String(row.amount), vencimiento: row.due_date, estado: row.status, sucursal: row.branches?.name ?? "Sucursal", branchId: row.branch_id, version: row.version, recordStatus: row.record_status, source: row.source, voidReason: row.void_reason, expenseDate: row.expense_date ?? null, paymentMethod: row.payment_method ?? null, supplierId: row.supplier_id ?? null, supplierName: supplierNames.get(row.supplier_id) ?? null, isRecurring: row.is_recurring ?? null, periodicity: row.periodicity ?? null }));
     const totalFixed = expenses.filter((row) => row.recordStatus === "active").reduce((sum, row) => sum + row.monto, 0);
     const totalVariable = purchases.reduce((sum, row) => sum + Number(row.total ?? 0), 0);
     const grossMarginPct = balance.data?.sales_data_stale || balance.data?.expenses_data_stale || balance.data?.purchases_data_stale || balance.data?.payroll_data_stale || balance.data?.gross_margin_pct == null ? null : Number(balance.data.gross_margin_pct);
-    return { ok: true, data: { expenses, totalFixed, totalVariable, grossMarginPct, branches: branches.data ?? [], businessId, userId, canManage: hasPermission(ctx.role, "expenses.create") } };
+    return { ok: true, data: { expenses, totalFixed, totalVariable, grossMarginPct, branches: branches.data ?? [], suppliers, businessId, userId, canManage: hasPermission(ctx.role, "expenses.create") } };
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "No pudimos cargar los gastos." }; }
 }
 

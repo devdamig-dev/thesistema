@@ -190,12 +190,14 @@ insert into public.invoice_items(invoice_id,description,qty,qty_numeric,unit,uni
 -- guards. Disable exactly the new-insert checks for this one historical seed.
 do $$begin
  if exists(select 1 from pg_trigger where tgname='purchase_origin_guard' and tgrelid='public.purchases'::regclass) then alter table public.purchases disable trigger purchase_origin_guard; end if;
+ if exists(select 1 from pg_trigger where tgname='purchase_origin_lock' and tgrelid='public.purchases'::regclass) then alter table public.purchases disable trigger purchase_origin_lock; end if;
  if exists(select 1 from pg_trigger where tgname='purchase_receipt_complete' and tgrelid='public.purchases'::regclass) then alter table public.purchases disable trigger purchase_receipt_complete; end if;
 end$$;
 insert into public.purchases(business_id,branch_id,invoice_id,purchased_at,total) values
  ('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000031','00000000-0000-4000-8000-000000000064','2026-10-01',500);
 do $$begin
  if exists(select 1 from pg_trigger where tgname='purchase_origin_guard' and tgrelid='public.purchases'::regclass) then alter table public.purchases enable trigger purchase_origin_guard; end if;
+ if exists(select 1 from pg_trigger where tgname='purchase_origin_lock' and tgrelid='public.purchases'::regclass) then alter table public.purchases enable trigger purchase_origin_lock; end if;
  if exists(select 1 from pg_trigger where tgname='purchase_receipt_complete' and tgrelid='public.purchases'::regclass) then alter table public.purchases enable trigger purchase_receipt_complete; end if;
 end$$;
 

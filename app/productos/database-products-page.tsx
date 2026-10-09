@@ -90,10 +90,10 @@ export default function DatabaseProductsPage() {
   const canEdit = catalog?.canEdit === true && !catalogLoading && !catalogError;
   const editorOpen = productEditor !== null || recipeProduct !== null || ingredientEditorOpen;
   const activeProducts = products.filter((product) => product.active);
-  const withPrice = activeProducts.filter((product) => product.price > 0 && Number.isFinite(product.cost) && !product.recipeNeedsReview);
+  const withPrice = activeProducts.filter((product) => product.price > 0 && Number.isFinite(product.cost) && !product.recipeNeedsReview && !product.costRefreshPending);
   const averageMargin = withPrice.length ? withPrice.reduce((sum, product) => sum + ((product.price - product.cost) / product.price) * 100, 0) / withPrice.length : null;
   const lowMargin = withPrice.filter((product) => ((product.price - product.cost) / product.price) * 100 < 50).length;
-  const recipesReady = products.filter((product) => product.recipeId && product.ingredientCount > 0 && !product.recipeNeedsReview).length;
+  const recipesReady = products.filter((product) => product.recipeId && product.ingredientCount > 0 && !product.recipeNeedsReview && !product.costRefreshPending).length;
 
   function openProduct(product: ProductRow | null) {
     if (!canEdit || saving.current || editorOpen) return;
@@ -123,6 +123,7 @@ export default function DatabaseProductsPage() {
       const result = editing ? await updateProductAction(editing.id, input) : await createProductAction(input);
       if (version !== editorVersion.current) return;
       if (!result.ok) {
+        if (!editing && result.persisted === "unknown") setUncertainCreate(true);
         setSaveError("message" in result ? result.message : result.error);
         return;
       }
@@ -146,6 +147,7 @@ export default function DatabaseProductsPage() {
 
   return (
     <div className="space-y-6">
+      {products.some(p=>p.costRefreshPending) && <div role="status" className="rounded-xl border border-warn-500/30 p-4 text-sm">Hay costos pendientes de verificación o compras de sucursales fuera de tu alcance. Los márgenes se ocultan hasta verificar el negocio completo. Un propietario o administrador puede <a className="underline" href="/compras">actualizar costos en Compras</a>. Si no quedan compras activas de un insumo, se conserva su último costo conocido.</div>}
       <SectionHeader eyebrow="Productos, insumos y composición" title="Tu catálogo y sus costos, en un solo lugar." description="Administrá lo que vendés, lo que comprás y las cantidades que utiliza cada producto." actions={tab === "products" && canEdit ? <Button size="sm" variant="primary" onClick={() => openProduct(null)} disabled={editorOpen || pending}><Plus className="h-4 w-4" /> Nuevo producto</Button> : undefined} />
       <div className="flex gap-2 border-b border-line pb-3" role="tablist" aria-label="Catálogo">
         <Button role="tab" id="products-tab" aria-selected={tab === "products"} aria-controls="products-panel" variant={tab === "products" ? "primary" : "ghost"} onClick={() => setTab("products")} disabled={editorOpen}>Productos</Button>
@@ -172,8 +174,8 @@ export default function DatabaseProductsPage() {
                 <div className="overflow-x-auto"><table className="w-full text-sm">
                   <thead className="border-y border-line bg-bg-subtle/60 text-left text-[11px] uppercase tracking-wider text-ink-subtle"><tr><th scope="col" className="px-5 py-2.5 font-medium">Producto</th><th scope="col" className="px-5 py-2.5 font-medium">Categoría</th><th scope="col" className="px-5 py-2.5 text-right font-medium">Precio</th><th scope="col" className="px-5 py-2.5 text-right font-medium">Costo actual</th><th scope="col" className="px-5 py-2.5 text-right font-medium">Margen</th><th scope="col" className="px-5 py-2.5 font-medium">Composición</th><th scope="col" className="px-5 py-2.5 font-medium">Estado</th><th scope="col" className="px-5 py-2.5 text-right font-medium">Acciones</th></tr></thead>
                   <tbody>{products.map((product) => {
-                    const margin = product.price > 0 && Number.isFinite(product.cost) && !product.recipeNeedsReview ? ((product.price - product.cost) / product.price) * 100 : null;
-                    return <tr key={product.id} className="border-b border-line/60 last:border-0 hover:bg-bg-subtle"><td className="px-5 py-3 font-medium text-ink">{product.name}</td><td className="px-5 py-3 text-ink-muted">{product.category}</td><td className="px-5 py-3 text-right tabular-nums text-ink">{formatARS(product.price)}</td><td className="px-5 py-3 text-right tabular-nums text-ink-muted">{product.recipeNeedsReview ? "Composición por revisar" : Number.isFinite(product.cost) ? formatARS(product.cost) : "Sin dato"}</td><td className="px-5 py-3 text-right font-medium tabular-nums text-ink">{margin === null ? "Sin calcular" : formatPercent(margin, 0)}</td><td className="px-5 py-3"><Badge tone={product.recipeNeedsReview ? "warn" : product.recipeId && product.ingredientCount > 0 ? "success" : "default"}>{product.recipeNeedsReview ? "Revisar cantidades" : product.recipeId && product.ingredientCount > 0 ? `${product.ingredientCount} insumos` : "Sin composición"}</Badge></td><td className="px-5 py-3"><Badge tone={product.active ? "success" : "default"}>{product.active ? "Activo" : "Inactivo"}</Badge></td><td className="px-5 py-3"><div className="flex justify-end gap-2"><Button size="sm" variant="ghost" disabled={editorOpen || catalogLoading || !catalog} onClick={() => setRecipeProduct(product)}><FlaskConical className="h-4 w-4" /> Composición</Button>{canEdit && <Button size="sm" variant="ghost" disabled={editorOpen} onClick={() => openProduct(product)}><Pencil className="h-4 w-4" /> Editar</Button>}</div></td></tr>;
+                    const margin = product.price > 0 && Number.isFinite(product.cost) && !product.recipeNeedsReview && !product.costRefreshPending ? ((product.price - product.cost) / product.price) * 100 : null;
+                    return <tr key={product.id} className="border-b border-line/60 last:border-0 hover:bg-bg-subtle"><td className="px-5 py-3 font-medium text-ink">{product.name}</td><td className="px-5 py-3 text-ink-muted">{product.category}</td><td className="px-5 py-3 text-right tabular-nums text-ink">{formatARS(product.price)}</td><td className="px-5 py-3 text-right tabular-nums text-ink-muted">{product.costRefreshPending ? "Costo por verificar" : product.recipeNeedsReview ? "Composición por revisar" : Number.isFinite(product.cost) ? formatARS(product.cost) : "Sin dato"}</td><td className="px-5 py-3 text-right font-medium tabular-nums text-ink">{margin === null ? "Sin calcular" : formatPercent(margin, 0)}</td><td className="px-5 py-3"><Badge tone={product.recipeNeedsReview ? "warn" : product.recipeId && product.ingredientCount > 0 ? "success" : "default"}>{product.recipeNeedsReview ? "Revisar cantidades" : product.recipeId && product.ingredientCount > 0 ? `${product.ingredientCount} insumos` : "Sin composición"}</Badge></td><td className="px-5 py-3"><Badge tone={product.active ? "success" : "default"}>{product.active ? "Activo" : "Inactivo"}</Badge></td><td className="px-5 py-3"><div className="flex justify-end gap-2"><Button size="sm" variant="ghost" disabled={editorOpen || catalogLoading || !catalog} onClick={() => setRecipeProduct(product)}><FlaskConical className="h-4 w-4" /> Composición</Button>{canEdit && <Button size="sm" variant="ghost" disabled={editorOpen} onClick={() => openProduct(product)}><Pencil className="h-4 w-4" /> Editar</Button>}</div></td></tr>;
                   })}</tbody>
                 </table></div>
               )}

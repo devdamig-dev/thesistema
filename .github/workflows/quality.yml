@@ -28,7 +28,10 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:db:catalog
+      - run: npm run test:products:sql
+      - run: npm run test:catalog:snapshot
       - run: npm run test:db:stock
+      - run: npm run test:replenishment:sql
       - run: npm run test:customers:sql
       - run: npm run test:suppliers:sql
       - run: npm run test:debts:sql
@@ -40,6 +43,9 @@ jobs:
       - run: npm run test:invoices:sql
       - run: npm run test:purchases:transports
       - run: npm run test:advances:sql
+      - run: npm run test:db:upgrade
+      - name: Preserve populated purchase backfill fields and trigger modes
+        run: node tests/purchase-cost-backfill-upgrade.mjs
       - run: npm run build
       - run: npx --no-install playwright install --with-deps chromium
       - run: npm run test:ui
@@ -52,6 +58,7 @@ jobs:
             .test-artifacts/management-ui-result.json
             .test-artifacts/**/browser-result.json
             .test-artifacts/**/bundle-result.json
+            .test-artifacts/upgrade*/report.json
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
@@ -70,6 +77,16 @@ jobs:
       - run: npm ci
       - name: Verify PostgreSQL17 suites and independent session races
         run: npm run test:db:native
+      - name: Preserve populated legacy records through upgrade on PostgreSQL17
+        run: npm run test:db:upgrade:native
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: populated-upgrade-postgres17
+          path: .test-artifacts/upgrade-native*/report.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
 
   postgrest:
     runs-on: ubuntu-24.04
