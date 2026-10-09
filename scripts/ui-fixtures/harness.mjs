@@ -6,6 +6,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { prepareFixtureFont } from '../prepare-fixture-font.mjs';
 
 export const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 export const fixturePath = (name) => path.join(root, 'scripts/ui-fixtures', name);
@@ -56,6 +57,7 @@ export async function runUiHarness({ name, entry, actionModules, run }) {
   // A new run cannot accidentally reuse an old pass report or old screenshots.
   await fs.rm(out, { recursive: true, force: true });
   await fs.mkdir(out, { recursive: true });
+  await prepareFixtureFont(root, out);
   // Never read .env files; these fixtures require no credentials or live services.
   execFileSync(process.execPath, [path.join(root, 'node_modules/tailwindcss/lib/cli.js'),
     '-i', 'app/globals.css', '-o', path.join(out, 'style.css'), '--minify'], { cwd: root, stdio: 'inherit' });
@@ -85,7 +87,7 @@ export async function runUiHarness({ name, entry, actionModules, run }) {
   const unsafe = bundledInputs.filter((input) => /(?:^|\/)app\/actions\/|(?:^|\/)lib\/supabase\/|@supabase\//.test(input));
   assert.deepEqual(unsafe, [], 'A production action or Supabase module escaped fixture isolation');
   await fs.writeFile(path.join(out, 'bundle-metafile.json'), JSON.stringify(bundle.metafile, null, 2));
-  await fs.writeFile(path.join(out, 'index.html'), `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>QA ${name}: fixtures ficticios</title><link rel="stylesheet" href="/style.css"></head><body><main id="root" class="p-4"></main><script src="/app.js"></script></body></html>`);
+  await fs.writeFile(path.join(out, 'index.html'), `<!doctype html><html lang="es" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>QA ${name}: fixtures ficticios</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/font.css"></head><body class="font-sans"><main id="root" class="p-4"></main><script src="/app.js"></script></body></html>`);
   const bundleResult = { name, stage: 'bundle-only', browserExecuted: false, fixturesOnly: true, artifactDirectory: out, bundledInputs: bundledInputs.length };
   await fs.writeFile(path.join(out, 'bundle-result.json'), JSON.stringify(bundleResult, null, 2));
   if (process.env.BUNDLE_ONLY === '1') {
@@ -93,6 +95,11 @@ export async function runUiHarness({ name, entry, actionModules, run }) {
     return; // Must remain before server creation, listen(), or browser import/launch.
   }
 
+  const fixtureAssets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/font.css': ['font.css', 'text/css'] };
+  for (const file of await fs.readdir(path.join(out, 'fonts'))) {
+    if (/^[A-Za-z0-9_.-]+\.woff2$/.test(file)) fixtureAssets[`/fonts/${file}`] = [`fonts/${file}`, 'font/woff2'];
+  }
+  const fixtureAsset = (pathname) => Object.hasOwn(fixtureAssets, pathname) ? fixtureAssets[pathname] : null;
   let server;
   let browser;
   let context;
@@ -103,14 +110,13 @@ export async function runUiHarness({ name, entry, actionModules, run }) {
   try {
     server = http.createServer(async (request, response) => {
       const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
-      const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
       if (pathname === '/favicon.ico') { response.writeHead(204).end(); return; }
-      const file = files[pathname];
+      const file = fixtureAsset(pathname);
       if (request.method !== 'GET' || !file) { response.writeHead(404).end(); return; }
       try {
         response.setHeader('Content-Type', `${file[1]}; charset=utf-8`);
         response.setHeader('Cache-Control', 'no-store');
-        response.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'");
+        response.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'");
         response.end(await fs.readFile(path.join(out, file[0])));
       } catch { response.writeHead(500).end(); }
     });
@@ -125,7 +131,7 @@ export async function runUiHarness({ name, entry, actionModules, run }) {
     context = await browser.newContext({ reducedMotion: 'reduce', serviceWorkers: 'block' });
     await context.route('**/*', async (route) => {
       const url = new URL(route.request().url());
-      if (url.origin === origin && ['/', '/app.js', '/style.css', '/favicon.ico'].includes(url.pathname) && route.request().method() === 'GET') {
+      if (url.origin === origin && (fixtureAsset(url.pathname) !== null || url.pathname === '/favicon.ico') && route.request().method() === 'GET') {
         await route.continue();
       } else {
         blockedRequests.push(route.request().url());
@@ -139,10 +145,20 @@ export async function runUiHarness({ name, entry, actionModules, run }) {
       assert.deepEqual(pageErrors, [], 'Unexpected browser pageerror');
       assert.deepEqual(blockedRequests, [], 'Attempted network access outside fixture assets');
     };
+    const ensureFixtureFont = async () => {
+      await page.evaluate(async () => {
+        await document.fonts.load('14px Inter', 'Clientes Contactos Composición');
+        await document.fonts.ready;
+        if (![...document.fonts].some((font) => font.family === 'Inter' && font.status === 'loaded')) throw new Error('Build Inter font did not load');
+        if (!/^["']?Inter\b/.test(getComputedStyle(document.body).fontFamily)) throw new Error('Fixture body did not use Inter');
+      });
+    };
     const check = async (label, task) => {
+      await ensureFixtureFont();
       await task(); checkErrors(); checks.push(label); console.log(`PASS ${name}: ${label}`);
     };
     const screenshot = async (label) => {
+      await ensureFixtureFont();
       await noOverflow(page);
       await page.screenshot({ path: path.join(out, `${label}.png`), fullPage: true, animations: 'disabled' });
       checkErrors();

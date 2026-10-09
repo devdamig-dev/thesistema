@@ -30,6 +30,7 @@ No production database, credentials, remote mutation, publish, or deploy is need
 
 - `npm test`: validation, permission matrix, server-derived tenant/actor boundary, read guards, domain error semantics and regressions.
 - `npm run test:customers:sql`: pinned PGlite 0.5.8, in-memory PostgreSQL, all 53 real repository migrations, Supabase auth/storage scaffold, transactional fixtures rolled back. Exercises CRUD, archive/restore, optimistic conflicts, spoofing/type/length errors, direct API writes, tenant isolation including dual membership, branch-restricted marketing's existing business-wide scope, inactive/denied roles, immutable tenant, inaccessible audit sink, and rollback when the audit sink fails.
+- `npm run test:customers:sql:native`: same migrations/assertions in a disposable official PostgreSQL 17 container. No remote database, inherited credentials, network, exposed ports or host mounts; the helper logs the resolved image digest and actual server version. CI records this gate separately from browser and PGlite.
 - `npm run typecheck`
 - `npm run lint`
 - `npm run build`
@@ -38,7 +39,7 @@ The SQL runner is an isolated PostgreSQL regression harness, not a full Supabase
 
 ## Browser QA checklist
 
-The committed `npm run test:customers:ui` harness renders the real customer component and Tailwind CSS with isolated, explicitly fictitious server actions. It blocks all network except its loopback assets, does not read environment files, and fails on browser errors or external requests. Desktop/mobile checks cover cancellation and fresh drafts, contacts/notes, duplicate activation, ID/version preservation, archive/restore, uncertain responses with read-back, read-only mode and horizontal overflow. Screenshots and machine-readable results are uploaded by Quality; generated bundles are ignored. `BUNDLE_ONLY=1 npm run test:customers:ui` builds the fixture without starting a server or importing/launching a browser.
+The committed `npm run test:customers:ui` harness renders the real customer component, Tailwind CSS and Inter font assets from the current Next build with isolated, explicitly fictitious server actions. It blocks all network except its loopback assets, does not read environment files, and fails on browser errors or external requests. Desktop/mobile checks cover cancellation and fresh drafts, contacts/notes, duplicate activation, ID/version preservation, archive/restore, uncertain responses with read-back, read-only mode and horizontal overflow. Screenshots and machine-readable results are uploaded by Quality; generated bundles are ignored. After `npm run build`, `BUNDLE_ONLY=1 npm run test:customers:ui` builds the fixture without starting a server or importing/launching a browser.
 
 Chromium cannot run in the assigned local environment and no local browser pass is claimed. Browser execution is a separate CI gate. The isolated browser fixture is not authenticated Supabase E2E. Run the following live checks only in an authorized test environment:
 

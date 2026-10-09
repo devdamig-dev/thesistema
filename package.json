@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "rm -rf .test-dist && tsc -p tests/tsconfig.json && node --test .test-dist/tests/*.test.js",
     "test:customers:sql": "node scripts/run-customers-sql.mjs",
-    "test:customers:ui": "node scripts/run-customers-ui.mjs"
+    "test:customers:ui": "node scripts/run-customers-ui.mjs",
+    "test:customers:sql:native": "node scripts/run-customers-sql.mjs --native --docker"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",
