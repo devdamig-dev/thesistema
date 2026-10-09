@@ -36,6 +36,7 @@ begin
  v_result:=expenses_private.mutate(p_business,p_actor,'inbox','save',v_input);
  update public.ai_extractions set status='approved',approved_at=clock_timestamp(),approved_by=p_actor,
   target_entity='expenses',target_record_id=(v_result->>'id')::uuid,branch_id=v_branch where id=p_extraction;
+ if not found then raise exception 'expense_extraction_changed'; end if;
  insert into expenses_private.inbox_receipts values(p_extraction,m.id,p_business,v_branch,p_actor,p_expected,p_review,v_result);
  return v_result;
 exception when others then return jsonb_build_object('ok',false,'error',case when sqlerrm like 'expense_%' then sqlerrm else 'expense_invalid_input' end);
@@ -46,3 +47,18 @@ create function public.approve_expense_extraction_atomic(p_business_id uuid,p_ac
 returns jsonb language sql security invoker set search_path='' as $$ select expenses_private.approve_inbox(p_business_id,p_actor_id,p_extraction_id,p_expected_fields,p_review) $$;
 revoke all on function public.approve_expense_extraction_atomic(uuid,uuid,uuid,jsonb,jsonb) from public,anon,authenticated,service_role;
 grant execute on function public.approve_expense_extraction_atomic(uuid,uuid,uuid,jsonb,jsonb) to authenticated;
+
+-- Ordinary Data API callers cannot mark a reviewed extraction as approved or
+-- rewrite an approved record. Only the validated owner-executed atomic wrapper
+-- may make that transition; direct service transport is also denied.
+create function expenses_private.guard_extraction_approval() returns trigger
+language plpgsql security invoker set search_path='' as $$
+begin
+ if current_user::text in ('authenticated','anon','service_role') then
+  if tg_op<>'INSERT' and old.type='expense' and old.status='approved' then raise exception 'expense_extraction_closed'; end if;
+  if tg_op<>'DELETE' and new.type='expense' and new.status='approved' then raise exception 'expense_review_required'; end if;
+ end if;
+ return case when tg_op='DELETE' then old else new end;
+end $$;
+revoke all on function expenses_private.guard_extraction_approval() from public,anon,authenticated,service_role;
+create trigger expense_extraction_approval_guard before insert or update or delete on public.ai_extractions for each row execute function expenses_private.guard_extraction_approval();

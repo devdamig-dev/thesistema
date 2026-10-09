@@ -68,9 +68,12 @@ export interface AgentDependencies {
   claimDebtPending?(id: string, actor: AgentActor, recovery: boolean): Promise<boolean>;
   /** Atomically retires a debt pending and returns its current uncertainty, even if our read is stale. */
   cancelDebtPending?(id: string, actor: AgentActor): Promise<{ consumed: boolean; resultUncertain: boolean }>;
-  /** Read-only resolution and snapshot before a debt confirmation. Never performs writes. */
+  /** Same persisted purchase identity survives RPC timeouts and process interruption. */
+  claimPurchasePending?(id: string, actor: AgentActor, recovery: boolean): Promise<boolean>;
+  cancelPurchasePending?(id: string, actor: AgentActor): Promise<{ consumed: boolean; resultUncertain: boolean }>;
+  /** Read-only resolution and snapshot before a domain confirmation. Never performs writes. */
   prepare?(actor: AgentActor, call: ToolCall): Promise<ToolCall>;
-  execute(actor: AgentActor, call: ToolCall): Promise<unknown>;
+  execute(actor: AgentActor, call: ToolCall, pendingId?: string): Promise<unknown>;
   audit(event: AgentAuditEvent): Promise<void>;
   now(): Date;
 }

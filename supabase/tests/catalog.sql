@@ -42,6 +42,9 @@ insert into public.business_members(business_id,user_id,role) values
 insert into public.branches(id,business_id,name) values
  ('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000011','Catalog A branch'),
  ('00000000-0000-4000-8000-000000000022','00000000-0000-4000-8000-000000000012','Catalog B branch');
+insert into public.business_modules(business_id,module_key,enabled) values
+ ('00000000-0000-4000-8000-000000000011','purchases',true)
+ on conflict(business_id,module_key) do update set enabled=true;
 insert into public.suppliers(id,business_id,name) values
  ('00000000-0000-4000-8000-000000000031','00000000-0000-4000-8000-000000000011','Supplier A'),
  ('00000000-0000-4000-8000-000000000032','00000000-0000-4000-8000-000000000012','Supplier B');
@@ -336,11 +339,11 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',true);
 insert into public.ingredients(id,business_id,name,unit,avg_unit_cost) values
  ('00000000-0000-4000-8000-000000000048','00000000-0000-4000-8000-000000000011','Weighted grams','g',1);
-insert into public.purchases(id,business_id,branch_id,purchased_at,total) values
- ('00000000-0000-4000-8000-000000000071','00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000021',current_date,0.01);
-insert into public.purchase_items(purchase_id,ingredient_id,description,qty,unit,unit_price,total) values
- ('00000000-0000-4000-8000-000000000071','00000000-0000-4000-8000-000000000048','Paid gram',1,'g',0.01,0.01),
- ('00000000-0000-4000-8000-000000000071','00000000-0000-4000-8000-000000000048','Included gram',1,'g',0,0);
+select public.create_purchase_manual_atomic('00000000-0000-4000-8000-000000000011',
+ jsonb_build_object('requestId','00000000-0000-4000-8000-000000000071','kind','detailed',
+  'branchId','00000000-0000-4000-8000-000000000021','supplierId','00000000-0000-4000-8000-000000000031',
+  'purchasedAt',current_date::text,'paymentMethod','Cash',
+  'items','[{"ingredientId":"00000000-0000-4000-8000-000000000048","description":"Paid gram","qty":1,"unit":"g","unitPrice":0.01},{"ingredientId":"00000000-0000-4000-8000-000000000048","description":"Included gram","qty":1,"unit":"g","unitPrice":0}]'::jsonb));
 do $$ declare v_token timestamptz; v_result jsonb; v_avg numeric; begin
   select updated_at into v_token from public.recipes where product_id='00000000-0000-4000-8000-000000000052';
   v_result := public.save_recipe_atomic('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000052',v_token,
@@ -363,22 +366,58 @@ insert into public.products(id,business_id,name,category,price,cost) values
  ('00000000-0000-4000-8000-000000000059','00000000-0000-4000-8000-000000000011','Quarter kilo','Test',1000,100);
 select public.save_recipe_atomic('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000059',null,
  '[{"ingredientId":"00000000-0000-4000-8000-000000000049","quantity":250,"unit":"g"}]');
-insert into public.purchase_items(purchase_id,ingredient_id,description,qty,unit,unit_price,total) values
- ('00000000-0000-4000-8000-000000000071','00000000-0000-4000-8000-000000000049','1000 grams',1000,'g',1.2,1200);
+select public.create_purchase_manual_atomic('00000000-0000-4000-8000-000000000011',
+ jsonb_build_object('requestId','00000000-0000-4000-8000-000000000073','kind','detailed',
+  'branchId','00000000-0000-4000-8000-000000000021','supplierId','00000000-0000-4000-8000-000000000031',
+  'purchasedAt',current_date::text,'paymentMethod','Cash',
+  'items','[{"ingredientId":"00000000-0000-4000-8000-000000000049","description":"1000 grams","qty":1000,"unit":"g","unitPrice":1.2}]'::jsonb));
 select pg_temp.catalog_assert(public.recalc_ingredient_cost('00000000-0000-4000-8000-000000000049')=1200,'purchase grams become cost per kg');
 select pg_temp.catalog_assert((select cost from public.products where id='00000000-0000-4000-8000-000000000059')=300,'250g BOM costs 300 after 1200 per kg purchase');
+-- Flush the genuine RPC receipts before temporarily seeding pre-guard history.
+set constraints all immediate;
+set constraints all deferred;
+reset role;
+savepoint catalog_invalid_purchase;
+-- Only the disposable test owner can create this malformed historical fixture.
+-- Keep all other validation enabled, then restore every new-insert guard before
+-- testing the authenticated cost reader. The savepoint removes the fixture
+-- without bypassing the immutable-history UPDATE/DELETE protections.
+alter table public.purchases disable trigger purchase_origin_guard;
+alter table public.purchases disable trigger purchase_receipt_complete;
+alter table public.purchase_items disable trigger purchase_item_insert_guard;
+alter table public.purchase_items disable trigger purchase_item_receipt_complete;
+insert into public.purchases(id,business_id,branch_id,purchased_at,total) values
+ ('00000000-0000-4000-8000-000000000074','00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000021',current_date,5);
 insert into public.purchase_items(id,purchase_id,ingredient_id,description,qty,unit,unit_price,total) values
- ('00000000-0000-4000-8000-000000000079','00000000-0000-4000-8000-000000000071','00000000-0000-4000-8000-000000000049','Unknown package',1,'pack',5,5);
+ ('00000000-0000-4000-8000-000000000079','00000000-0000-4000-8000-000000000074','00000000-0000-4000-8000-000000000049','Unknown package',1,'pack',5,5);
+alter table public.purchases enable trigger purchase_origin_guard;
+alter table public.purchases enable trigger purchase_receipt_complete;
+alter table public.purchase_items enable trigger purchase_item_insert_guard;
+alter table public.purchase_items enable trigger purchase_item_receipt_complete;
+set local role authenticated;
 select pg_temp.catalog_throws($q$select public.recalc_ingredient_cost('00000000-0000-4000-8000-000000000049')$q$,'purchase_cost_unit_or_quantity_invalid');
 select pg_temp.catalog_assert((select avg_unit_cost from public.ingredients where id='00000000-0000-4000-8000-000000000049')=1200,'invalid purchase unit preserves prior cost');
 select pg_temp.catalog_assert((select cost from public.products where id='00000000-0000-4000-8000-000000000059')=300,'invalid purchase unit preserves BOM cost');
-delete from public.purchase_items where id='00000000-0000-4000-8000-000000000079';
-reset role;
--- A privileged internal call still excludes malformed foreign-business purchase links.
+rollback to savepoint catalog_invalid_purchase;
+release savepoint catalog_invalid_purchase;
+-- A privileged internal call still excludes malformed foreign-business purchase
+-- links that predate receipt validation. Seed only as the disposable test owner.
+alter table public.purchases disable trigger purchase_origin_guard;
+alter table public.purchases disable trigger purchase_receipt_complete;
+alter table public.purchase_items disable trigger purchase_item_insert_guard;
+alter table public.purchase_items disable trigger purchase_item_receipt_complete;
 insert into public.purchases(id,business_id,branch_id,purchased_at,total) values
  ('00000000-0000-4000-8000-000000000072','00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000022',current_date,999999);
 insert into public.purchase_items(purchase_id,ingredient_id,description,qty,unit,unit_price,total) values
  ('00000000-0000-4000-8000-000000000072','00000000-0000-4000-8000-000000000049','Foreign link fixture',1,'kg',999999,999999);
+alter table public.purchases enable trigger purchase_origin_guard;
+alter table public.purchases enable trigger purchase_receipt_complete;
+alter table public.purchase_items enable trigger purchase_item_insert_guard;
+alter table public.purchase_items enable trigger purchase_item_receipt_complete;
+select pg_temp.catalog_assert((select count(*)=4 and bool_and(tgenabled='O') from pg_trigger
+ where (tgrelid='public.purchases'::regclass and tgname in ('purchase_origin_guard','purchase_receipt_complete'))
+    or (tgrelid='public.purchase_items'::regclass and tgname in ('purchase_item_insert_guard','purchase_item_receipt_complete'))),
+ 'all purchase receipt guards restored after historical seeding');
 set local role service_role;
 select set_config('request.jwt.claim.sub','',true);
 select pg_temp.catalog_assert(public.recalc_ingredient_cost('00000000-0000-4000-8000-000000000049')=1200,'service average excludes foreign-business purchases');

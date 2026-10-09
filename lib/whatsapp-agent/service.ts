@@ -1,10 +1,11 @@
+import { isPurchaseWrite, preparePurchaseTool } from "../purchases/agent";
 import { isSaleWrite, prepareSaleTool } from "../sales/agent";
 import { isDebtPlanTool } from "./debt-contract";
 import { prepareDebtTool } from "./debt-adapter";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { runAgent } from "./core";
 import { interpretHeuristically } from "./interpreter";
-import { claimSalePending, cancelSalePending, claimDebtPending, cancelDebtPending, audit, claimMessage, consumePending, executeTool, getPending, resolveActor, savePending, resolveAuthorizedConversation, type AuthorizedConversation } from "./supabase-adapter";
+import { claimPurchasePending, cancelPurchasePending, claimSalePending, cancelSalePending, claimDebtPending, cancelDebtPending, audit, claimMessage, consumePending, executeTool, getPending, resolveActor, savePending, resolveAuthorizedConversation, type AuthorizedConversation } from "./supabase-adapter";
 import type { AgentActor, IncomingAgentMessage } from "./types";
 
 export function scopeActorToConversation(
@@ -50,8 +51,10 @@ export async function processWhatsAppAgentMessage(input: IncomingAgentMessage) {
     cancelSalePending: (id,actor) => cancelSalePending(db,id,actor,conversationId),
     claimDebtPending: (id, actor, recovery) => claimDebtPending(db, id, actor, recovery, conversationId),
     cancelDebtPending: (id, actor) => cancelDebtPending(db, id, actor, conversationId),
-    prepare: (actor, call) => isDebtPlanTool(call.name) ? prepareDebtTool(db, actor, call) : isSaleWrite(call.name) ? prepareSaleTool(db, actor, call) : Promise.resolve(call),
-    execute: (actor, call) => executeTool(db, actor, call),
+    claimPurchasePending: (id, actor, recovery) => claimPurchasePending(db, id, actor, recovery, conversationId),
+    cancelPurchasePending: (id, actor) => cancelPurchasePending(db, id, actor, conversationId),
+    prepare: (actor, call) => isPurchaseWrite(call.name) ? preparePurchaseTool(db, actor, call) : isDebtPlanTool(call.name) ? prepareDebtTool(db, actor, call) : isSaleWrite(call.name) ? prepareSaleTool(db, actor, call) : Promise.resolve(call),
+    execute: (actor, call, pendingId) => executeTool(db, actor, call, pendingId),
     audit: (event) => audit(db, event, conversationId),
     now: () => new Date(),
   });

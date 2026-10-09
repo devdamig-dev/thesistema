@@ -3,6 +3,7 @@ begin;
 create function pg_temp.e_assert(p_ok boolean,p_message text) returns void language plpgsql as $$ begin
  if p_ok is distinct from true then raise exception 'ASSERTION FAILED: %',p_message; end if;
 end $$;
+create function pg_temp.e_throws(p_sql text,p_message text) returns void language plpgsql as $$begin begin execute p_sql;exception when others then if position(p_message in sqlerrm)>0 then return;end if;raise exception 'Expected %, received %',p_message,sqlerrm;end;raise exception 'Expected failure %',p_message;end$$;
 insert into auth.users(id,email) select ('00000000-0000-4000-8000-'||lpad(i::text,12,'0'))::uuid,'expense-'||i||'@example.invalid' from generate_series(1,7) i;
 insert into public.organizations(id,name) values('00000000-0000-4000-8000-000000000020','Offline expense test');
 update public.profiles set organization_id='00000000-0000-4000-8000-000000000020' where id::text like '00000000-0000-4000-8000-%';
@@ -167,7 +168,25 @@ do $$ declare n int; audits int; r jsonb; begin
  perform pg_temp.e_assert((select status='pending' and target_record_id is null from public.ai_extractions where id='00000000-0000-4000-8000-000000000303'),'approval failure preserves extraction');
 end $$;
 reset role;
+create or replace function pg_temp.break_expense_approval() returns trigger language plpgsql as $$ begin return null; end $$;
+set local role authenticated;
+do $$ declare n int; audits int; r jsonb; begin
+ select count(*) into n from public.expenses; select count(*) into audits from public.expense_mutations;
+ r:=public.approve_expense_extraction_atomic('00000000-0000-4000-8000-000000000021',auth.uid(),'00000000-0000-4000-8000-000000000303','{"amount":45.67}',pg_temp.expense_review());
+ perform pg_temp.e_assert(r->>'ok'='false','silently suppressed approval rejected');
+ perform pg_temp.e_assert((select count(*) from public.expenses)=n,'approval failure rolls back expense');
+ perform pg_temp.e_assert((select count(*) from public.expense_mutations)=audits,'approval failure rolls back audit');
+ perform pg_temp.e_assert((select status='pending' and target_record_id is null from public.ai_extractions where id='00000000-0000-4000-8000-000000000303'),'approval failure preserves extraction');
+end $$;
+reset role;
 drop trigger test_expense_approval on public.ai_extractions;
+set local role authenticated;
+select pg_temp.e_throws($q$update public.ai_extractions set status='approved' where id='00000000-0000-4000-8000-000000000303'$q$,'expense_review_required');
+select pg_temp.e_throws($q$update public.ai_extractions set status='pending' where id='00000000-0000-4000-8000-000000000302'$q$,'expense_extraction_closed');
+reset role;
+set local role service_role;
+select pg_temp.e_throws($q$update public.ai_extractions set status='approved' where id='00000000-0000-4000-8000-000000000303'$q$,'expense_review_required');
+reset role;
 update public.business_modules set enabled=false where business_id='00000000-0000-4000-8000-000000000021' and module_key='inbox_ai';
 set local role authenticated;
 select pg_temp.e_assert(public.approve_expense_extraction_atomic('00000000-0000-4000-8000-000000000021',auth.uid(),'00000000-0000-4000-8000-000000000303','{"amount":45.67}',pg_temp.expense_review())->>'error'='expense_module_disabled','Inbox module checked at action time');

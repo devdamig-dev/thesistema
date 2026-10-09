@@ -34,7 +34,8 @@ test("manual expense reads and atomic writes fail closed to tenant and branch", 
 test("inbox approvals persist the resolved branch and UI requires a real branch", () => {
   assert.match(inbox, /extraction\.type === "expense".*expense_review_required/);
   assert.doesNotMatch(inbox, /async function createExpense/);
-  assert.match(inbox, /branch_id: branchId/);
+  assert.match(readFileSync("app/actions/inbox-expenses.ts", "utf8"), /e\.branch_id \?\? message\.data\.branch_id/);
+  assert.match(readFileSync("supabase/migrations/20261009202530_atomic_inbox_expense_review.sql", "utf8"), /branch_id=v_branch where id=p_extraction/);
   assert.match(page, /Seleccioná una sucursal/);
   assert.match(page, /row\.sucursal/);
 });

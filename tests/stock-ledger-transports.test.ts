@@ -153,3 +153,12 @@ test("WhatsApp stock transport failure never promises rollback", async () => {
   const result = await runAgent({ messageId: "stock-uncertain", senderPhone: actor.phone, recipientPhone: "5491100000000", text: "Sumá 2 g de carne al stock" }, deps);
   assert.equal(result.status, "failed"); assert.match(result.text, /No pude confirmar/); assert.match(result.text, /historial/); assert.doesNotMatch(result.text, /No se realizó ningún cambio/);
 });
+
+// Generic Inbox approval must never fall back to a fuzzy payroll name match.
+test("Inbox advances require exact reviewed approval even when already marked approved", async () => {
+  for (const status of ["pending", "approved"]) {
+    reset(); state.role = "admin"; state.extraction.type = "employee_advance"; state.extraction.status = status;
+    assert.deepEqual(await approveExtractionAction("extraction-a"), { ok: false, persisted: false, error: "advance_review_required" });
+    assert.equal(state.rpcs.length, 0); assert.deepEqual(state.queries.map(q => q.table), ["ai_extractions"]);
+  }
+});

@@ -169,6 +169,9 @@ select pg_temp.s_throws($q$select public.adjust_stock_for_agent('00000000-0000-4
 select pg_temp.s_throws($q$select public.adjust_stock_for_agent('00000000-0000-4000-8000-000000000022','00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000041','00000000-0000-4000-8000-000000000033','in',1,'Foreign ingredient','kg')$q$,'stock_ingredient_forbidden');
 reset role;
 
+-- Explicit admin fixture review receipts permit focused accounting-engine tests.
+-- Production callers cannot insert or forge these review receipts.
+-- Public exact-version review/approval is covered by invoice-manual.sql.
 -- Approval contributes one movement per purchase line, even repeated ingredients.
 insert into public.invoices(id,business_id,branch_id,number,invoice_date,total,status) values
  ('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000031','INV-STOCK','2026-10-01',500,'extracted'),
@@ -182,20 +185,42 @@ insert into public.invoice_items(invoice_id,description,qty,qty_numeric,unit,uni
  ('00000000-0000-4000-8000-000000000061','Delivery concept','1',1,'u',0,0,null),
  ('00000000-0000-4000-8000-000000000062','Invalid density','1 l',1,'l',500,500,'00000000-0000-4000-8000-000000000041'),
  ('00000000-0000-4000-8000-000000000063','Good line but audit must fail','250 g',250,'g',2,500,'00000000-0000-4000-8000-000000000041');
+-- Simulate a row that existed before the new origin guards. This fixture is
+-- inserted only by the disposable database owner; application roles retain all
+-- guards. Disable exactly the new-insert checks for this one historical seed.
+do $$begin
+ if exists(select 1 from pg_trigger where tgname='purchase_origin_guard' and tgrelid='public.purchases'::regclass) then alter table public.purchases disable trigger purchase_origin_guard; end if;
+ if exists(select 1 from pg_trigger where tgname='purchase_receipt_complete' and tgrelid='public.purchases'::regclass) then alter table public.purchases disable trigger purchase_receipt_complete; end if;
+end$$;
 insert into public.purchases(business_id,branch_id,invoice_id,purchased_at,total) values
  ('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000031','00000000-0000-4000-8000-000000000064','2026-10-01',500);
+do $$begin
+ if exists(select 1 from pg_trigger where tgname='purchase_origin_guard' and tgrelid='public.purchases'::regclass) then alter table public.purchases enable trigger purchase_origin_guard; end if;
+ if exists(select 1 from pg_trigger where tgname='purchase_receipt_complete' and tgrelid='public.purchases'::regclass) then alter table public.purchases enable trigger purchase_receipt_complete; end if;
+end$$;
+
+
+insert into public.business_modules(business_id,module_key,enabled) values('00000000-0000-4000-8000-000000000021','invoices_ocr',true) on conflict(business_id,module_key) do update set enabled=true;
+do $$declare inv public.invoices%rowtype;k uuid;a uuid;begin
+ for inv in select * from public.invoices where id in('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000062','00000000-0000-4000-8000-000000000063') loop
+  k:=gen_random_uuid();
+  insert into public.activity_logs(business_id,actor_id,actor_name,actor_role,action,target_type,target_id,summary,data) values(inv.business_id,'00000000-0000-4000-8000-000000000001','Fixture owner','owner','invoice.reviewed','invoices',inv.id,'Explicit test fixture review','{}') returning id into a;
+  update public.invoices set reviewed_version=edit_version,reviewed_by='00000000-0000-4000-8000-000000000001',reviewed_at=now(),reviewed_request_id=k where id=inv.id;
+  insert into public.invoice_mutations(business_id,request_id,invoice_id,branch_id,actor_id,actor_role,payload,result,after_snapshot,activity_log_id) values(inv.business_id,k,inv.id,inv.branch_id,'00000000-0000-4000-8000-000000000001','owner','{"reviewed":true}',jsonb_build_object('version',inv.edit_version),'{}',a);
+ end loop;
+end$$;
 
 set local role service_role;
 select set_config('request.jwt.claim.sub','',true);
 do $$ declare r jsonb; n bigint; b numeric; p uuid; line uuid; begin
   select count(*) into n from public.stock_movements;
-  r:=public.approve_invoice_atomic('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000004');
+  r:=invoices_private.approve_ledger('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000004',(select edit_version from public.invoices where id='00000000-0000-4000-8000-000000000061'));
   perform pg_temp.s_assert(r->>'error'='membership_not_found','inactive approval denied');
-  r:=public.approve_invoice_atomic('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000010');
+  r:=invoices_private.approve_ledger('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000010',(select edit_version from public.invoices where id='00000000-0000-4000-8000-000000000061'));
   perform pg_temp.s_assert(r->>'error'='permission_denied','manager cannot approve invoices');
-  r:=public.approve_invoice_atomic('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000022','00000000-0000-4000-8000-000000000001');
+  r:=invoices_private.approve_ledger('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000022','00000000-0000-4000-8000-000000000001',(select edit_version from public.invoices where id='00000000-0000-4000-8000-000000000061'));
   perform pg_temp.s_assert(r->>'error'='invoice_not_found','cross-business approval denied even dual owner');
-  r:=public.approve_invoice_atomic('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001');
+  r:=invoices_private.approve_ledger('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001',(select edit_version from public.invoices where id='00000000-0000-4000-8000-000000000061'));
   perform pg_temp.s_assert((r->>'ok')::boolean and not(r->>'already_approved')::boolean and (r->>'stock_count')::integer=3 and (r->>'item_count')::integer=4,'invoice real lines approved');
   p:=(r->>'purchase_id')::uuid;
   perform pg_temp.s_assert((select count(*) from public.purchase_items where purchase_id=p)=4,'all purchase lines retained including unmatched concept');
@@ -204,18 +229,18 @@ do $$ declare r jsonb; n bigint; b numeric; p uuid; line uuid; begin
   perform pg_temp.s_assert((select current from public.stock_items where ingredient_id='00000000-0000-4000-8000-000000000041' and branch_id='00000000-0000-4000-8000-000000000031')=0.850001,'invoice grams converted and balance updated');
   perform pg_temp.s_assert((select current from public.stock_items where ingredient_id='00000000-0000-4000-8000-000000000042' and branch_id='00000000-0000-4000-8000-000000000031')=2250,'invoice ml update');
   perform pg_temp.s_assert((select avg_unit_cost from public.ingredients where id='00000000-0000-4000-8000-000000000041')=500,'invoice cost expressed per base kg');
-  r:=public.approve_invoice_atomic('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001');
+  r:=invoices_private.approve_ledger('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001',(select edit_version from public.invoices where id='00000000-0000-4000-8000-000000000061'));
   perform pg_temp.s_assert((r->>'ok')::boolean and (r->>'already_approved')::boolean and (r->>'purchase_id')::uuid=p,'repeat returns same purchase');
   perform pg_temp.s_assert((select count(*) from public.stock_movements)=n+3,'repeat does not add stock events');
   perform pg_temp.s_assert((select count(*) from public.activity_logs where action='invoice.approved' and target_id='00000000-0000-4000-8000-000000000061')=1,'one approval audit');
   select id into line from public.purchase_items where purchase_id=p and ingredient_id='00000000-0000-4000-8000-000000000041' and qty=500;
   perform pg_temp.s_throws(format('select public.record_stock_movement_atomic(''00000000-0000-4000-8000-000000000021'',''00000000-0000-4000-8000-000000000001'',''00000000-0000-4000-8000-000000000041'',''00000000-0000-4000-8000-000000000031'',''in'',500,''Duplicate line'',''g'',''ocr'',''purchase_item'',%L)',line),'stock_movements_purchase_line_once_idx');
   perform pg_temp.s_assert((select current from public.stock_items where ingredient_id='00000000-0000-4000-8000-000000000041' and branch_id='00000000-0000-4000-8000-000000000031')=0.850001,'duplicate line rolls back balance');
-  r:=public.approve_invoice_atomic('00000000-0000-4000-8000-000000000062','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001');
+  r:=invoices_private.approve_ledger('00000000-0000-4000-8000-000000000062','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001',(select edit_version from public.invoices where id='00000000-0000-4000-8000-000000000062'));
   perform pg_temp.s_assert(r->>'error'='invalid_stock_units_or_precision','invalid unit prevents approval');
   perform pg_temp.s_assert(not exists(select 1 from public.purchases where invoice_id='00000000-0000-4000-8000-000000000062'),'invalid unit creates no purchase');
   perform pg_temp.s_assert((select status from public.invoices where id='00000000-0000-4000-8000-000000000062')='extracted','invalid unit leaves invoice pending');
-  r:=public.approve_invoice_atomic('00000000-0000-4000-8000-000000000064','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001');
+  r:=invoices_private.approve_ledger('00000000-0000-4000-8000-000000000064','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001',(select edit_version from public.invoices where id='00000000-0000-4000-8000-000000000064'));
   perform pg_temp.s_assert((r->>'already_approved')::boolean,'legacy approval not replayed');
   perform pg_temp.s_assert((select count(*) from public.stock_movements)=n+3,'legacy approval preserves stock history');
 end; $$;
@@ -249,7 +274,7 @@ do $$ declare n bigint; a bigint; b numeric; c numeric; begin
   select count(*) into n from public.stock_movements; select count(*) into a from public.activity_logs;
   select current into b from public.stock_items where ingredient_id='00000000-0000-4000-8000-000000000041' and branch_id='00000000-0000-4000-8000-000000000031';
   select avg_unit_cost into c from public.ingredients where id='00000000-0000-4000-8000-000000000041';
-  perform pg_temp.s_throws($q$select public.approve_invoice_atomic('00000000-0000-4000-8000-000000000063','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001')$q$,'forced_stock_audit_failure');
+  perform pg_temp.s_throws($q$select invoices_private.approve_ledger('00000000-0000-4000-8000-000000000063','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001',(select edit_version from public.invoices where id='00000000-0000-4000-8000-000000000063'))$q$,'forced_stock_audit_failure');
   perform pg_temp.s_assert((select current from public.stock_items where ingredient_id='00000000-0000-4000-8000-000000000041' and branch_id='00000000-0000-4000-8000-000000000031')=b,'late approval failure rolls back balance');
   perform pg_temp.s_assert((select count(*) from public.stock_movements)=n,'late approval failure rolls back movement');
   perform pg_temp.s_assert((select count(*) from public.activity_logs)=a,'late approval failure rolls back every audit');
@@ -324,4 +349,5 @@ select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000003'
 select pg_temp.s_assert(public.approve_stock_extraction_atomic('00000000-0000-4000-8000-000000000078','00000000-0000-4000-8000-000000000021')->>'error'='stock_actor_forbidden','viewer Inbox approval forbidden');
 reset role;
 
+set constraints all immediate;
 rollback;

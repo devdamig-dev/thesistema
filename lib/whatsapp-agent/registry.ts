@@ -10,7 +10,7 @@ export const WHATSAPP_TOOLS: readonly ToolDefinition[] = [
   { name: "sales.getPeriod", description: "Consultar ventas por período", module: "sales", permission: "sales.view", risk: "READ", required: ["from", "to"] },
   { name: "sales.comparePeriods", description: "Comparar ventas entre períodos", module: "sales", permission: "sales.view", risk: "READ", required: ["from", "to", "previousFrom", "previousTo"] },
   { name: "purchases.list", description: "Consultar compras", module: "purchases", permission: "purchases.view", risk: "READ", required: [] },
-  { name: "purchases.create", description: "Registrar una compra", module: "purchases", permission: "purchases.create", risk: "WRITE", required: ["supplier", "amount", "paymentMethod"] },
+  { name: "purchases.create", description: "Registrar compra resumida con fecha e importe explícitos, sin movimiento de stock", module: "purchases", permission: "purchases.create", risk: "SENSITIVE", required: [] },
   { name: "debts.createPlan", description: "Crear una obligación de pago único o un plan con cronograma confirmado", module: "debts", permission: "debts.create", risk: "WRITE", required: [] },
   { name: "debts.getPlan", description: "Consultar saldo, cuotas e historial de una deuda identificada sin ambigüedad", module: "debts", permission: "debts.view", risk: "READ", required: [] },
   { name: "debts.listDue", description: "Consultar cuotas y vencimientos dentro de fechas explícitas", module: "debts", permission: "debts.view", risk: "READ", required: ["from", "to"] },

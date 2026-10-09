@@ -1,3 +1,4 @@
+import { executePurchaseTool, isPurchaseWrite } from "../purchases/agent";
 import { withSalesRevision } from "../sales/read";
 import { applyAdminBranchScope } from "../data/branch-scope";
 import { localDate, localDateTimeToIso, shiftDate, readAllSales, sumSaleAmounts } from "../../app/ventas/reporting";
@@ -232,6 +233,25 @@ export async function cancelDebtPending(db: Db, id: string, actor: AgentActor, c
   return { consumed: result.data.consumed, resultUncertain: result.data.resultUncertain };
 }
 
+/** Purchase claims retain the exact persisted request before any financial RPC. */
+export async function claimPurchasePending(db: Db, id: string, actor: AgentActor, recovery: boolean, conversationId: string): Promise<boolean> {
+  const result = await db.rpc("claim_purchase_pending_execution", {
+    p_business_id: actor.businessId, p_member_id: actor.memberId, p_conversation_id: conversationId,
+    p_pending_id: id, p_recovery: recovery,
+  });
+  if (result?.error || typeof result?.data !== "boolean") throw new Error("pending_response_unknown");
+  return result.data;
+}
+
+export async function cancelPurchasePending(db: Db, id: string, actor: AgentActor, conversationId: string): Promise<{ consumed: boolean; resultUncertain: boolean }> {
+  const result = await db.rpc("cancel_purchase_pending_execution", {
+    p_business_id: actor.businessId, p_member_id: actor.memberId, p_conversation_id: conversationId, p_pending_id: id,
+  });
+  if (result?.error || !result?.data || typeof result.data !== "object" || Array.isArray(result.data)
+    || typeof result.data.consumed !== "boolean" || typeof result.data.resultUncertain !== "boolean") throw new Error("pending_response_unknown");
+  return { consumed: result.data.consumed, resultUncertain: result.data.resultUncertain };
+}
+
 const sanitized = (value: unknown): unknown => {
   if (value === undefined) return null;
   return JSON.parse(
@@ -308,7 +328,8 @@ async function resolveBranchId(db: Db, actor: AgentActor, requested?: string): P
   return branches.data[0].id;
 }
 
-export async function executeTool(db: Db, actor: AgentActor, call: ToolCall): Promise<unknown> {
+export async function executeTool(db: Db, actor: AgentActor, call: ToolCall, pendingId?: string): Promise<unknown> {
+  if (isPurchaseWrite(call.name)) return executePurchaseTool(db, actor, call, pendingId);
   if (isSaleWrite(call.name)) return executeSaleTool(db, actor, call);
   if (isDebtPlanTool(call.name)) return executeDebtTool(db, actor, call);
   const a = call.arguments as any;
@@ -353,50 +374,6 @@ export async function executeTool(db: Db, actor: AgentActor, call: ToolCall): Pr
         : query.in("branch_id", ["00000000-0000-0000-0000-000000000000"]);
     }
     const res = await query;
-    if (res.error) throw res.error;
-    return res.data;
-  }
-
-  if (call.name === "purchases.create") {
-    let branchId: string | null = null;
-    if (actor.branchIds !== null) {
-      if (actor.branchIds.length !== 1) throw new Error("purchase_branch_ambiguous");
-      branchId = actor.branchIds[0];
-    } else {
-      const branch = await db.from("branches").select("id")
-        .eq("business_id", actor.businessId)
-        .order("is_main", { ascending: false })
-        .order("created_at", { ascending: true })
-        .limit(1).maybeSingle();
-      if (branch.error) throw branch.error;
-      branchId = branch.data?.id ?? null;
-    }
-    if (!branchId) throw new Error("purchase_branch_not_found");
-
-    const supplier = await db
-      .from("suppliers")
-      .select("id")
-      .eq("business_id", actor.businessId)
-      .ilike("name", a.supplier)
-      .maybeSingle();
-
-    if (supplier.error) throw supplier.error;
-    if (!supplier.data) throw new Error("supplier_not_found");
-
-    const res = await db
-      .from("purchases")
-      .insert({
-        business_id: actor.businessId,
-        branch_id: branchId,
-        supplier_id: supplier.data.id,
-        purchased_at: a.purchasedAt ?? new Date().toISOString().slice(0, 10),
-        total: Number(a.amount),
-        payment_method: a.paymentMethod,
-        created_by: actor.userId,
-      })
-      .select("id")
-      .single();
-
     if (res.error) throw res.error;
     return res.data;
   }

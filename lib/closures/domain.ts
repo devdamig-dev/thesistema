@@ -34,17 +34,22 @@ export function readClosureOperation(raw: string | null, businessId: string, use
   const operation = parseClosureOperation(p.kind, p.input); if (operation.input.businessId !== businessId || operation.input.userId !== userId) throw new Error("La operación pertenece a otra sesión."); return operation;
 }
 const ERRORS: Record<string, string> = {
+  closure_extraction_changed: "La extracción cambió desde la revisión. Abrila nuevamente.", closure_extraction_closed: "La extracción ya está cerrada. Revisá Cierres antes de crear otro registro.",
   closure_permission_denied: "No tenés permiso para gestionar cierres.", closure_module_disabled: "El módulo Cierres está deshabilitado.", closure_branch_forbidden: "La sucursal no está autorizada.", closure_context_changed: "Cambió el negocio o la sesión. Recargá para continuar.", closure_conflict: "El cierre cambió. Cerrá el formulario y actualizá antes de corregirlo.", closure_archived: "Este cierre ya está archivado.", closure_idempotency_conflict: "La referencia ya se utilizó con otros datos. Conservá el intento y revisá el historial.", closure_not_found: "No se encontró el cierre en el negocio activo.", closure_invalid_date: "La fecha no es válida o está en el futuro.", closure_branch_immutable: "La sucursal original se conserva. Archivá el cierre y creá uno nuevo si fue incorrecta.", closure_invalid_input: "Revisá los datos y el motivo del cierre.",
 };
 export type ClosuresDatabase = { rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }> };
+export function closureRpcResult(response: { data: unknown; error: unknown }): ClosureResult {
+    const data = response.data as { ok?: boolean; id?: string; version?: number; error?: string } | null;
+    if (!response.error && data?.ok === true && typeof data.id === "string" && UUID.test(data.id) && Number.isSafeInteger(data.version) && data.version! >= 1) return { ok: true, persisted: true, id: data.id, version: data.version! };
+    if (!response.error && data?.ok === false && typeof data.error === "string") return { ok: false, persisted: false, error: ERRORS[data.error ?? ""] ?? "No se guardó el cierre. Revisá los datos y permisos." };
+  return { ok: false, persisted: "unknown", error: "No pudimos confirmar el resultado. Reintentá el mismo intento para verificarlo sin duplicar el cierre." };
+}
 export async function mutateClosure(db: ClosuresDatabase, context: { businessId: string; userId: string }, kind: "save" | "archive", input: unknown): Promise<ClosureResult> {
   let operation: ClosureOperation; try { operation = parseClosureOperation(kind, input); } catch (error) { return { ok: false, persisted: false, error: error instanceof Error ? error.message : "Datos inválidos." }; }
   if (operation.input.businessId !== context.businessId || operation.input.userId !== context.userId) return { ok: false, persisted: false, error: ERRORS.closure_context_changed };
   try {
     const response = await db.rpc(kind === "save" ? "save_closure_atomic" : "archive_closure_atomic", { p_business_id: context.businessId, p_input: operation.input });
-    const data = response.data as { ok?: boolean; id?: string; version?: number; error?: string } | null;
-    if (!response.error && data?.ok === true && typeof data.id === "string" && UUID.test(data.id) && Number.isSafeInteger(data.version) && data.version! >= 1) return { ok: true, persisted: true, id: data.id, version: data.version! };
-    if (!response.error && data?.ok === false) return { ok: false, persisted: false, error: ERRORS[data.error ?? ""] ?? "No se guardó el cierre. Revisá los datos y permisos." };
+    return closureRpcResult(response);
   } catch { /* The transaction may have committed before the response was lost. */ }
   return { ok: false, persisted: "unknown", error: "No pudimos confirmar el resultado. Reintentá el mismo intento para verificarlo sin duplicar el cierre." };
 }

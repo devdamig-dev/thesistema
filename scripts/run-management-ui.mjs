@@ -19,6 +19,10 @@ const suites = [
   ['expenses', 'scripts/run-expenses-ui.mjs'],
   ['purchases', 'scripts/run-purchases-ui.mjs'],
   ['inbox-expenses', 'tests/inbox-expenses-ui.browser.mjs'],
+  ['inbox-closures', 'tests/inbox-closures-ui.browser.mjs'],
+  ['invoices', 'tests/invoice-manual-ui.browser.mjs'],
+  ['inbox-advances', 'tests/inbox-advances-ui.browser.mjs'],
+  ['inbox-purchases', 'tests/inbox-purchases-ui.browser.mjs'],
 ];
 const results = [];
 for (const [name, file] of suites) {

@@ -70,8 +70,22 @@ select pg_temp.customer_assert((select current=0 from public.stock_items where i
 select pg_temp.customer_assert((select count(*)=1 from public.stock_movements where ref_type='purchase_item_void'),'void repeat produces one reversal');
 select pg_temp.customer_assert((select count(*)=1 from public.activity_logs where action='purchase.voided'),'void audit');
 select pg_temp.customer_throws($q$delete from public.purchase_items where purchase_id=(select id from public.purchases where manual_request_id='00000000-0000-4000-8000-000000000061')$q$,'purchase_items_history_immutable');
+-- Seed a pre-existing legacy row only as the disposable fixture owner.
+-- New application writes must satisfy the complete source/receipt contract.
+set constraints all immediate;
+set constraints all deferred;
+reset role;
+alter table public.purchases disable trigger purchase_origin_guard;
+alter table public.purchases disable trigger purchase_receipt_complete;
+alter table public.purchase_items disable trigger purchase_item_insert_guard;
+alter table public.purchase_items disable trigger purchase_item_receipt_complete;
 insert into public.purchases(id,business_id,branch_id,purchased_at,total,payment_method) values ('00000000-0000-4000-8000-000000000080','00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000021','2026-10-09',1,'Legacy');
 insert into public.purchase_items(id,purchase_id,description,qty,unit,unit_price,total) values ('00000000-0000-4000-8000-000000000081','00000000-0000-4000-8000-000000000080','Legacy',1,'u',1,1);
+alter table public.purchases enable trigger purchase_origin_guard;
+alter table public.purchases enable trigger purchase_receipt_complete;
+alter table public.purchase_items enable trigger purchase_item_insert_guard;
+alter table public.purchase_items enable trigger purchase_item_receipt_complete;
+set local role authenticated;
 select pg_temp.customer_throws($q$update public.purchase_items set purchase_id=(select id from public.purchases where manual_request_id='00000000-0000-4000-8000-000000000061') where id='00000000-0000-4000-8000-000000000081'$q$,'purchase_items_history_immutable');
 select public.create_purchase_manual_atomic('00000000-0000-4000-8000-000000000011','{"requestId":"00000000-0000-4000-8000-000000000064","branchId":"00000000-0000-4000-8000-000000000021","supplierId":"00000000-0000-4000-8000-000000000040","purchasedAt":"2026-10-09","paymentMethod":"Cuenta corriente","items":[{"description":"Same","qty":"2","unit":"u","unitPrice":"2"},{"description":"Same","qty":"2.0","unit":"u","unitPrice":"1"}]}');
 

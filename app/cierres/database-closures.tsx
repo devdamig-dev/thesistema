@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { cloneElement, isValidElement, useCallback, useEffect, useRef, useState, type FormEvent, type ReactElement, type ReactNode } from "react";
 import { Plus, RefreshCw } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { getClosuresWorkspaceAction, getClosureHistoryAction, saveClosureAction,
 import { closureJournalKey, parseClosureOperation, readClosureOperation, type ClosureHistory, type ClosureOperation, type ClosureRecord, type ClosureWorkspace, type SaveClosure } from "@/lib/closures/domain";
 const fieldClass = "w-full min-w-0 rounded-lg border border-line bg-bg-subtle px-3 py-2 text-sm text-ink disabled:opacity-60";
 const amount = (value: string) => new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value));
-function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block min-w-0 space-y-1 text-xs text-ink-muted"><span>{label}</span>{children}</label>; }
+function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block min-w-0 space-y-1 text-xs text-ink-muted"><span>{label}</span>{isValidElement(children) ? cloneElement(children as ReactElement<{ "aria-label"?: string }>, { "aria-label": label }) : children}</label>; }
 function ErrorText({ children }: { children: ReactNode }) { return <p role="alert" className="rounded-lg border border-warn-500/30 bg-warn-500/10 p-3 text-sm">{children}</p>; }
 type Draft = Omit<SaveClosure, "requestId" | "businessId" | "userId">;
 export default function DatabaseClosures() {

@@ -8,12 +8,6 @@ import { isDatabaseMode } from "@/lib/env";
 import { logActivity } from "@/lib/data/activity";
 import { createNotification } from "@/lib/data/notifications";
 import { assertPermission } from "@/lib/permissions/server-action";
-import type {
-  ExtractedAdvance,
-  ExtractedDailyClosure,
-  ExtractedPurchase,
-  MovementType,
-} from "@/lib/ai/types";
 
 /* ============================================================================
    Tipos comunes
@@ -90,151 +84,6 @@ function refreshPaths() {
    Creators por tipo — devuelven el id del registro creado
    ============================================================================ */
 
-async function createPurchase(
-  db: any,
-  businessId: string,
-  branchId: string,
-  fields: ExtractedPurchase,
-): Promise<string | null> {
-  // 1) Resolver o crear supplier
-  let supplierId: string | null = null;
-  if (fields.supplier) {
-    const sup = await db
-      .from("suppliers")
-      .select("id")
-      .eq("business_id", businessId)
-      .ilike("name", fields.supplier)
-      .limit(1)
-      .maybeSingle();
-    supplierId = (sup.data as { id: string } | null)?.id ?? null;
-    if (!supplierId) {
-      const created = await db
-        .from("suppliers")
-        .insert({ business_id: businessId, name: fields.supplier })
-        .select("id")
-        .maybeSingle();
-      supplierId = (created.data as { id: string } | null)?.id ?? null;
-    }
-  }
-
-  // 2) Insertar purchase
-  const purchase = await db
-    .from("purchases")
-    .insert({
-      business_id: businessId,
-      branch_id: branchId,
-      supplier_id: supplierId,
-      purchased_at: new Date().toISOString().slice(0, 10),
-      total: fields.total_amount ?? 0,
-      payment_method: fields.payment_method ?? "Pendiente",
-    })
-    .select("id")
-    .maybeSingle();
-  const purchaseId = (purchase.data as { id: string } | null)?.id ?? null;
-  if (!purchaseId) return null;
-
-  // 3) Insertar purchase_item (si tenemos datos suficientes)
-  if (fields.item && fields.quantity) {
-    const unitPrice = fields.unit_price
-      ?? (fields.total_amount && fields.quantity ? fields.total_amount / fields.quantity : 0);
-    await db.from("purchase_items").insert({
-      purchase_id: purchaseId,
-      description: fields.item,
-      qty: fields.quantity,
-      unit: fields.unit ?? "u",
-      unit_price: unitPrice,
-      total: fields.total_amount ?? unitPrice * fields.quantity,
-    });
-  }
-
-  return purchaseId;
-}
-
-async function createAdvance(
-  db: any,
-  businessId: string,
-  fields: ExtractedAdvance,
-): Promise<string | null> {
-  if (!fields.employee_name || fields.amount == null) return null;
-  // Buscar empleado por nombre
-  const emp = await db
-    .from("employees")
-    .select("id")
-    .eq("business_id", businessId)
-    .ilike("full_name", `%${fields.employee_name}%`)
-    .limit(1)
-    .maybeSingle();
-  const employeeId = (emp.data as { id: string } | null)?.id;
-  if (!employeeId) return null;
-
-  const res = await db
-    .from("advance_payments")
-    .insert({
-      employee_id: employeeId,
-      amount: fields.amount,
-      paid_at: new Date().toISOString().slice(0, 10),
-      status: "pending",
-    })
-    .select("id")
-    .maybeSingle();
-  return (res.data as { id: string } | null)?.id ?? null;
-}
-
-async function createDailyClosure(
-  db: any,
-  businessId: string,
-  branchId: string | null,
-  fields: ExtractedDailyClosure,
-): Promise<string | null> {
-  const gross = fields.total ?? (fields.cash ?? 0) + (fields.card ?? 0) + (fields.qr ?? 0);
-  const expensesSum = (fields.expenses ?? []).reduce((s, e) => s + (e.amount ?? 0), 0);
-  const withdrawal = fields.withdrawal ?? 0;
-  const net = gross - expensesSum - withdrawal;
-
-  const incomes = [
-    fields.cash ? { method: "Efectivo", amount: fields.cash } : null,
-    fields.card ? { method: "Tarjeta", amount: fields.card } : null,
-    fields.qr ? { method: "QR", amount: fields.qr } : null,
-  ].filter(Boolean);
-
-  const parsed = {
-    incomes,
-    expenses: fields.expenses ?? [],
-    withdrawals: withdrawal ? [{ name: "Retiro", amount: withdrawal }] : [],
-    change: fields.change ?? 0,
-    products: fields.products ?? [],
-    grossTotal: gross,
-    netTotal: net,
-  };
-
-  const res = await db
-    .from("daily_closures")
-    .insert({
-      business_id: businessId,
-      branch_id: branchId,
-      closure_date: parseClosureDate(fields.date) ?? new Date().toISOString().slice(0, 10),
-      raw_text: fields.business_unit ?? "",
-      parsed,
-      gross_total: gross,
-      net_total: net,
-      status: "approved",
-    })
-    .select("id")
-    .maybeSingle();
-  return (res.data as { id: string } | null)?.id ?? null;
-}
-
-function parseClosureDate(input?: string): string | null {
-  if (!input) return null;
-  // "16/05" o "16/05/2026" → ISO
-  const m = input.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
-  if (!m) return null;
-  const day = m[1].padStart(2, "0");
-  const month = m[2].padStart(2, "0");
-  const yearRaw = m[3] ?? String(new Date().getFullYear());
-  const year = yearRaw.length === 2 ? `20${yearRaw}` : yearRaw;
-  return `${year}-${month}-${day}`;
-}
 
 /* ============================================================================
    Server actions públicas
@@ -276,6 +125,9 @@ export async function approveExtractionAction(extractionId: string, debtReviewDi
     if (!result.data.target_record_id) return { ok: false, persisted: false, error: "stock_approval_result_unconfirmed" };
     return { ok: true, persisted: true, target_entity: "stock_movements", target_record_id: result.data.target_record_id };
   }
+  if (extraction.type === "employee_advance") return { ok: false, persisted: false, error: "advance_review_required" };
+  if (extraction.type === "daily_closure") return { ok: false, persisted: false, error: "closure_review_required" };
+  if (extraction.type === "purchase") return { ok: false, persisted: false, error: "purchase_review_required" };
   if (extraction.type === "expense") return { ok: false, persisted: false, error: "expense_review_required" };
   if (extraction.type === "sale") return { ok: false, persisted: false, error: "sale_review_required" };
   if (extraction.status === "approved" && !["debt_created", "debt_payment"].includes(extraction.type)) {
@@ -309,24 +161,8 @@ export async function approveExtractionAction(extractionId: string, debtReviewDi
   const branchId = extraction.branch_id ?? await resolveBranchId(db, businessId);
   if (!branchId) return { ok: false, persisted: false, error: "no_branch" };
 
-  let targetRecordId: string | null = null;
-
-  switch (extraction.type as MovementType) {
-    case "purchase":
-      targetRecordId = await createPurchase(db, businessId, branchId, extraction.fields as ExtractedPurchase);
-      break;
-    case "employee_advance":
-      targetRecordId = await createAdvance(db, businessId, extraction.fields as ExtractedAdvance);
-      break;
-    case "daily_closure":
-      targetRecordId = await createDailyClosure(db, businessId, branchId, extraction.fields as ExtractedDailyClosure);
-      break;
-    case "supplier_price_change":
-    case "unknown":
-    default:
-      // No hay creator definido. Aprobamos sin insertar.
-      break;
-  }
+  // All record-producing types use their reviewed atomic paths above.
+  const targetRecordId: string | null = null;
 
   // Si esperábamos crear algo y no se pudo (datos faltantes), mark
   // needs_review para que el operador edite y reintente.

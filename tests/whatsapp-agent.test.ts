@@ -67,13 +67,14 @@ test("expired confirmation is never executed", async () => { const expired: Pend
 test("missing argument creates clarification context", async () => { const h = harness(); const reply = await runAgent(input("Registrá una compra de $180.000 a Don José"), h.deps); assert.equal(reply.status, "needs_input"); assert.match(reply.text, /medio de pago/); assert.equal(h.pending()?.kind, "clarification"); });
 test("duplicate webhook is idempotent", async () => { const h = harness({ duplicate: true }); assert.equal((await runAgent(input("ventas de hoy"), h.deps)).status, "duplicate"); assert.equal(h.executions.length, 0); });
 test("tool failure is audited without reporting success", async () => { const h = harness({ fail: true }); const reply = await runAgent(input("ventas de hoy"), h.deps); assert.equal(reply.status, "failed"); assert.equal(h.audits[0].error, "database down"); });
-test("ambiguous purchase branch fails closed with a clear WhatsApp response", async () => {
+test("ambiguous purchase branch requests an explicit destination before confirmation", async () => {
   const h = harness();
-  h.deps.interpret = async () => ({ name: "purchases.create", arguments: { supplier: "Don José", amount: 1000, paymentMethod: "Transferencia" } });
-  h.deps.execute = async () => { throw new Error("purchase_branch_ambiguous"); };
+  h.deps.interpret = async () => ({ name: "purchases.create", arguments: { kind: "summary", supplier: "Don José", amount: "1000.00", paymentMethod: "Transferencia", purchasedAt: "2026-10-09" } });
+  h.deps.prepare = async () => { throw new Error("purchase_branch_ambiguous"); };
   const reply = await runAgent(input("Registrá la compra"), h.deps);
-  assert.equal(reply.status, "failed");
-  assert.match(reply.text, /más de una sucursal/);
+  assert.equal(reply.status, "needs_input");
+  assert.match(reply.text, /ID de la sucursal/);
+  assert.equal(h.executions.length, 0);
   assert.equal(h.audits[0].error, "purchase_branch_ambiguous");
 });
 test("successful action is audited with tenant, tool and sanitized arguments", async () => { const h = harness(); await runAgent(input("ventas de hoy"), h.deps); assert.equal(h.audits[0].actor.businessId, "business-a"); assert.equal(h.audits[0].tool, "sales.getToday"); assert.deepEqual(h.audits[0].arguments, {}); });
@@ -149,7 +150,7 @@ test("purchase examples extract the real supplier and Argentine money amounts", 
   for (const text of ["Registrá una compra de $180.000 a Don José.", "Registrá una compra a Don José por $180.000.", "Registrá una compra de Don José por 180 mil."]) {
     const call = await interpretHeuristically(text, [...WHATSAPP_TOOLS]);
     assert.equal(call?.arguments.supplier, "Don José", text);
-    assert.equal(call?.arguments.amount, 180000, text);
+    assert.equal(call?.arguments.amount, "180000.00", text);
   }
 });
 
@@ -168,8 +169,8 @@ test("stock quantities preserve kilos and decimal quantities without money scali
 
 test("numeric clarifications parse Argentine amounts and leave invalid input missing", async () => {
   const pending: PendingOperation = { id: "clarify", actor, kind: "clarification", toolCall: { name: "purchases.create", arguments: { supplier: "Don José", paymentMethod: "Efectivo" } }, expiresAt: "2099-01-01T00:00:00Z" };
-  assert.equal((await interpretHeuristically("$180.000,50", [...WHATSAPP_TOOLS], pending))?.arguments.amount, 180000.5);
-  assert.equal((await interpretHeuristically("180k", [...WHATSAPP_TOOLS], pending))?.arguments.amount, 180000);
+  assert.equal((await interpretHeuristically("$180.000,50", [...WHATSAPP_TOOLS], pending))?.arguments.amount, "180000.50");
+  assert.equal((await interpretHeuristically("180k", [...WHATSAPP_TOOLS], pending))?.arguments.amount, "180000.00");
   assert.equal((await interpretHeuristically("No sé", [...WHATSAPP_TOOLS], pending))?.arguments.amount, undefined);
 });
 

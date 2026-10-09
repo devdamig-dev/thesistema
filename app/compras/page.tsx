@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { SupplierForm } from "@/components/suppliers/supplier-form";
-import { FormEvent, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { cloneElement, isValidElement, type ReactElement, FormEvent, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { ArrowDownRight, ArrowUpRight, FileSpreadsheet, Loader2, Plus, Truck } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
 import { KpiCard } from "@/components/ui/kpi-card";
@@ -25,7 +25,7 @@ import { formatARS, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const IS_DATABASE = process.env.NEXT_PUBLIC_APP_MODE === "database";
-const inputClass = "h-10 w-full rounded-lg border border-line bg-bg px-3 text-sm text-ink outline-none transition placeholder:text-ink-subtle focus:border-brand-500";
+const inputClass = "h-10 w-full min-w-0 rounded-lg border border-line bg-bg px-3 text-sm text-ink outline-none transition placeholder:text-ink-subtle focus:border-brand-500";
 
 export default function ComprasPage() {
   const { toast } = useToast();
@@ -358,7 +358,7 @@ function PurchaseForm({ pending, suppliers, branches, ingredients, scope, correc
     setAttemptKey(input.requestId);
     setError(""); void sendAttempt(input);
   }
-  return <form className="space-y-4" onSubmit={submit}>
+  return <form className="space-y-4 p-6" onSubmit={submit}>
     <fieldset disabled={locked} className="space-y-4 disabled:opacity-70">
       {correction && <><p className="text-sm">La corrección conserva y anula la compra original; registra su reemplazo y ajusta el stock dentro de una misma transacción.</p><Field label="Motivo de corrección *"><input className={inputClass} value={correctionReason} onChange={e=>setCorrectionReason(e.target.value)}/></Field></>}
       <Field label="Sucursal *"><select className={inputClass} value={branchId} onChange={e => setBranchId(e.target.value)}><option value="">Elegir sucursal</option>{branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
@@ -369,7 +369,7 @@ function PurchaseForm({ pending, suppliers, branches, ingredients, scope, correc
       {lines.map((line,i) => <div key={i} className="space-y-3 rounded-xl border border-line p-3">
         <Field label={`Línea ${i + 1}: insumo opcional`}><select className={inputClass} value={line.ingredientId} onChange={e => { const ingredient = ingredients.find(v => v.id === e.target.value); patch(i,{ ingredientId:e.target.value, ...(ingredient ? { description:ingredient.name, unit:ingredient.unit } : {}) }); }}><option value="">Concepto sin entrada de stock</option>{ingredients.map(v => <option key={v.id} value={v.id}>{v.name} ({v.unit})</option>)}</select></Field>
         <Field label="Descripción *"><input className={inputClass} value={line.description} onChange={e => patch(i,{description:e.target.value})}/></Field>
-        <div className="grid grid-cols-3 gap-2"><Field label="Cantidad *"><input className={inputClass} inputMode="decimal" value={line.qty} onChange={e => patch(i,{qty:e.target.value})}/></Field><Field label="Unidad *"><input className={inputClass} value={line.unit} onChange={e => patch(i,{unit:e.target.value})}/></Field><Field label="Precio unitario *"><input className={inputClass} inputMode="decimal" value={line.unitPrice} onChange={e => patch(i,{unitPrice:e.target.value})}/></Field></div>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3"><Field label="Cantidad *"><input className={inputClass} inputMode="decimal" value={line.qty} onChange={e => patch(i,{qty:e.target.value})}/></Field><Field label="Unidad *"><input className={inputClass} value={line.unit} onChange={e => patch(i,{unit:e.target.value})}/></Field><Field label="Precio unitario *"><input className={inputClass} inputMode="decimal" value={line.unitPrice} onChange={e => patch(i,{unitPrice:e.target.value})}/></Field></div>
         {lines.length > 1 && <Button type="button" variant="ghost" onClick={() => setLines(values => values.filter((_,n) => n !== i))}>Quitar línea</Button>}
       </div>)}
       <Button type="button" disabled={lines.length >= 100} onClick={() => setLines(values => [...values,blank()])}>Agregar línea</Button>
@@ -382,5 +382,6 @@ function PurchaseForm({ pending, suppliers, branches, ingredients, scope, correc
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="block space-y-1.5"><span className="text-xs font-medium text-ink-muted">{label}</span>{children}</label>;
+  const control = isValidElement(children) ? cloneElement(children as ReactElement<{ "aria-label"?: string }>, { "aria-label": label }) : children;
+  return <label className="block min-w-0 space-y-1.5"><span className="text-xs font-medium text-ink-muted">{label}</span>{control}</label>;
 }

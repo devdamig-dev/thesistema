@@ -43,6 +43,15 @@ import {
 } from "@/lib/mock-data";
 import { formatARS, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { getInboxAdvanceReviewAction } from "@/app/actions/inbox-advances";
+import { InboxAdvanceReviewDialog } from "./advance-review";
+import type { AdvanceReview } from "@/lib/advances/inbox";
+import { getInboxClosureReviewAction } from "@/app/actions/inbox-closures";
+import { InboxClosureReviewDialog } from "./closure-review";
+import type { InboxClosureReview } from "@/lib/closures/inbox";
+import { getInboxPurchaseReviewAction } from "@/app/actions/inbox-purchases";
+import { InboxPurchaseReviewDialog } from "./purchase-review";
+import type { InboxPurchaseReview } from "@/lib/purchases/inbox";
 import { getInboxExpenseReviewAction } from "@/app/actions/inbox-expenses";
 import { InboxExpenseReviewDialog } from "./expense-review";
 import type { InboxExpenseReview } from "@/lib/expenses/inbox";
@@ -67,6 +76,9 @@ export default function InboxClient({
   presenceMe?: { id: string; name: string };
 }) {
   const router = useRouter();
+  const [advanceReview, setAdvanceReview] = useState<AdvanceReview | null>(null);
+  const [closureReview, setClosureReview] = useState<InboxClosureReview | null>(null);
+  const [purchaseReview, setPurchaseReview] = useState<InboxPurchaseReview | null>(null);
   const [expenseReview, setExpenseReview] = useState<InboxExpenseReview | null>(null);
   const [saleReview,setSaleReview] = useState<InboxSaleReview|null>(null);
   const saleReviewLock=useRef(false);
@@ -102,6 +114,9 @@ export default function InboxClient({
 
   return (
     <>
+    {advanceReview && <InboxAdvanceReviewDialog key={`${advanceReview.businessId}:${advanceReview.userId}:${advanceReview.extractionId}`} review={advanceReview} onClose={() => setAdvanceReview(null)} onSaved={() => { setAdvanceReview(null); toast({ tone: "success", title: "Adelanto registrado", description: "El adelanto, su aprobación y la auditoría quedaron guardados juntos. No se ejecutó un pago ni se cambió el saldo manual." }); router.refresh(); }} />}
+    {closureReview && <InboxClosureReviewDialog key={`${closureReview.businessId}:${closureReview.userId}:${closureReview.extractionId}`} review={closureReview} onClose={() => setClosureReview(null)} onSaved={() => { setClosureReview(null); toast({ tone: "success", title: "Cierre guardado", description: "El resumen operativo y su aprobación quedaron registrados juntos, sin movimientos contables." }); router.refresh(); }} />}
+    {purchaseReview && <InboxPurchaseReviewDialog key={`${purchaseReview.businessId}:${purchaseReview.userId}:${purchaseReview.extractionId}`} review={purchaseReview} onClose={() => setPurchaseReview(null)} onSaved={() => { setPurchaseReview(null); toast({ tone: "success", title: "Compra guardada", description: "La compra, su origen y la aprobación quedaron registrados juntos." }); router.refresh(); }} />}
     {expenseReview && <InboxExpenseReviewDialog key={`${expenseReview.businessId}:${expenseReview.userId}:${expenseReview.extractionId}`} review={expenseReview} onClose={() => setExpenseReview(null)} onSaved={() => { setExpenseReview(null); toast({ tone: "success", title: "Gasto guardado", description: "El gasto y su aprobación quedaron registrados juntos. No se ejecutó ningún pago." }); router.refresh(); }} />}
     {saleReview && <InboxSaleReviewDialog review={saleReview} onClose={()=>setSaleReview(null)} onSaved={()=>{setSaleReview(null);toast({tone:"success",title:"Resumen guardado",description:"Los ingresos se guardaron sin inventar tickets ni descontar stock."});router.refresh();}}/>}
     <div className="space-y-6">
@@ -324,12 +339,21 @@ export default function InboxClient({
                   saleReviewLock.current=true;
                   startTransition(async () => {
                     try {
+                      const advance = await getInboxAdvanceReviewAction(extractionId);
+                      if (advance.ok) { setAdvanceReview(advance.review); return; }
+                      if (advance.error !== "unsupported_advance_extraction") { toast({ tone: "warn", title: "El adelanto requiere revisión", description: advance.error }); return; }
                       const sale = await getInboxSaleReviewAction(extractionId);
                       if (sale.ok) { setSaleReview(sale.review); return; }
                       if (sale.error !== "unsupported_sale_extraction") { toast({tone:"warn",title:"La venta requiere revisión",description:sale.error}); return; }
+                      const purchase = await getInboxPurchaseReviewAction(extractionId);
+                      if (purchase.ok) { setPurchaseReview(purchase.review); return; }
+                      if (purchase.error !== "unsupported_purchase_extraction") { toast({ tone: "warn", title: "La compra requiere revisión", description: purchase.error }); return; }
                       const expense = await getInboxExpenseReviewAction(extractionId);
                       if (expense.ok) { setExpenseReview(expense.review); return; }
                       if (expense.error !== "unsupported_expense_extraction") { toast({ tone: "warn", title: "El gasto requiere revisión", description: expense.error }); return; }
+                      const closure = await getInboxClosureReviewAction(extractionId);
+                      if (closure.ok) { setClosureReview(closure.review); return; }
+                      if (closure.error !== "unsupported_closure_extraction") { toast({ tone: "warn", title: "El cierre requiere revisión", description: closure.error }); return; }
                     } finally { saleReviewLock.current=false; }
                     const preview = debtReview?.extractionId === extractionId ? debtReview.preview : null;
                     if (!preview) {
@@ -579,12 +603,12 @@ function ExtractedPanel({
             variant="primary"
             size="sm"
             onClick={onApprove}
-            disabled={isApproved || pending}
+            disabled={isApproved && item.extracted.tipo !== "Adelanto a empleado" || pending}
           >
             {isApproved ? (
               <>
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                Aprobado
+                {item.extracted.tipo === "Adelanto a empleado" ? "Verificar adelanto" : "Aprobado"}
               </>
             ) : (
               <>

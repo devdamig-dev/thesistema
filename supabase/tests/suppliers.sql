@@ -39,6 +39,9 @@ insert into public.branches(id,business_id,name) values
  ('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000011','A main'),
  ('00000000-0000-4000-8000-000000000022','00000000-0000-4000-8000-000000000011','A other'),
  ('00000000-0000-4000-8000-000000000023','00000000-0000-4000-8000-000000000012','B main');
+insert into public.business_modules(business_id,module_key,enabled) values
+ ('00000000-0000-4000-8000-000000000011','purchases',true)
+ on conflict(business_id,module_key) do update set enabled=true;
 insert into public.ingredients(id,business_id,name,unit) values
  ('00000000-0000-4000-8000-000000000041','00000000-0000-4000-8000-000000000011','Flour','kg');
 
@@ -52,7 +55,7 @@ select pg_temp.supplier_assert(not (select prosecdef from pg_proc where oid='pub
 select pg_temp.supplier_assert(not (select prosecdef from pg_proc where oid='public.set_supplier_active_manual(uuid,uuid,timestamptz,boolean)'::regprocedure),'archive is invoker');
 
 do $$ declare v_business uuid := '00000000-0000-4000-8000-000000000011';
-  v_id uuid := '00000000-0000-4000-8000-000000000031'; v_result jsonb; v_token timestamptz; v_token2 timestamptz; v_logs bigint;
+  v_id uuid := '00000000-0000-4000-8000-000000000031'; v_result jsonb; v_token timestamptz; v_token2 timestamptz; v_logs bigint; v_purchase uuid; v_purchase_input jsonb;
 begin
   v_result := public.create_supplier_manual(v_business,v_id,'  Supplier One  ','20-12345678-1','Foods','+54 (11) 5555-1234','sales@example.invalid','30 days',E'Real contact\nDelivery on Monday');
   perform pg_temp.supplier_assert(v_result->>'name'='Supplier One' and (v_result->>'active')::boolean,'create normalized active');
@@ -70,20 +73,27 @@ begin
   perform pg_temp.supplier_assert(v_result->>'phone'='111-333-4444' and v_result->>'payment_terms'='15 days' and v_result->>'notes'='Edited note','contact and conditions persisted');
   perform pg_temp.supplier_throws(format('select public.update_supplier_manual(%L,%L,%L,%L)',v_business,v_id,v_token,'Stale edit'),'supplier_stale_version');
   perform pg_temp.supplier_throws(format('select public.set_supplier_active_manual(%L,%L,%L,false)',v_business,v_id,v_token),'supplier_stale_version');
-  insert into public.purchases(id,business_id,branch_id,supplier_id,purchased_at,total) values
-    ('00000000-0000-4000-8000-000000000051',v_business,'00000000-0000-4000-8000-000000000021',v_id,current_date,100);
-  insert into public.purchase_items(purchase_id,ingredient_id,description,qty,unit,unit_price,total) values
-    ('00000000-0000-4000-8000-000000000051','00000000-0000-4000-8000-000000000041','Flour',1,'kg',100,100);
+  v_purchase_input := jsonb_build_object('requestId','00000000-0000-4000-8000-000000000051','kind','detailed',
+    'branchId','00000000-0000-4000-8000-000000000021','supplierId',v_id,'purchasedAt',current_date::text,'paymentMethod','Cash',
+    'items','[{"ingredientId":"00000000-0000-4000-8000-000000000041","description":"Flour","qty":1,"unit":"kg","unitPrice":100}]'::jsonb);
+  v_result := public.create_purchase_manual_atomic(v_business,v_purchase_input);
+  v_purchase := (v_result->>'id')::uuid;
+  perform pg_temp.supplier_assert((v_result->>'ok')::boolean,'reviewed purchase fixture created');
   v_result := public.set_supplier_active_manual(v_business,v_id,v_token2,false);
   perform pg_temp.supplier_assert(not (v_result->>'active')::boolean and (v_result->>'updated_at')::timestamptz>v_token2,'archive and version');
-  perform pg_temp.supplier_assert((select supplier_id from public.purchases where id='00000000-0000-4000-8000-000000000051')=v_id,'archive preserves purchase FK');
+  perform pg_temp.supplier_assert((select supplier_id from public.purchases where id=v_purchase)=v_id,'archive preserves purchase FK');
   perform pg_temp.supplier_assert((select count(*) from public.purchase_items where ingredient_id='00000000-0000-4000-8000-000000000041')=1,'archive preserves ingredient relation');
-  perform pg_temp.supplier_throws(format('insert into public.purchases(business_id,branch_id,supplier_id,purchased_at,total) values(%L,%L,%L,current_date,10)',v_business,'00000000-0000-4000-8000-000000000021',v_id),'supplier_inactive_or_unavailable');
-  update public.purchases set supplier_id=v_id,total=110 where id='00000000-0000-4000-8000-000000000051';
-  perform pg_temp.supplier_assert((select total from public.purchases where id='00000000-0000-4000-8000-000000000051')=110,'unchanged historic archived supplier is retained');
+  v_purchase_input := jsonb_build_object('requestId','00000000-0000-4000-8000-000000000052','kind','summary',
+    'branchId','00000000-0000-4000-8000-000000000021','supplierId',v_id,'purchasedAt',current_date::text,'paymentMethod','Cash','amount',10);
+  perform pg_temp.supplier_throws(format('select public.create_purchase_manual_atomic(%L,%L::jsonb)',v_business,v_purchase_input),'purchase_supplier_unavailable');
+  -- Archived suppliers retain existing references, while receipt totals stay immutable.
+  perform pg_temp.supplier_throws(format('update public.purchases set supplier_id=%L,total=110 where id=%L',v_id,v_purchase),'purchase_history_immutable');
+  perform pg_temp.supplier_assert((select total=100 and supplier_id=v_id from public.purchases where id=v_purchase),'archived supplier and immutable historic total retained');
   v_result := public.set_supplier_active_manual(v_business,v_id,(v_result->>'updated_at')::timestamptz,true);
   perform pg_temp.supplier_assert((v_result->>'active')::boolean,'restore');
-  insert into public.purchases(business_id,branch_id,supplier_id,purchased_at,total) values(v_business,'00000000-0000-4000-8000-000000000022',v_id,current_date,5);
+  v_purchase_input := jsonb_build_object('requestId','00000000-0000-4000-8000-000000000053','kind','summary',
+    'branchId','00000000-0000-4000-8000-000000000022','supplierId',v_id,'purchasedAt',current_date::text,'paymentMethod','Cash','amount',5);
+  perform public.create_purchase_manual_atomic(v_business,v_purchase_input);
   perform pg_temp.supplier_assert((select count(*) from public.purchases where supplier_id=v_id)=2,'restored supplier usable across own branches');
   perform pg_temp.supplier_assert(exists(select 1 from public.activity_logs where target_id=v_id and action='supplier.created' and actor_id=auth.uid() and actor_role='owner'),'actor audit from session');
   perform pg_temp.supplier_assert(exists(select 1 from public.activity_logs where target_id=v_id and action='supplier.updated' and data->'after'->>'payment_terms'='15 days'),'audit before/after fields');
@@ -91,12 +101,19 @@ begin
   perform pg_temp.supplier_assert(exists(select 1 from public.activity_logs where target_id=v_id and action='supplier.restored'),'restore audited');
 end; $$;
 
+-- Validate the complete header/item/stock receipts while the actor is still the owner.
+set constraints all immediate;
+set constraints all deferred;
+
 -- Cross-tenant defenses also apply to a user who belongs to BOTH businesses.
 select public.create_supplier_manual('00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000032','Foreign supplier');
 select pg_temp.supplier_throws($q$update public.suppliers set business_id='00000000-0000-4000-8000-000000000012' where id='00000000-0000-4000-8000-000000000031'$q$,'immutable');
 select pg_temp.supplier_throws($q$select public.update_supplier_manual('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000032',now(),'Foreign edit')$q$,'supplier_not_found');
 select pg_temp.supplier_throws($q$select public.create_supplier_manual('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000032','Foreign supplier')$q$,'supplier_request_conflict');
-select pg_temp.supplier_throws($q$insert into public.purchases(business_id,branch_id,supplier_id,purchased_at,total) values('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000032',current_date,10)$q$,'supplier_inactive_or_unavailable');
+select pg_temp.supplier_throws($q$select public.create_purchase_manual_atomic('00000000-0000-4000-8000-000000000011',
+ jsonb_build_object('requestId','00000000-0000-4000-8000-000000000054','kind','summary',
+  'branchId','00000000-0000-4000-8000-000000000021','supplierId','00000000-0000-4000-8000-000000000032',
+  'purchasedAt',current_date::text,'paymentMethod','Cash','amount',10))$q$,'purchase_supplier_unavailable');
 select pg_temp.supplier_throws($q$insert into public.activity_logs(business_id,action,summary) values('00000000-0000-4000-8000-000000000011','forged','forged')$q$,'row-level security');
 select pg_temp.supplier_throws($q$select public.create_supplier_manual('00000000-0000-4000-8000-000000000011',gen_random_uuid(),' ')$q$,'invalid_supplier');
 select pg_temp.supplier_throws($q$select public.create_supplier_manual('00000000-0000-4000-8000-000000000011',gen_random_uuid(),repeat('x',201))$q$,'invalid_supplier');

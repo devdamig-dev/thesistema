@@ -1,3 +1,4 @@
+import { isPurchaseWrite, validatePurchaseCall } from "../purchases/agent";
 import { isSaleWrite, validateSaleCall } from "../sales/agent";
 import { normalizeUnit } from "../recipes/quantities";
 import { canonicalDebtCall, isDebtPlanTool } from "./debt-contract";
@@ -14,7 +15,6 @@ const schemas: Record<string, ToolSchema> = {
   "sales.getPeriod": { from: "date", to: "date" },
   "sales.comparePeriods": { from: "date", to: "date", previousFrom: "date", previousTo: "date" },
   "purchases.list": {},
-  "purchases.create": { supplier: "string", amount: "positiveNumber", paymentMethod: "paymentMethod", purchasedAt: "date" },
   "debts.list": {},
   "debts.create": { creditor: "string", amount: "positiveNumber", concept: "string", category: "debtCategory", dueDate: "date", branchId: "string" },
   "debts.registerPayment": { creditor: "string", amount: "positiveNumber", paymentMethod: "paymentMethod", paidAt: "date" },
@@ -89,6 +89,7 @@ function validatePeriod(argumentsValue: Record<string, unknown>, from: string, t
 
 export function validateToolCall(call: ToolCall): ToolValidation {
   if (isSaleWrite(call.name)) return validateSaleCall(call);
+  if (isPurchaseWrite(call.name)) return validatePurchaseCall(call);
   if (isDebtPlanTool(call.name)) return validateDebtToolCall(canonicalDebtCall(call));
   const schema = schemas[call.name];
   if (!schema || !call.arguments || typeof call.arguments !== "object" || Array.isArray(call.arguments)) {

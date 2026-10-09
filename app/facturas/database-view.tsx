@@ -1,227 +1,54 @@
 "use client";
-
-import { useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import { CheckCircle2, ExternalLink, FileText, Loader2, Upload, XCircle } from "lucide-react";
+import { cloneElement, isValidElement, useCallback, useEffect, useRef, useState, type FormEvent, type ReactElement, type ReactNode } from "react";
+import { Plus, RefreshCw, Upload } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { useToast } from "@/components/ui/toast";
-import {
-  approveInvoiceAction,
-  getInvoiceAttachmentUrlAction,
-  rejectInvoiceAction,
-  uploadInvoiceAction,
-} from "@/app/actions/invoices";
-import { formatARS } from "@/lib/format";
-
-export type DatabaseInvoiceRow = {
-  id: string;
-  proveedor: string;
-  tipo: string;
-  numero: string;
-  fecha: string;
-  total: number;
-  iva: number;
-  status: string;
-  confidence: number;
-};
-
-type InvoiceBranchOption = { id: string; name: string; isMain: boolean };
-
-export function DatabaseInvoicesView({
-  rows,
-  branches,
-}: {
-  rows: DatabaseInvoiceRow[];
-  branches: InvoiceBranchOption[];
-}) {
-  const router = useRouter();
-  const { toast } = useToast();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [pending, startTransition] = useTransition();
-  const [branchId, setBranchId] = useState(branches.length === 1 ? branches[0].id : "");
-
-  function upload(files: FileList | null) {
-    if (!files?.length) return;
-    const formData = new FormData();
-    formData.append("file", files[0]);
-    formData.append("branch_id", branchId);
-    startTransition(async () => {
-      const result = await uploadInvoiceAction(formData);
-      if (result.ok) {
-        toast({
-          tone: "success",
-          title: result.persisted ? "Factura procesada" : "Factura procesada",
-          description: result.persisted
-            ? "El comprobante quedó persistido y ya podés revisarlo."
-            : "El procesamiento terminó sin persistencia real.",
-        });
-        router.refresh();
-      } else {
-        toast({ tone: "warn", title: "No pudimos procesar la factura", description: result.error });
-      }
-      if (inputRef.current) inputRef.current.value = "";
-    });
-  }
-
-  function openAttachment(id: string) {
-    startTransition(async () => {
-      const result = await getInvoiceAttachmentUrlAction(id);
-      if (result.ok && !result.demo) {
-        window.open(result.url, "_blank", "noopener,noreferrer");
-      } else if (result.ok) {
-        toast({ tone: "warn", title: "Adjunto no persistido", description: "Este comprobante no tiene un archivo real disponible." });
-      } else {
-        toast({ tone: "warn", title: "No pudimos abrir el adjunto", description: result.error });
-      }
-    });
-  }
-
-  function approve(id: string) {
-    startTransition(async () => {
-      const result = await approveInvoiceAction(id);
-      if (result.ok && result.persisted) {
-        toast({ tone: "success", title: "Factura aprobada", description: "El estado y los impactos asociados quedaron persistidos." });
-        router.refresh();
-      } else if (result.ok) {
-        toast({ tone: "warn", title: "No se persistió la aprobación", description: "La acción terminó sin guardar cambios reales." });
-      } else {
-        toast({ tone: "warn", title: "No pudimos aprobar", description: result.error });
-      }
-    });
-  }
-
-  function reject(id: string) {
-    startTransition(async () => {
-      const result = await rejectInvoiceAction(id);
-      if (result.ok && result.persisted) {
-        toast({ tone: "success", title: "Factura enviada a revisión", description: "El cambio quedó persistido." });
-        router.refresh();
-      } else if (result.ok) {
-        toast({ tone: "warn", title: "No se persistió el cambio", description: "La acción terminó sin guardar cambios reales." });
-      } else {
-        toast({ tone: "warn", title: "No pudimos rechazar", description: result.error });
-      }
-    });
-  }
-
-  const total = rows.reduce((sum, row) => sum + row.total, 0);
-  const iva = rows.reduce((sum, row) => sum + row.iva, 0);
-
-  return (
-    <div className="space-y-6">
-      <SectionHeader
-        eyebrow="Facturas · OCR + datos reales"
-        title="Tus facturas, ordenadas automáticamente."
-        description="En producción se muestran únicamente comprobantes persistidos. Podés seguir cargando archivos y revisando su estado sin mezclar datos demo."
-        actions={
-          <>
-            <label className="flex items-center gap-2 text-xs text-ink-muted">
-              <span>Sucursal</span>
-              <select
-                value={branchId}
-                onChange={(event) => setBranchId(event.target.value)}
-                className="h-9 min-w-40 rounded-lg border border-line bg-bg px-3 text-sm text-ink outline-none focus:border-brand-500"
-                disabled={pending || branches.length === 0}
-                aria-label="Sucursal de la factura"
-              >
-                <option value="">Elegí una sucursal</option>
-                {branches.map((branch) => (
-                  <option key={branch.id} value={branch.id}>
-                    {branch.name}{branch.isMain ? " · Principal" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={() => inputRef.current?.click()}
-              disabled={pending || !branchId}
-            >
-              {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-              {pending ? "Procesando…" : "Subir factura"}
-            </Button>
-            <input
-              ref={inputRef}
-              type="file"
-              accept="image/*,application/pdf"
-              className="hidden"
-              onChange={(event) => upload(event.target.files)}
-            />
-          </>
-        }
-      />
-
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Metric label="Facturas" value={String(rows.length)} />
-        <Metric label="Monto total" value={formatARS(total, { compact: true })} />
-        <Metric label="IVA discriminado" value={formatARS(iva, { compact: true })} />
-        <Metric label="Aprobadas" value={String(rows.filter((row) => row.status === "aprobado").length)} />
-      </div>
-
-      {rows.length === 0 ? (
-        <Card>
-          <CardHeader><CardTitle>Sin facturas registradas</CardTitle></CardHeader>
-          <CardContent className="space-y-4 text-sm text-ink-muted">
-            <p>
-              {branches.length === 0
-                ? "No tenés una sucursal habilitada para cargar comprobantes."
-                : "Todavía no hay comprobantes reales para este negocio. Elegí la sucursal y subí una foto o PDF para probar el circuito OCR de punta a punta."}
-            </p>
-            <Button variant="ghost" onClick={() => inputRef.current?.click()} disabled={pending || !branchId}>
-              <Upload className="h-4 w-4" /> Subir primera factura
-            </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-3">
-          {rows.map((invoice) => (
-            <Card key={invoice.id}>
-              <CardContent className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="min-w-0">
-                  <div className="font-medium text-ink">{invoice.proveedor}</div>
-                  <div className="mt-1 text-xs text-ink-muted">Factura {invoice.tipo} · {invoice.numero} · {invoice.fecha}</div>
-                  <div className="mt-1 text-xs text-ink-subtle">Confianza OCR: {Math.round(invoice.confidence * 100)}%</div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone={invoice.status === "aprobado" ? "success" : invoice.status === "revision" ? "warn" : "default"}>{invoice.status}</Badge>
-                  <div className="mr-2 font-semibold tabular-nums text-ink">{formatARS(invoice.total)}</div>
-                  <Button size="sm" variant="ghost" onClick={() => openAttachment(invoice.id)} disabled={pending}>
-                    <ExternalLink className="h-3.5 w-3.5" /> Adjunto
-                  </Button>
-                  {invoice.status !== "aprobado" && (
-                    <Button size="sm" variant="primary" onClick={() => approve(invoice.id)} disabled={pending}>
-                      <CheckCircle2 className="h-3.5 w-3.5" /> Aprobar
-                    </Button>
-                  )}
-                  <Button size="sm" variant="ghost" onClick={() => reject(invoice.id)} disabled={pending}>
-                    <XCircle className="h-3.5 w-3.5" /> Revisar
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      <div className="rounded-xl border border-line bg-bg-subtle/40 p-4 text-xs text-ink-muted">
-        <div className="flex items-center gap-2 font-medium text-ink"><FileText className="h-4 w-4" /> Modo producción</div>
-        <p className="mt-1">Los estados que ves provienen de Supabase. No se aplican overrides locales ni facturas de ejemplo.</p>
-      </div>
-    </div>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="text-[10px] uppercase tracking-wider text-ink-subtle">{label}</div>
-        <div className="mt-1 text-xl font-semibold tabular-nums text-ink">{value}</div>
-      </CardContent>
-    </Card>
-  );
+import { Card, CardContent } from "@/components/ui/card";
+import { Drawer } from "@/components/ui/drawer";
+import { getInvoiceWorkspaceAction, saveInvoiceReviewAction, approveReviewedInvoiceAction, getInvoiceReviewHistoryAction } from "@/app/actions/invoice-review";
+import { getInvoiceAttachmentUrlAction, uploadInvoiceAction } from "@/app/actions/invoices";
+import { invoiceDraft, invoiceJournalKey, invoiceTotals, parseInvoiceOperation, readInvoiceOperation, type InvoiceHistory, type InvoiceOperation, type InvoiceWorkspace, type ManualInvoice } from "@/lib/invoices/manual";
+const fieldClass="w-full min-w-0 rounded-lg border border-line bg-bg-subtle px-3 py-2 text-sm text-ink disabled:opacity-60";
+const amount=(value:string)=>new Intl.NumberFormat("es-AR",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value));
+const statusLabel:Record<string,string>={uploaded:"Cargada",processing:"OCR en proceso",failed:"OCR fallido",extracted:"Extraída sin revisar",needs_review:"Para revisión",rejected:"Rechazada",approved:"Aprobada",sent_to_accountant:"Enviada al contador"};
+function Field({label,children}:{label:string;children:ReactNode}){return <label className="block min-w-0 space-y-1 text-xs text-ink-muted"><span>{label}</span>{isValidElement(children)?cloneElement(children as ReactElement<{"aria-label"?:string}>,{"aria-label":label}):children}</label>;}
+function ErrorText({children}:{children:ReactNode}){return <p role="alert" className="rounded-lg border border-warn-500/30 bg-warn-500/10 p-3 text-sm">{children}</p>;}
+export function DatabaseInvoicesView(){
+ const[workspace,setWorkspace]=useState<InvoiceWorkspace|null>(null);const[loading,setLoading]=useState(true);const[loadError,setLoadError]=useState("");
+ const[draft,setDraft]=useState<ReturnType<typeof invoiceDraft>|null>(null);const[approval,setApproval]=useState<ManualInvoice|null>(null);const[approvalConfirmed,setApprovalConfirmed]=useState(false);
+ const[detail,setDetail]=useState<ManualInvoice|null>(null);const[history,setHistory]=useState<InvoiceHistory[]>([]);const[historyError,setHistoryError]=useState("");const[historyLoading,setHistoryLoading]=useState(false);
+ const[pending,setPending]=useState<InvoiceOperation|null>(null);const pendingRef=useRef<InvoiceOperation|null>(null);const[busy,setBusy]=useState(false);const lock=useRef(false);
+ const[operationError,setOperationError]=useState("");const[storageError,setStorageError]=useState("");const[notice,setNotice]=useState("");const[branch,setBranch]=useState("");const[filter,setFilter]=useState("all");const[page,setPage]=useState(1);
+ const[inputBranch,setInputBranch]=useState("");const fileRef=useRef<HTMLInputElement>(null);const uploadLock=useRef(false);const[uploading,setUploading]=useState(false);const[attachment,setAttachment]=useState<{id:string;url:string}|null>(null);
+ const mounted=useRef(true);const generation=useRef(0);const contextKey=useRef("");
+ const refresh=useCallback(async()=>{const request=++generation.current;setLoading(true);setLoadError("");try{const result=await getInvoiceWorkspaceAction();if(!mounted.current||request!==generation.current)return;if(!result.ok){setWorkspace(null);setLoadError(result.error);setDraft(null);setApproval(null);setDetail(null);contextKey.current="";return;}const data=result.data;const key=invoiceJournalKey(data.businessId,data.userId);if(key!==contextKey.current){contextKey.current=key;setDraft(null);setApproval(null);setDetail(null);setAttachment(null);setBranch("");setPage(1);setInputBranch(data.branches.length===1?data.branches[0].id:"");setOperationError("");setStorageError("");setNotice("");lock.current=false;setBusy(false);}try{const saved=readInvoiceOperation(sessionStorage.getItem(key),data.businessId,data.userId);pendingRef.current=saved;setPending(saved);}catch{setStorageError("No pudimos recuperar la operación. Nuevas escrituras bloqueadas para evitar duplicados.");}setWorkspace(data);setDetail(current=>current?data.invoices.find(row=>row.id===current.id)??null:null);}catch{if(mounted.current&&request===generation.current){setWorkspace(null);setDraft(null);setApproval(null);setDetail(null);contextKey.current="";setLoadError("No pudimos cargar las facturas completas. Actualizá para reintentar.");}}finally{if(mounted.current&&request===generation.current)setLoading(false);}},[]);
+ useEffect(()=>{mounted.current=true;void refresh();const focus=()=>{void refresh();};const visible=()=>{if(document.visibilityState==="visible")focus();};window.addEventListener("focus",focus);document.addEventListener("visibilitychange",visible);return()=>{mounted.current=false;window.removeEventListener("focus",focus);document.removeEventListener("visibilitychange",visible);};},[refresh]);
+ useEffect(()=>{if(!pending&&!busy&&!uploading)return;const guard=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue="";};window.addEventListener("beforeunload",guard);return()=>window.removeEventListener("beforeunload",guard);},[pending,busy,uploading]);
+ useEffect(()=>{setHistory([]);setHistoryError("");if(!detail){setHistoryLoading(false);return;}let cancelled=false;setHistoryLoading(true);void getInvoiceReviewHistoryAction(detail.id).then(result=>{if(cancelled)return;if(result.ok)setHistory(result.history);else setHistoryError(result.error);}).catch(()=>{if(!cancelled)setHistoryError("No se pudo leer el historial.");}).finally(()=>{if(!cancelled)setHistoryLoading(false);});return()=>{cancelled=true;};},[detail]);
+ const canStart=!!workspace?.canEdit&&!loading&&!busy&&!pending&&!storageError&&!uploading;
+ function close(){if(lock.current)return;setDraft(null);setApproval(null);setOperationError("");}
+ function edit(row:ManualInvoice|null=null){if(!canStart||row&&["approved","sent_to_accountant","processing"].includes(row.status))return;const next=invoiceDraft(row);if(!row&&workspace?.branches.length===1)next.branchId=workspace.branches[0].id;setDraft(next);setApproval(null);setOperationError("");setNotice("");}
+ async function execute(proposed:InvoiceOperation){if(!workspace||lock.current||storageError||!(proposed.kind==="save"?workspace.canEdit:workspace.canApprove)||proposed.input.businessId!==workspace.businessId||proposed.input.userId!==workspace.userId)return;lock.current=true;setBusy(true);setOperationError("");setNotice("");const key=contextKey.current;const recovery=pendingRef.current!==null;const operation=pendingRef.current??proposed;try{sessionStorage.setItem(key,JSON.stringify(operation));pendingRef.current=operation;setPending(operation);}catch{setStorageError("No pudimos conservar el intento. No se enviaron cambios. Permití el almacenamiento local y recargá.");lock.current=false;setBusy(false);return;}try{const result=operation.kind==="save"?await saveInvoiceReviewAction(operation.input):await approveReviewedInvoiceAction(operation.input);if(result.ok||!result.ok&&result.persisted===false&&!recovery){try{sessionStorage.removeItem(key);}catch{if(key===contextKey.current)setStorageError("Resultado confirmado; falta limpiar la referencia local. Recargá antes de continuar.");}}if(!mounted.current||key!==contextKey.current)return;if(result.ok){pendingRef.current=null;setPending(null);setDraft(null);setApproval(null);setNotice(operation.kind==="save"?"Revisión guardada. Esta versión ya puede ser aprobada por un administrador.":"Versión aprobada. La compra y las entradas de stock vinculadas quedaron registradas.");await refresh();}else{if(result.persisted===false&&!recovery){pendingRef.current=null;setPending(null);}setOperationError(result.error+(recovery?" Conservamos la referencia anterior hasta confirmar su resultado.":""));if(result.persisted===false)await refresh();}}catch{if(mounted.current&&key===contextKey.current)setOperationError("No pudimos confirmar el resultado. Conservamos este mismo intento para verificarlo sin duplicados.");}finally{if(mounted.current&&key===contextKey.current){lock.current=false;setBusy(false);}}}
+ function save(event:FormEvent){event.preventDefault();if(!workspace||!draft||lock.current||pendingRef.current)return;try{void execute(parseInvoiceOperation("save",{...draft,requestId:crypto.randomUUID(),businessId:workspace.businessId,userId:workspace.userId}));}catch(error){setOperationError(error instanceof Error?error.message:"Revisá los datos.");}}
+ async function upload(files:FileList|null){if(!files?.length||!canStart||!inputBranch||uploadLock.current)return;uploadLock.current=true;setUploading(true);setNotice("");const key=contextKey.current;const form=new FormData();form.append("file",files[0]);form.append("branch_id",inputBranch);try{const result=await uploadInvoiceAction(form);if(!mounted.current||key!==contextKey.current)return;setNotice(result.ok?"Archivo procesado. Revisá explícitamente cada dato antes de aprobar.":result.persisted?"El archivo quedó registrado, pero el OCR falló. Podés completar su revisión manual.":result.error);if(result.ok||result.persisted)await refresh();}catch{if(mounted.current&&key===contextKey.current)setNotice("No pudimos confirmar la carga. Actualizá y revisá los comprobantes antes de volver a subir el archivo.");}finally{uploadLock.current=false;if(mounted.current){setUploading(false);if(fileRef.current)fileRef.current.value="";}}}
+ async function openAttachment(id:string){const key=contextKey.current;setAttachment(null);try{const result=await getInvoiceAttachmentUrlAction(id);if(!mounted.current||key!==contextKey.current)return;if(result.ok&&!result.demo)setAttachment({id,url:result.url});else setNotice(result.ok?"No hay adjunto persistido.":result.error);}catch{if(mounted.current&&key===contextKey.current)setNotice("No se pudo obtener el adjunto.");}}
+ const invoices=(workspace?.invoices??[]).filter(row=>(!branch||row.branch_id===branch)&&(filter==="all"||(filter==="approved")===(["approved","sent_to_accountant"].includes(row.status))));const pages=Math.max(1,Math.ceil(invoices.length/20));const currentPage=Math.min(page,pages);const rows=invoices.slice((currentPage-1)*20,currentPage*20);
+ const totals=(()=>{try{return draft?invoiceTotals(draft.items,draft.tax):null;}catch{return null;}})();
+ return <div className="space-y-6"><SectionHeader eyebrow="Facturas · revisión manual" title="Completá, revisá y aprobá tus facturas" description="La revisión es obligatoria antes de imputar una compra. Los comprobantes aprobados conservan sus datos. Moneda no informada." actions={<><Button size="sm" variant="ghost" disabled={loading||busy||uploading} onClick={()=>void refresh()}><RefreshCw className="h-4 w-4"/>Actualizar</Button><Button size="sm" disabled={!canStart} onClick={()=>edit()}><Plus className="h-4 w-4"/>Nueva factura manual</Button></>}/>
+ {loading&&<p role="status">Cargando facturas…</p>}{loadError&&<ErrorText>{loadError}</ErrorText>}{storageError&&<ErrorText>{storageError}</ErrorText>}{notice&&<p role="status" className="rounded-lg border border-line p-3 text-sm">{notice}</p>}
+ {pending&&<div className="space-y-2 rounded-xl border border-warn-500/30 p-4"><p>Hay una operación de factura pendiente de confirmar.</p><p className="break-all text-xs">Referencia: {pending.input.requestId}</p><Button size="sm" disabled={busy||!!storageError||!(pending.kind==="save"?workspace?.canEdit:workspace?.canApprove)} onClick={()=>void execute(pending)}>Reintentar mismo intento</Button></div>}{operationError&&!draft&&!approval&&<ErrorText>{operationError}</ErrorText>}
+ {workspace&&<><div className="flex flex-wrap items-end gap-3 rounded-xl border border-line p-4"><Field label="Sucursal de la carga"><select className={fieldClass} disabled={!canStart} value={inputBranch} onChange={e=>setInputBranch(e.target.value)}><option value="">Elegir sucursal</option>{workspace.branches.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></Field><Button size="sm" variant="ghost" disabled={!canStart||!inputBranch} onClick={()=>fileRef.current?.click()}><Upload className="h-4 w-4"/>{uploading?"Procesando archivo…":"Subir foto o PDF"}</Button><input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={e=>void upload(e.target.files)}/><p className="text-xs text-ink-muted">Si falla el OCR, completá la factura manualmente desde Revisar.</p></div>
+ {!workspace.canEdit&&<p className="text-sm">Tu rol permite consultar facturas, pero no modificarlas.</p>}
+ <div className="grid gap-3 sm:grid-cols-2"><Field label="Filtrar por sucursal"><select className={fieldClass} value={branch} onChange={e=>{setBranch(e.target.value);setPage(1);}}><option value="">Todas las sucursales permitidas</option>{workspace.branches.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></Field><Field label="Estado de las facturas"><select className={fieldClass} value={filter} onChange={e=>{setFilter(e.target.value);setPage(1);}}><option value="all">Todas</option><option value="pending">Sin aprobar</option><option value="approved">Aprobadas</option></select></Field></div>
+ {rows.length===0?<Card><CardContent className="py-10 text-center">No hay facturas para estos filtros.</CardContent></Card>:rows.map(row=>{const approved=["approved","sent_to_accountant"].includes(row.status);const failed=["uploaded","processing","failed"].includes(row.status)&&row.reviewed_version===null;return <Card key={row.id}><CardContent className="space-y-3 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-semibold">{failed||row.number.startsWith("TEMP-")?"Comprobante sin datos confirmados":`${row.type} · ${row.number}`}</h2><p className="text-xs text-ink-muted">{workspace.suppliers.find(s=>s.id===row.supplier_id)?.name??"Proveedor no informado"} · {workspace.branches.find(b=>b.id===row.branch_id)?.name??"Sucursal sin informar"}</p></div><p className="text-xs">{statusLabel[row.status]??row.status} · Versión {row.edit_version}</p></div><p className="text-sm">{failed?"Importes pendientes de revisión":`Total: ${amount(row.total)} · Impuesto: ${amount(row.tax)}`}</p><p className="text-xs text-ink-muted">Origen: {row.source}{row.reviewed_version===row.edit_version?" · Revisión explícita guardada":""}</p><div className="flex flex-wrap gap-2"><Button size="sm" variant="ghost" onClick={()=>setDetail(row)}>Detalle e historial</Button>{row.storage_path&&<Button size="sm" variant="ghost" onClick={()=>void openAttachment(row.id)}>Obtener adjunto</Button>}{attachment?.id===row.id&&<a className="self-center text-sm text-brand-300 underline" href={attachment.url} target="_blank" rel="noopener noreferrer">Abrir adjunto</a>}{!approved&&row.status!=="processing"&&<Button size="sm" variant="ghost" disabled={!canStart} onClick={()=>edit(row)}>Revisar</Button>}{!approved&&row.reviewed_version===row.edit_version&&<Button size="sm" disabled={!canStart||!workspace.canApprove} onClick={()=>{setApproval(row);setApprovalConfirmed(false);setOperationError("");}}>Aprobar versión revisada</Button>}</div></CardContent></Card>;})}
+ <div className="flex flex-wrap items-center justify-between gap-2 text-xs"><span>{invoices.length} facturas · Página {currentPage} de {pages}</span><div className="flex gap-2"><Button size="sm" variant="ghost" disabled={currentPage<=1} onClick={()=>setPage(currentPage-1)}>Anterior</Button><Button size="sm" variant="ghost" disabled={currentPage>=pages} onClick={()=>setPage(currentPage+1)}>Siguiente</Button></div></div></>}
+ <Drawer open={!!draft} onClose={close} title={draft?.id?"Revisar factura":"Nueva factura manual"} description="Confirmá los datos contra el comprobante. Guardar una revisión todavía no genera la compra." width="max-w-2xl">{draft&&workspace&&<form className="space-y-4 p-5" onSubmit={save} aria-busy={busy}><fieldset disabled={busy||!!pending||!!storageError||!workspace.canEdit} className="space-y-4"><div className="grid gap-3 sm:grid-cols-2">
+ <Field label="Sucursal"><select required className={fieldClass} value={draft.branchId} onChange={e=>setDraft({...draft,branchId:e.target.value,reviewed:false})}><option value="">Elegir sucursal</option>{workspace.branches.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></Field><Field label="Proveedor"><select className={fieldClass} value={draft.supplierId??""} onChange={e=>setDraft({...draft,supplierId:e.target.value||null,reviewed:false})}><option value="">Sin proveedor identificado</option>{draft.supplierId&&!workspace.suppliers.some(s=>s.id===draft.supplierId)&&<option value={draft.supplierId}>Proveedor histórico (inactivo)</option>}{workspace.suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
+ <Field label="Número real"><input required maxLength={120} className={fieldClass} value={draft.number} onChange={e=>setDraft({...draft,number:e.target.value,reviewed:false})}/></Field><Field label="Tipo de comprobante"><select required className={fieldClass} value={draft.type} onChange={e=>setDraft({...draft,type:e.target.value as "A",reviewed:false})}><option value="">Elegir tipo</option>{["A","B","C"].map(t=><option key={t} value={t}>{t}</option>)}</select></Field>
+ <Field label="Fecha de factura"><input required type="date" className={fieldClass} value={draft.invoiceDate} onChange={e=>setDraft({...draft,invoiceDate:e.target.value,reviewed:false})}/></Field><Field label="Vencimiento opcional"><input type="date" className={fieldClass} value={draft.dueDate??""} onChange={e=>setDraft({...draft,dueDate:e.target.value||null,reviewed:false})}/></Field><Field label="Identificación fiscal opcional"><input maxLength={32} className={fieldClass} value={draft.taxId??""} onChange={e=>setDraft({...draft,taxId:e.target.value||null,reviewed:false})}/></Field><Field label="Condición o medio de pago"><input required maxLength={100} className={fieldClass} value={draft.paymentMethod} onChange={e=>setDraft({...draft,paymentMethod:e.target.value,reviewed:false})}/></Field></div>
+ {draft.items.map((item,index)=><div className="space-y-3 rounded-xl border border-line p-3" key={index}><Field label={`Descripción ${index+1}`}><input required maxLength={500} className={fieldClass} value={item.description} onChange={e=>setDraft({...draft,reviewed:false,items:draft.items.map((v,i)=>i===index?{...v,description:e.target.value}:v)})}/></Field><div className="grid grid-cols-3 gap-2">{[["Cantidad","quantity"],["Unidad","unit"],["Precio unitario","unitPrice"]].map(([label,key])=><Field label={`${label} ${index+1}`} key={key}><input required className={fieldClass} inputMode={key==="unit"?"text":"decimal"} value={item[key as "quantity"]} onChange={e=>setDraft({...draft,reviewed:false,items:draft.items.map((v,i)=>i===index?{...v,[key]:key==="unit"?e.target.value:e.target.value.replace(",",".")}:v)})}/></Field>)}</div><Field label={`Insumo para stock ${index+1}`}><select className={fieldClass} value={item.ingredientId??""} onChange={e=>setDraft({...draft,reviewed:false,items:draft.items.map((v,i)=>i===index?{...v,ingredientId:e.target.value||null}:v)})}><option value="">Sin imputación a stock</option>{workspace.ingredients.map(i=><option key={i.id} value={i.id}>{i.name} · {i.unit}</option>)}</select></Field><div className="flex items-center justify-between gap-2"><p className="text-xs">Subtotal: {totals?amount(totals.lines[index]):"Por completar"}</p><Button type="button" size="sm" variant="ghost" disabled={draft.items.length===1} onClick={()=>setDraft({...draft,reviewed:false,items:draft.items.filter((_,i)=>i!==index)})}>Quitar línea {index+1}</Button></div></div>)}
+ <Button type="button" size="sm" variant="ghost" disabled={draft.items.length>=100} onClick={()=>setDraft({...draft,reviewed:false,items:[...draft.items,{description:"",quantity:"",unit:"",unitPrice:"",ingredientId:null}]})}>Agregar línea</Button><Field label="Impuesto total"><input required inputMode="decimal" className={fieldClass} value={draft.tax} onChange={e=>setDraft({...draft,tax:e.target.value.replace(",","."),reviewed:false})}/></Field><p className="font-semibold">Subtotal: {totals?amount(totals.subtotal):"—"} · Total: {totals?amount(totals.total):"—"}</p><label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={draft.reviewed} onChange={e=>setDraft({...draft,reviewed:e.target.checked})}/><span>Revisé el comprobante, los importes y cada línea, incluidos los insumos que ingresarán al stock.</span></label><p className="text-xs text-ink-muted">Los campos vacíos tras un OCR fallido se completan con el comprobante real. Una sugerencia automática no equivale a una revisión.</p></fieldset>{operationError&&<ErrorText>{operationError}</ErrorText>}<div className="flex flex-wrap gap-2"><Button type="submit" disabled={busy||!!pending||!!storageError||!draft.reviewed||!workspace.canEdit}>{busy?"Guardando…":"Guardar revisión"}</Button>{pending&&<Button type="button" variant="ghost" disabled={busy||!!storageError} onClick={()=>void execute(pending)}>Reintentar mismo intento</Button>}<Button type="button" variant="ghost" disabled={busy} onClick={close}>{pending?"Cerrar y revisar":"Cancelar"}</Button></div></form>}</Drawer>
+ <Drawer open={!!approval} onClose={close} title="Aprobar versión revisada" description="Se registrará una compra y una entrada de stock por cada línea con insumo. No se ejecutan pagos.">{approval&&workspace&&<form className="space-y-4 p-5" onSubmit={e=>{e.preventDefault();if(!approvalConfirmed||pendingRef.current)return;void execute({kind:"approve",input:{requestId:crypto.randomUUID(),businessId:workspace.businessId,userId:workspace.userId,id:approval.id,expectedVersion:approval.edit_version}});}}><p className="font-semibold">{approval.type} · {approval.number} · Total {amount(approval.total)}</p><p>Versión {approval.edit_version} · {approval.items.length} líneas revisadas</p><ul className="space-y-2 text-sm">{approval.items.map(item=><li key={item.id}>{item.qty_numeric} {item.unit} · {item.description} · {item.matched_ingredient_id?"Ingresa al stock":"Sin stock"}</li>)}</ul><label className="flex gap-2 text-sm"><input type="checkbox" disabled={busy||!!pending} checked={approvalConfirmed} onChange={e=>setApprovalConfirmed(e.target.checked)}/><span>Confirmo aprobar esta versión y registrar sus efectos.</span></label>{operationError&&<ErrorText>{operationError}</ErrorText>}<div className="flex flex-wrap gap-2"><Button type="submit" disabled={busy||!!pending||!!storageError||!approvalConfirmed||!workspace.canApprove}>Confirmar aprobación</Button>{pending&&<Button type="button" variant="ghost" disabled={busy||!!storageError} onClick={()=>void execute(pending)}>Reintentar mismo intento</Button>}<Button type="button" variant="ghost" disabled={busy} onClick={close}>{pending?"Cerrar y revisar":"Cancelar"}</Button></div></form>}</Drawer>
+ <Drawer open={!!detail} onClose={()=>setDetail(null)} title="Factura e historial" width="max-w-2xl">{detail&&<div className="space-y-4 p-5 text-sm"><p>{detail.type} · {detail.number} · {detail.invoice_date}</p><p>Estado: {statusLabel[detail.status]??detail.status} · Versión {detail.edit_version}</p>{["failed","uploaded","processing"].includes(detail.status)&&detail.reviewed_version===null&&<ErrorText>El OCR no confirmó estos datos. Los valores originales son provisionales; completá la revisión manual.</ErrorText>}{["failed","uploaded","processing"].includes(detail.status)&&detail.reviewed_version===null&&<ErrorText>El OCR no confirmó estos datos. Los valores originales son provisionales; completá la revisión manual.</ErrorText>}<p>Subtotal {amount(detail.subtotal)} · Impuesto {amount(detail.tax)} · Total {amount(detail.total)}</p>{detail.items.map(item=><div key={item.id} className="rounded-xl border border-line p-3"><p className="break-words">{item.description}</p><p>{item.qty_numeric??"Cantidad sin confirmar"} {item.unit} × {amount(item.unit_price)} = {amount(item.total)}</p><p className="text-xs text-ink-muted">{item.matched_ingredient_id?"Insumo vinculado":"Sin imputación a stock"}</p></div>)}{detail.processing_error&&<p className="break-words text-xs">Error original del procesamiento: {detail.processing_error}</p>}<details className="rounded-lg border border-line p-3"><summary>Texto OCR original</summary><p className="mt-3 whitespace-pre-wrap break-words text-xs">{detail.ocr_text||"No hay texto OCR guardado."}</p></details><h3 className="font-semibold">Revisiones manuales auditadas</h3>{historyLoading?<p>Cargando historial…</p>:historyError?<ErrorText>{historyError}</ErrorText>:history.length===0?<p className="text-xs text-ink-muted">Sin revisiones manuales registradas.</p>:history.map(entry=><details key={entry.request_id} className="rounded-lg border border-line p-3"><summary>Versión {entry.result.version} · {entry.actor_role}</summary><div className="mt-3 space-y-2 break-words text-xs"><p>{entry.created_at}</p>{entry.before_snapshot&&<p>Antes: {entry.before_snapshot.invoice.number} · Total {amount(entry.before_snapshot.invoice.total)}</p>}<p>Después: {entry.after_snapshot.invoice.number} · Total {amount(entry.after_snapshot.invoice.total)} · {entry.after_snapshot.items.length} líneas</p><p>Referencia: {entry.request_id}</p></div></details>)}<Button variant="ghost" onClick={()=>setDetail(null)}>Cerrar detalle</Button></div>}</Drawer>
+ </div>;
 }

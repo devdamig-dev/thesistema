@@ -100,8 +100,9 @@ test("debt migration and WhatsApp adapter enforce branch scope", () => {
 
 test("Inbox propagates the extraction branch to purchases and debts", () => {
   const inbox = readFileSync("app/actions/inbox.ts", "utf8");
-  assert.match(inbox, /createPurchase\(db, businessId, branchId,/);
+  assert.match(inbox, /purchase_review_required/);
+  assert.match(readFileSync("app/actions/inbox-purchases.ts", "utf8"), /e\.branch_id \?\? message\.data\.branch_id/);
   assert.match(inbox, /executeInboxDebt\(db, ctx, extraction, debtReviewDigest\)/);
   assert.match(readFileSync("lib/whatsapp-agent/inbox-debts.ts", "utf8"), /sourceBranch !== value\.branchId/);
-  assert.match(inbox, /\.insert\(\{[\s\S]*business_id: businessId,[\s\S]*branch_id: branchId/);
+  assert.doesNotMatch(inbox, /async function createPurchase/);
 });

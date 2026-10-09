@@ -1,3 +1,4 @@
+import { isPurchaseWrite, purchaseConfirmationText } from "../purchases/agent";
 import { isSaleWrite, saleConfirmationText } from "../sales/agent";
 import { debtConfirmationText, isDebtPlanWrite } from "./debt-contract";
 import { getMissingArguments } from "./interpreter";
@@ -5,10 +6,14 @@ import { getTool, toolsForActor } from "./registry";
 import type { AgentDependencies, AgentReply, IncomingAgentMessage } from "./types";
 import { validateToolCall } from "./validation";
 
+const isDurableWrite = (name: string) => isSaleWrite(name) || isDebtPlanWrite(name) || isPurchaseWrite(name);
+
 const CANCELLATION = /^(no|cancelar|cancel[aá]|cancelo|no confirmar)[.!\s]*$/i;
 const CONFIRMATION = /^(s[ií]|confirmo|dale|ok|confirmar)[.!\s]*$/i;
 const labels: Record<string, string> = {
   paymentMethod: "medio de pago",
+  purchasedAt: "fecha de compra completa (AAAA-MM-DD)",
+  supplier: "proveedor", supplierId: "ID del proveedor",
   saleId: "ID de la venta", occurredAt: "fecha y hora completas con zona horaria (AAAA-MM-DDTHH:mm:ss-03:00)", channel: "canal (salon, delivery, whatsapp, pedidos_ya, rappi, mp_qr)", items: "renglones: concepto; cantidad; precio unitario, o una lista JSON con productId, description, quantity y unitPrice",
   paidAt: "fecha de pago completa (AAAA-MM-DD)", takenAt: "fecha de origen completa (AAAA-MM-DD)",
   creditorType: "tipo de acreedor (proveedor, banco, tarjeta, organismo, persona u otro)",
@@ -35,6 +40,7 @@ const money = (value: unknown) =>
     .format(Number(value ?? 0));
 
 function confirmationText(toolName: string, argumentsValue: Record<string, unknown>, description: string): string {
+  if (isPurchaseWrite(toolName)) return purchaseConfirmationText({ name: toolName, arguments: argumentsValue });
   if (isSaleWrite(toolName)) return saleConfirmationText({ name: toolName, arguments: argumentsValue });
   if (isDebtPlanWrite(toolName)) return debtConfirmationText({ name: toolName, arguments: argumentsValue });
   if (toolName === "debts.registerPayment") {
@@ -58,6 +64,7 @@ function formatResult(toolName: string, result: unknown): string {
     for (const line of lines) { if (length + line.length > 3000) break; shown.push(line); length += line.length + 1; }
     return `Vencimientos entre ${data.from} y ${data.to}:\n${shown.join("\n")}${shown.length < lines.length ? `\nSe muestran ${shown.length} de ${lines.length} vencimientos. Acotá las fechas o consultá Deudas para ver el detalle completo.` : ""}`;
   }
+  if (isPurchaseWrite(toolName)) return `Compra resumida ${data?.id} guardada y auditada. Sin renglones de detalle ni movimiento de stock.`;
   if (isSaleWrite(toolName)) return `Venta ${data?.id} ${toolName === "sales.void" ? "anulada" : "guardada"} y auditada. No se modificó stock físico.`;
   if (isDebtPlanWrite(toolName)) return `Operación registrada y auditada en la deuda ${data?.debt_id}.`;
 
@@ -135,10 +142,10 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
   if (pending?.resultUncertain && new Date(pending.expiresAt) <= deps.now() && !CANCELLATION.test(input.text)) return { status: "needs_input", tool: pending.toolCall.name, text: "El resultado del intento anterior sigue sin verificar. Revisá el historial del módulo antes de iniciar otra operación." };
   // Do not auto-consume a durable confirmation from a stale read: another worker
   // may have claimed it and durably marked it uncertain since this snapshot.
-  if (pending && (isDebtPlanWrite(pending.toolCall.name) || isSaleWrite(pending.toolCall.name)) && pending.kind === "confirmation" && new Date(pending.expiresAt) <= deps.now() && !CANCELLATION.test(input.text)) {
+  if (pending && isDurableWrite(pending.toolCall.name) && pending.kind === "confirmation" && new Date(pending.expiresAt) <= deps.now() && !CANCELLATION.test(input.text)) {
     return { status: "needs_input", tool: pending.toolCall.name, text: "Ese pedido venció. Revisá el módulo y respondé Cancelar para cerrar esta referencia antes de preparar otra operación." };
   }
-  if (pending && !pending.resultUncertain && !((isDebtPlanWrite(pending.toolCall.name) || isSaleWrite(pending.toolCall.name)) && pending.kind === "confirmation") && new Date(pending.expiresAt) <= deps.now()) {
+  if (pending && !pending.resultUncertain && !(isDurableWrite(pending.toolCall.name) && pending.kind === "confirmation") && new Date(pending.expiresAt) <= deps.now()) {
     await deps.consumePending(pending.id, actor);
     pending = null;
   }
@@ -146,7 +153,12 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
   if (pending && CANCELLATION.test(input.text)) {
     try {
       let consumed: boolean;
-      if (isSaleWrite(pending.toolCall.name)) {
+      if (isPurchaseWrite(pending.toolCall.name) && pending.kind === "confirmation") {
+        if (!deps.cancelPurchasePending) throw new Error("purchase_pending_unavailable");
+        const cancelled = await deps.cancelPurchasePending(pending.id, actor);
+        consumed = cancelled.consumed;
+        pending = { ...pending, resultUncertain: cancelled.resultUncertain };
+      } else if (isSaleWrite(pending.toolCall.name)) {
         if (!deps.cancelSalePending) throw new Error("sale_pending_unavailable");
         const cancelled = await deps.cancelSalePending(pending.id,actor);
         consumed=cancelled.consumed; pending={...pending,resultUncertain:cancelled.resultUncertain};
@@ -211,14 +223,15 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
 
   // Operation identity and execution state come only from our durable pending
   // row. An interpreter or clarification answer cannot adopt a historical UUID.
-  if (!confirmed && (isDebtPlanWrite(tool.name) || isSaleWrite(tool.name)) && interpreted.arguments && typeof interpreted.arguments === "object"
-    && ["requestId", "expectedVersion", "__resultUncertain", "__clarificationKey"].some(key => Object.hasOwn(interpreted.arguments, key))) {
+  if (!confirmed && isDurableWrite(tool.name) && interpreted.arguments && typeof interpreted.arguments === "object"
+    && ["requestId", "expectedVersion", "__resultUncertain", "__clarificationKey", ...(isPurchaseWrite(tool.name) ? ["supplierLabel", "branchLabel"] : [])].some(key => Object.hasOwn(interpreted.arguments, key))) {
     return { status: "rejected", tool: tool.name, text: "La operación incluye datos internos no permitidos y no fue ejecutada." };
   }
 
   const validation = validateToolCall(interpreted);
   let call = validation.call;
-  if (confirmed && (isDebtPlanWrite(tool.name) || isSaleWrite(tool.name)) && (validation.issues.length || getMissingArguments(call, available).length)) {
+  if (confirmed && isDurableWrite(tool.name) && (validation.issues.length || getMissingArguments(call, available).length
+    || isPurchaseWrite(tool.name) && ["requestId", "supplierId", "branchId"].some(key => !call.arguments[key]))) {
     return { status: "needs_input", tool: tool.name, text: "No pude validar la referencia guardada. Revisá el módulo antes de cancelar este pedido o registrar otro; no puedo descartar un intento anterior." };
   }
   if (validation.issues.length) {
@@ -270,6 +283,22 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
     };
   }
 
+  if (isPurchaseWrite(tool.name) && !confirmed) {
+    try {
+      if (!deps.prepare) throw new Error("purchase_prepare_unavailable");
+      call = await deps.prepare(actor, call);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "purchase_prepare_failed";
+      const fields: Record<string, string> = { purchase_branch_ambiguous: "branchId", purchase_branch_not_found: "branchId", purchase_branch_not_allowed: "branchId", purchase_supplier_ambiguous: "supplierId", purchase_supplier_not_found: "supplier" };
+      const key = fields[code];
+      await safeAudit(deps, { actor, input, tool: tool.name, arguments: call.arguments, error: code });
+      if (key) {
+        await deps.savePending({ actor, toolCall: call, kind: "clarification", clarificationKey: key, expiresAt: new Date(deps.now().getTime() + 15 * 60_000).toISOString() });
+        return { status: "needs_input", tool: tool.name, text: `No pude identificar un proveedor y una sucursal únicos y autorizados. Indicá ${labels[key] ?? key}; todavía no se guardó la compra.` };
+      }
+      return { status: "failed", tool: tool.name, text: "No pude preparar una compra completa y autorizada. Revisá los datos en Compras; todavía no se guardó este intento." };
+    }
+  }
   if (isSaleWrite(tool.name) && !confirmed) {
     try {
       if (!deps.prepare) throw new Error("sale_prepare_unavailable");
@@ -317,11 +346,13 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
     };
   }
 
-  // Sales and debt plans persist their exact identity BEFORE the domain RPC.
+  // Sales, debt plans and purchases persist their exact identity BEFORE the domain RPC.
   // Other modules keep their existing one-shot confirmation protocol.
   if (confirmed && pending?.kind === "confirmation") {
     try {
-      const consumed = isSaleWrite(tool.name)
+      const consumed = isPurchaseWrite(tool.name)
+        ? deps.claimPurchasePending ? await deps.claimPurchasePending(pending.id, actor, recoveringUncertain) : false
+        : isSaleWrite(tool.name)
         ? deps.claimSalePending ? await deps.claimSalePending(pending.id,actor,recoveringUncertain) : false
         : isDebtPlanWrite(tool.name)
           ? deps.claimDebtPending ? await deps.claimDebtPending(pending.id, actor, recoveringUncertain) : false
@@ -329,11 +360,11 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
       if (!consumed) {
         return { status: "rejected", text: "Ese pedido venció o ya fue atendido. No se ejecutó nuevamente.", tool: tool.name };
       }
-      pending = (isDebtPlanWrite(tool.name) || isSaleWrite(tool.name)) ? { ...pending, resultUncertain: true } : null;
+      pending = isDurableWrite(tool.name) ? { ...pending, resultUncertain: true } : null;
     } catch {
       return {
         status: "failed",
-        text: isSaleWrite(tool.name) ? "No pude confirmar el inicio de la operación. Conservá la referencia y revisá Ventas antes de registrar otra." : isDebtPlanWrite(tool.name) ? `No pude confirmar el inicio de la operación. Revisá Deudas con la referencia ${String(call.arguments.requestId)} antes de registrar otra; no puedo descartar un intento en curso.` : "No pude confirmar la operación de forma segura. No se realizó ningún cambio.",
+        text: isPurchaseWrite(tool.name) ? `No pude confirmar el inicio de la operación. Revisá Compras con la referencia ${String(call.arguments.requestId)} antes de registrar otra; no puedo descartar un intento en curso.` : isSaleWrite(tool.name) ? "No pude confirmar el inicio de la operación. Conservá la referencia y revisá Ventas antes de registrar otra." : isDebtPlanWrite(tool.name) ? `No pude confirmar el inicio de la operación. Revisá Deudas con la referencia ${String(call.arguments.requestId)} antes de registrar otra; no puedo descartar un intento en curso.` : "No pude confirmar la operación de forma segura. No se realizó ningún cambio.",
         tool: tool.name,
       };
     }
@@ -353,7 +384,7 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
 
   let result: unknown;
   try {
-    result = await deps.execute(actor, call);
+    result = await deps.execute(actor, call, isPurchaseWrite(tool.name) ? pending?.id : undefined);
   } catch (error) {
     const message = error instanceof Error ? error.message : "tool_failed";
     await safeAudit(deps, {
@@ -365,6 +396,21 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
       error: message,
       confirmed,
     });
+    if (isPurchaseWrite(tool.name)) {
+      // Never recreate a claimed row after a timeout: a cancellation/newer request may have won.
+      let retained = false;
+      try {
+        const active = await deps.getPending(actor);
+        retained = active?.id === pending?.id && active?.resultUncertain === true
+          && active.toolCall.name === call.name && active.toolCall.arguments.requestId === call.arguments.requestId;
+      } catch { /* A failed read cannot change the durable operation. */ }
+      const rejected = message === "purchase_write_rejected";
+      return { status: rejected ? "needs_input" : "failed", tool: tool.name, text: retained
+        ? rejected
+          ? "Este intento fue rechazado por datos, estado o permisos. Conservamos la referencia porque otro reintento podría seguir en curso. Revisá Compras; podés cancelar antes de preparar una corrección. Cancelar no revierte registros."
+          : "No pude confirmar el resultado; podría haberse guardado. Respondé Sí para verificar exactamente la misma compra sin duplicarla. Cancelar sólo detiene reintentos."
+        : `No pude confirmar el resultado; podría haberse guardado. No reactivé el pedido. Revisá Compras con la referencia ${String(call.arguments.requestId)} antes de registrar otra operación.` };
+    }
     if (isSaleWrite(tool.name)) {
       // The pre-execution claim is already durable. Never recreate a pending row
       // here: a concurrent cancellation may have retired it or started another.
