@@ -13,9 +13,12 @@ import { formatARS } from "@/lib/format";
 
 export function SalesAreaChart({
   data,
+  currencyKnown = true,
 }: {
-  data: { day: string; ventas: number; costo: number }[];
+  data: { day: string; ventas: number; costo?: number | null }[];
+  currencyKnown?: boolean;
 }) {
+  const amount = (value: number, compact = false) => currencyKnown ? formatARS(value, { compact }) : new Intl.NumberFormat("es-AR", { notation: compact ? "compact" : "standard", minimumFractionDigits: compact ? 0 : 2, maximumFractionDigits: 2 }).format(value);
   return (
     <div className="h-72 w-full">
       <ResponsiveContainer width="100%" height="100%">
@@ -41,7 +44,7 @@ export function SalesAreaChart({
             tickLine={false}
             axisLine={false}
             tick={{ fill: "#94a3b8", fontSize: 11 }}
-            tickFormatter={(v) => formatARS(v, { compact: true })}
+            tickFormatter={(v) => amount(v, true)}
             width={60}
           />
           <Tooltip
@@ -55,17 +58,17 @@ export function SalesAreaChart({
             }}
             labelStyle={{ color: "#94a3b8", marginBottom: 4 }}
             formatter={(value: number, name) => [
-              formatARS(value),
+              amount(value),
               name === "ventas" ? "Ventas" : "Costo",
             ]}
           />
-          <Area
+          {data.some((row) => row.costo != null) && <Area
             type="monotone"
             dataKey="costo"
             stroke="#8B5CF6"
             strokeWidth={1.5}
             fill="url(#costoFill)"
-          />
+          />}
           <Area
             type="monotone"
             dataKey="ventas"

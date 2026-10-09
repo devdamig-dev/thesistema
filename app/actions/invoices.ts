@@ -7,9 +7,9 @@ import { isDatabaseMode } from "@/lib/env";
 import { extractTextFromInvoice } from "@/lib/ocr";
 import { extractInvoiceFromText } from "@/lib/ai/invoice-extract";
 import { matchAllItems, type IngredientCandidate } from "@/lib/ingredients/matching";
-import { recalcRecipesForIngredient } from "@/lib/recipes/recalc";
 import { getCurrentUserContext } from "@/lib/data/auth";
 import { applyAdminBranchScope } from "@/lib/data/branch-scope";
+import { canSeeModule } from "../../lib/permissions";
 import { assertPermission } from "@/lib/permissions/server-action";
 
 type ActionResult<T = unknown> =
@@ -42,7 +42,9 @@ function refresh() {
  */
 async function resolveBusiness(db: any): Promise<BusinessContext | null> {
   const userCtx = await getCurrentUserContext();
-  if (!userCtx.isAuthenticated || !userCtx.businessId) return null;
+  if (!userCtx.isAuthenticated || !userCtx.businessId || !userCtx.userId || !canSeeModule(userCtx.role, "invoices_ocr", userCtx.enabledModules)) return null;
+  const profile = await db.from("profiles").select("active").eq("id", userCtx.userId).maybeSingle();
+  if (profile.error || !profile.data?.active) return null;
 
   const bizRes = await db
     .from("businesses")
@@ -370,96 +372,16 @@ async function runOcrInMemory(file: File): Promise<string> {
   return ocrResult.text;
 }
 
-export async function approveInvoiceAction(
-  invoiceId: string,
-): Promise<ActionResult<{ purchase_id?: string; recalc?: any[] }>> {
-  const guard = await assertPermission("invoices.approve");
-  if (guard) return guard;
-  if (!isDatabaseMode()) {
-    refresh();
-    return { ok: true, persisted: false };
-  }
-
-  const db = createSupabaseAdminClient() as any;
-  const ctx = await resolveBusiness(db);
-  if (!ctx) return { ok: false, persisted: false, error: "no_business" };
-
-  const approvalRes = await db.rpc("approve_invoice_atomic", {
-    p_invoice_id: invoiceId,
-    p_business_id: ctx.business_id,
-    p_actor_id: ctx.actor_id,
-  });
-  if (approvalRes.error) {
-    console.error("[invoices] atomic approval failed", approvalRes.error);
-    return { ok: false, persisted: false, error: "approval_failed" };
-  }
-
-  const approval = approvalRes.data as {
-    ok: boolean;
-    error?: string;
-    already_approved?: boolean;
-    purchase_id?: string;
-    invoice_number?: string;
-    item_count?: number;
-    ingredient_ids?: string[];
-  } | null;
-  if (!approval?.ok || !approval.purchase_id) {
-    return {
-      ok: false,
-      persisted: false,
-      error: approval?.error ?? "approval_failed",
-    };
-  }
-
-  if (approval.already_approved) {
-    refresh();
-    return { ok: true, persisted: true, purchase_id: approval.purchase_id, recalc: [] };
-  }
-
-  const recalcSummaries: any[] = [];
-  const ingredientIds = approval.ingredient_ids ?? [];
-  for (const ingredientId of ingredientIds) {
-    try {
-      const summary = await recalcRecipesForIngredient(db, ctx.business_id, ingredientId);
-      recalcSummaries.push(summary);
-    } catch (error) {
-      console.error("[invoices] post-approval recipe recalculation failed", error);
-    }
-  }
-
-  await logStage(db, invoiceId, "recalc", recalcSummaries.length === ingredientIds.length, {
-    ingredients: ingredientIds.length,
-    products_affected: recalcSummaries.reduce((s, r) => s + r.productsAffected, 0),
-    recommendations: recalcSummaries.reduce((s, r) => s + r.recommendationsCreated, 0),
-  });
-
-  refresh();
-  return { ok: true, persisted: true, purchase_id: approval.purchase_id, recalc: recalcSummaries };
+/** ID-only mutations cannot authorize a specific reviewed version. */
+export async function approveInvoiceAction(_invoiceId: string): Promise<ActionResult<{ purchase_id?: string; recalc?: any[] }>> {
+  const guard = await assertPermission("invoices.approve"); if (guard) return guard;
+  if (!isDatabaseMode()) return { ok: true, persisted: false };
+  return { ok: false, persisted: false, error: "Abrí la factura y guardá una revisión explícita de su versión antes de aprobar." };
 }
-
-export async function rejectInvoiceAction(invoiceId: string): Promise<ActionResult> {
-  const guard = await assertPermission("invoices.approve");
-  if (guard) return guard;
-  if (!isDatabaseMode()) {
-    refresh();
-    return { ok: true, persisted: false };
-  }
-
-  const db = createSupabaseAdminClient() as any;
-  const ctx = await resolveBusiness(db);
-  if (!ctx) return { ok: false, persisted: false, error: "no_business" };
-
-  let rejectQuery = db
-    .from("invoices")
-    .update({ status: "rejected" })
-    .eq("id", invoiceId)
-    .eq("business_id", ctx.business_id);
-  rejectQuery = scopeInvoiceQuery(rejectQuery, ctx);
-  const res = await rejectQuery.select("id").maybeSingle();
-  if (res.error) return { ok: false, persisted: false, error: res.error.message };
-  if (!res.data) return { ok: false, persisted: false, error: "invoice_not_found" };
-  refresh();
-  return { ok: true, persisted: true };
+export async function rejectInvoiceAction(_invoiceId: string): Promise<ActionResult> {
+  const guard = await assertPermission("invoices.approve"); if (guard) return guard;
+  if (!isDatabaseMode()) return { ok: true, persisted: false };
+  return { ok: false, persisted: false, error: "Abrí el editor de revisión. Los comprobantes aprobados son inmutables." };
 }
 
 export async function getInvoiceAttachmentUrlAction(
@@ -504,59 +426,9 @@ export async function getInvoiceAttachmentUrlAction(
   return { ok: true, persisted: true, url, mime: row.file_mime ?? undefined };
 }
 
-export async function updateInvoiceItemAction(
-  itemId: string,
-  patch: {
-    description?: string;
-    qty?: number;
-    unit?: string;
-    unit_price?: number;
-    total?: number;
-    matched_ingredient_id?: string | null;
-  },
-): Promise<ActionResult> {
-  const guard = await assertPermission("invoices.approve");
-  if (guard) return guard;
-  if (!isDatabaseMode()) {
-    refresh();
-    return { ok: true, persisted: false };
-  }
-
-  const db = createSupabaseAdminClient() as any;
-  const ctx = await resolveBusiness(db);
-  if (!ctx) return { ok: false, persisted: false, error: "no_business" };
-
-  const itemRes = await db.from("invoice_items").select("invoice_id").eq("id", itemId).maybeSingle();
-  const item = itemRes.data as { invoice_id: string } | null;
-  if (!item) return { ok: false, persisted: false, error: "item_not_found" };
-
-  let ownedInvoiceQuery = db
-    .from("invoices")
-    .select("id")
-    .eq("id", item.invoice_id)
-    .eq("business_id", ctx.business_id);
-  ownedInvoiceQuery = scopeInvoiceQuery(ownedInvoiceQuery, ctx);
-  const ownedInvoice = await ownedInvoiceQuery.maybeSingle();
-  if (!ownedInvoice.data) return { ok: false, persisted: false, error: "item_not_found" };
-
-  if (patch.matched_ingredient_id) {
-    const ingredient = await db
-      .from("ingredients")
-      .select("id")
-      .eq("id", patch.matched_ingredient_id)
-      .eq("business_id", ctx.business_id)
-      .maybeSingle();
-    if (!ingredient.data) return { ok: false, persisted: false, error: "ingredient_not_found" };
-  }
-
-  const update: Record<string, unknown> = { ...patch };
-  if (patch.qty != null) update.qty_numeric = patch.qty;
-  if (patch.matched_ingredient_id !== undefined) {
-    update.match_status = patch.matched_ingredient_id ? "manual" : "unmatched";
-  }
-
-  const res = await db.from("invoice_items").update(update).eq("id", itemId).eq("invoice_id", item.invoice_id);
-  if (res.error) return { ok: false, persisted: false, error: res.error.message };
-  refresh();
-  return { ok: true, persisted: true };
+/** Superseded by atomic full-document review, including its exact version. */
+export async function updateInvoiceItemAction(_itemId: string, _patch: { description?: string; qty?: number; unit?: string; unit_price?: number; total?: number; matched_ingredient_id?: string | null }): Promise<ActionResult> {
+  const guard = await assertPermission("invoices.approve"); if (guard) return guard;
+  if (!isDatabaseMode()) return { ok: true, persisted: false };
+  return { ok: false, persisted: false, error: "Las líneas se guardan juntas desde el editor de la factura, con revisión y versión verificadas." };
 }

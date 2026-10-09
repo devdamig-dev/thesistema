@@ -288,15 +288,14 @@ export default function FacturasPage() {
                 const result = await approveInvoiceAction(selected.id);
                 if (result.ok) {
                   const recalc = (result as any).recalc;
-                  const recommendations =
-                    Array.isArray(recalc)
-                      ? recalc.reduce((s: number, r: any) => s + (r.recommendationsCreated ?? 0), 0)
-                      : 0;
+                  const costReviewNeeded = Array.isArray(recalc) && recalc.some((r: any) => (r.errors?.length ?? 0) > 0);
                   toast({
-                    tone: "success",
+                    tone: costReviewNeeded ? "warn" : "success",
                     title: "Factura aprobada",
                     description: result.persisted
-                      ? `Stock actualizado · ${recommendations} alertas de margen generadas.`
+                      ? costReviewNeeded
+                        ? "Factura guardada. Algunas composiciones necesitan revisión para confirmar sus costos."
+                        : "Factura guardada. Los costos de las composiciones se verificaron con los datos actuales."
                       : "Modo demo · sin impacto en stock real.",
                   });
                   router.refresh();

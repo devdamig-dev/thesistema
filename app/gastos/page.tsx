@@ -1,311 +1,138 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState, useTransition } from "react";
-import { Calculator, Loader2, Plus, Receipt, Target, TrendingUp } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Calculator, Loader2, Plus, Receipt, RefreshCw, Target } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Drawer } from "@/components/ui/drawer";
-import { useToast } from "@/components/ui/toast";
-import {
-  createExpenseAction,
-  getExpensesPageDataAction,
-  type ExpenseInput,
-  type ExpenseRow,
-  type ExpensesPageData,
-} from "@/app/actions/expenses-page";
+import { getExpensesPageDataAction, getExpenseHistoryAction, saveExpenseAction, voidExpenseAction, restoreExpenseAction, type ExpenseRow, type ExpensesPageData } from "@/app/actions/expenses-page";
+import { expenseJournalKey, readExpenseOperation, retainExpenseOperation } from "@/lib/expenses/journal";
+import { parseSaveExpense } from "@/lib/expenses/validation";
+import type { ExpenseMutation, ExpenseOperation, SaveExpenseInput } from "@/lib/expenses/types";
 import { balanceSnapshot, dashboardKpis, fixedExpenses, topSuppliers } from "@/lib/mock-data";
 import { formatARS, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const IS_DATABASE = process.env.NEXT_PUBLIC_APP_MODE === "database";
+const inputClass = "w-full min-w-0 rounded-lg border border-line bg-bg px-3 py-2 text-sm text-ink outline-none focus:border-brand-500 disabled:opacity-60";
+const sourceLabel: Record<string, string> = { manual: "Manual", whatsapp: "WhatsApp", inbox: "Inbox", api: "API", system: "Sistema" };
+function statusLabel(status: string) { return ({ paid: "Pagado", scheduled: "Programado", pending: "Pendiente" } as Record<string, string>)[status] ?? status; }
+function statusTone(status: string): "success" | "info" | "warn" | "default" { return status === "paid" ? "success" : status === "scheduled" ? "info" : status === "pending" ? "warn" : "default"; }
+function dateLabel(value: string | null) { return value ? value.split("-").reverse().join("/") : "Sin vencimiento"; }
+function ErrorText({ children }: { children: ReactNode }) { return <p role="alert" className="rounded-xl border border-warn-500/30 bg-warn-500/10 p-3 text-sm text-ink">{children}</p>; }
+function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block space-y-1.5 text-xs text-ink-muted"><span>{label}</span>{children}</label>; }
 
-type Scenario = "conservador" | "esperado" | "agresivo";
-
-const SCENARIO_LABEL: Record<Scenario, { label: string; description: string; tone: "success" | "ai" | "warn" }> = {
-  agresivo: { label: "Agresivo", description: "Asume mejor mix de canales y costos contenidos.", tone: "success" },
-  esperado: { label: "Esperado", description: "Replica el margen disponible del último balance.", tone: "ai" },
-  conservador: { label: "Conservador", description: "Castiga el margen 4 pts ante suba de insumos.", tone: "warn" },
-};
-
-const SCENARIO_DELTA: Record<Scenario, number> = { agresivo: 4, esperado: 0, conservador: -4 };
-const inputClass = "h-10 w-full rounded-lg border border-line bg-bg px-3 text-sm text-ink outline-none transition placeholder:text-ink-subtle focus:border-brand-500";
-
-function statusTone(status: string): "success" | "info" | "warn" | "default" | "ai" {
-  const normalized = status.toLowerCase();
-  if (normalized === "pagado" || normalized === "paid") return "success";
-  if (normalized === "programado" || normalized === "scheduled") return "info";
-  if (normalized === "pendiente" || normalized === "pending") return "warn";
-  if (normalized === "automático" || normalized === "automatic") return "ai";
-  return "default";
-}
-
-function statusLabel(status: string) {
-  if (status === "paid") return "Pagado";
-  if (status === "scheduled") return "Programado";
-  if (status === "pending") return "Pendiente";
-  return status;
-}
-
-function formatDueDate(value: string | null) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "America/Argentina/Buenos_Aires" })
-    .format(new Date(`${value}T12:00:00-03:00`));
-}
-
+type Draft = Omit<SaveExpenseInput, "requestId" | "businessId" | "userId" | "status"> & { status: string };
 export default function GastosPage() {
-  const { toast } = useToast();
-  const [scenario, setScenario] = useState<Scenario>("esperado");
-  const [loading, setLoading] = useState(IS_DATABASE);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [databaseData, setDatabaseData] = useState<ExpensesPageData | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [pending, startTransition] = useTransition();
-
-  async function loadExpenses() {
-    if (!IS_DATABASE) return;
-    setLoading(true);
+  const [data, setData] = useState<ExpensesPageData | null>(null);
+  const [loading, setLoading] = useState(IS_DATABASE); const [loadError, setLoadError] = useState("");
+  const [busy, setBusy] = useState(false); const lock = useRef(false);
+  const [draft, setDraft] = useState<Draft | null>(null); const [stateTarget, setStateTarget] = useState<ExpenseRow | null>(null); const [reason, setReason] = useState("");
+  const [detail, setDetail] = useState<ExpenseRow | null>(null); const [history, setHistory] = useState<ExpenseMutation[]>([]); const [historyError, setHistoryError] = useState(""); const [historyLoading, setHistoryLoading] = useState(false);
+  const [pending, setPending] = useState<ExpenseOperation | null>(null); const pendingRef = useRef<ExpenseOperation | null>(null);
+  const [operationError, setOperationError] = useState(""); const [notice, setNotice] = useState(""); const [storageError, setStorageError] = useState("");
+  const [query, setQuery] = useState(""); const [filter, setFilter] = useState("active"); const [branch, setBranch] = useState(""); const [page, setPage] = useState(1); const [scenario, setScenario] = useState(0);
+  const contextKey = useRef(""); const generation = useRef(0); const mounted = useRef(true);
+  const refresh = useCallback(async () => {
+    if (!IS_DATABASE || lock.current) return;
+    const request = ++generation.current; setLoading(true); setLoadError("");
     try {
-      const res = await getExpensesPageDataAction();
-      if (!res.ok) {
-        setLoadError(res.error);
-        setDatabaseData(null);
-        return;
-      }
-      setDatabaseData(res.data);
-      setLoadError(null);
-    } catch {
-      setLoadError("No pudimos cargar los gastos.");
-      setDatabaseData(null);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadExpenses();
+      const result = await getExpensesPageDataAction();
+      if (!mounted.current || request !== generation.current) return;
+      if (!result.ok) { setData(null); setLoadError(result.error); setDraft(null); setStateTarget(null); setDetail(null); return; }
+      const key = expenseJournalKey(result.data.businessId, result.data.userId);
+      if (contextKey.current !== key) { contextKey.current = key; setDraft(null); setStateTarget(null); setDetail(null); setReason(""); setOperationError(""); setNotice(""); setStorageError(""); setBranch(""); setPage(1); }
+      try { const saved = readExpenseOperation(sessionStorage.getItem(key), result.data.businessId, result.data.userId); pendingRef.current = saved; setPending(saved); }
+      catch { pendingRef.current = null; setPending(null); setStorageError("No pudimos recuperar el intento de esta pestaña. Las nuevas operaciones están bloqueadas para evitar duplicados."); }
+      setDetail((current) => current ? result.data.expenses.find((row) => row.id === current.id) ?? null : null);
+      setData(result.data);
+    } catch { if (mounted.current && request === generation.current) { setData(null); setLoadError("No pudimos cargar los gastos. Reintentá para recuperar los datos reales."); } }
+    finally { if (mounted.current && request === generation.current) setLoading(false); }
   }, []);
+  useEffect(() => { mounted.current = true; void refresh(); const focus = () => void refresh(); window.addEventListener("focus", focus); return () => { mounted.current = false; window.removeEventListener("focus", focus); }; }, [refresh]);
+  useEffect(() => {
+    setHistory([]); setHistoryError("");
+    if (!detail || !IS_DATABASE) { setHistoryLoading(false); return; }
+    let cancelled = false; setHistoryLoading(true);
+    void getExpenseHistoryAction(detail.id).then((result) => { if (cancelled) return; if (result.ok) setHistory(result.history); else setHistoryError(result.error); }).catch(() => { if (!cancelled) setHistoryError("No pudimos leer el historial."); }).finally(() => { if (!cancelled) setHistoryLoading(false); });
+    return () => { cancelled = true; };
+  }, [detail, data]);
 
-  const demoExpenses: ExpenseRow[] = useMemo(() => fixedExpenses.map((row, index) => ({
-    id: `demo-${index}`,
-    nombre: row.nombre,
-    categoria: "demo",
-    monto: row.monto,
-    vencimiento: null,
-    estado: row.estado,
-    sucursal: "Principal",
-  })), []);
-
-  const expenses = IS_DATABASE ? databaseData?.expenses ?? [] : demoExpenses;
-  const totalFijos = IS_DATABASE
-    ? databaseData?.totalFixed ?? 0
-    : fixedExpenses.reduce((sum, row) => sum + row.monto, 0);
-  const totalVariables = IS_DATABASE
-    ? databaseData?.totalVariable ?? 0
-    : topSuppliers.reduce((sum, row) => sum + row.totalMes, 0);
-  const margenBase = IS_DATABASE
-    ? databaseData?.grossMarginPct ?? null
-    : balanceSnapshot.margenBrutoPct ?? dashboardKpis.margenEstimado ?? 31;
-  const hasMargin = margenBase != null && Number.isFinite(margenBase) && margenBase > 0;
-  const margenEscenario = hasMargin ? Math.max(5, margenBase + SCENARIO_DELTA[scenario]) : null;
-  const ventasMensuales = margenEscenario ? Math.round((totalFijos / margenEscenario) * 100) : null;
-  const ventasSemanales = ventasMensuales == null ? null : Math.round(ventasMensuales / 4.3);
-  const ventasDiarias = ventasMensuales == null ? null : Math.round(ventasMensuales / 30);
-
-  function saveExpense(input: ExpenseInput) {
-    startTransition(async () => {
-      const result = await createExpenseAction(input);
-      if (!result.ok) {
-        toast({ tone: "warn", title: "No pudimos registrar el gasto", description: result.error });
-        return;
-      }
-      toast({ tone: "success", title: "Gasto registrado", description: "El gasto quedó agregado al mes." });
-      setDrawerOpen(false);
-      await loadExpenses();
-    });
+  const demoExpenses: ExpenseRow[] = useMemo(() => fixedExpenses.map((row, index) => ({ id: `demo-${index}`, nombre: row.nombre, categoria: "Demo", monto: row.monto, amount: String(row.monto), vencimiento: null, estado: row.estado, sucursal: "Principal", branchId: "demo", version: 0, recordStatus: "active", source: null, voidReason: null })), []);
+  const expenses = IS_DATABASE ? data?.expenses ?? [] : demoExpenses;
+  const filtered = expenses.filter((row) => (filter === "all" || row.recordStatus === filter) && (!branch || row.branchId === branch) && `${row.nombre} ${row.categoria}`.toLocaleLowerCase("es-AR").includes(query.toLocaleLowerCase("es-AR")));
+  const visible = filtered.slice((page - 1) * 25, page * 25); const pages = Math.max(1, Math.ceil(filtered.length / 25));
+  useEffect(() => { if (page > pages) setPage(pages); }, [page, pages]);
+  const totalFixed = IS_DATABASE ? data?.totalFixed ?? 0 : fixedExpenses.reduce((sum, row) => sum + row.monto, 0);
+  const totalVariable = IS_DATABASE ? data?.totalVariable ?? 0 : topSuppliers.reduce((sum, row) => sum + row.totalMes, 0);
+  const margin = IS_DATABASE ? data?.grossMarginPct ?? null : balanceSnapshot.margenBrutoPct ?? dashboardKpis.margenEstimado ?? 31;
+  const scenarioMargin = margin !== null && margin > 0 ? Math.max(5, margin + scenario) : null;
+  const target = scenarioMargin ? Math.round(totalFixed / scenarioMargin * 100) : null;
+  const canStart = IS_DATABASE && !!data?.canManage && !loading && !busy && !pending && !storageError;
+  function closeEditor() { if (lock.current) return; setDraft(null); setStateTarget(null); setOperationError(""); }
+  function edit(row?: ExpenseRow) {
+    if (!canStart || !data || (row && row.recordStatus !== "active")) return;
+    setDetail(null); setStateTarget(null); setOperationError(""); setNotice("");
+    setDraft(row ? { id: row.id, expectedVersion: row.version, branchId: row.branchId, name: row.nombre, category: row.categoria, amount: row.amount, dueDate: row.vencimiento, status: ["pending", "scheduled", "paid"].includes(row.estado) ? row.estado : "" } : { id: null, expectedVersion: null, branchId: data.branches.length === 1 ? data.branches[0].id : "", name: "", category: "", amount: "", dueDate: null, status: "pending" });
   }
-
-  return (
-    <div className="space-y-8">
-      <SectionHeader
-        eyebrow="Gastos fijos"
-        title="Lo que cuesta abrir cada día."
-        description={IS_DATABASE
-          ? "Costos estructurales y compras del mes. El punto de equilibrio se calcula cuando existe un margen guardado."
-          : "Costos estructurales del mes y cuánto tenés que facturar diariamente para cubrirlos."}
-        actions={
-          <Button size="sm" variant="primary" onClick={() => setDrawerOpen(true)} disabled={!IS_DATABASE || pending}>
-            <Plus className="h-4 w-4" /> Nuevo gasto fijo
-          </Button>
-        }
-      />
-
-      {IS_DATABASE && loadError && (
-        <div className="rounded-2xl border border-warn-500/30 bg-warn-500/[0.06] p-5">
-          <div className="text-sm font-semibold text-ink">No pudimos cargar Gastos</div>
-          <p className="mt-1 text-xs text-ink-muted">{loadError}</p>
-          <Button size="sm" variant="ghost" className="mt-3" onClick={() => void loadExpenses()}>Reintentar</Button>
-        </div>
-      )}
-
-      {IS_DATABASE && loading ? (
-        <div className="rounded-2xl border border-line p-8 text-center text-sm text-ink-muted">
-          <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> Cargando gastos…
-        </div>
-      ) : loadError ? null : (
-        <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <KpiCard label="Costos fijos" value={formatARS(totalFijos, { compact: true })} tone="brand" hint="Registros de gastos" />
-            <KpiCard label="Costos variables (mes)" value={formatARS(totalVariables, { compact: true })} hint="Compras del mes" />
-            <KpiCard label="Margen promedio" value={hasMargin ? formatPercent(margenBase, 0) : "—"} tone="ai" hint={hasMargin ? "Último balance" : "Sin balance todavía"} />
-            <KpiCard label="Punto de equilibrio mes" value={ventasMensuales == null ? "—" : formatARS(ventasMensuales, { compact: true })} icon={<Target />} tone="success" hint={ventasMensuales == null ? "Requiere margen disponible" : `Escenario: ${SCENARIO_LABEL[scenario].label}`} />
-          </div>
-
-          <Card>
-            <CardHeader>
-              <div>
-                <CardTitle>Detalle de gastos fijos</CardTitle>
-                <p className="mt-1 text-xs text-ink-muted">Conceptos recurrentes que forman el costo mensual del negocio.</p>
-              </div>
-              <Badge tone="default">{expenses.length} ítems</Badge>
-            </CardHeader>
-            {expenses.length === 0 ? (
-              <CardContent>
-                <div className="rounded-xl border border-dashed border-line px-4 py-8 text-center">
-                  <div className="text-sm font-semibold text-ink">Todavía no hay gastos registrados.</div>
-                  <p className="mt-1 text-xs text-ink-muted">Cargá alquiler, servicios, impuestos u otros costos recurrentes.</p>
-                  {IS_DATABASE && (
-                    <Button size="sm" variant="primary" className="mt-4" onClick={() => setDrawerOpen(true)}>
-                      <Plus className="h-4 w-4" /> Nuevo gasto fijo
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="border-y border-line bg-bg-subtle/60 text-left text-[11px] uppercase tracking-wider text-ink-subtle">
-                    <tr><th className="px-5 py-2.5 font-medium">Concepto</th><th className="px-5 py-2.5 font-medium">Sucursal</th><th className="px-5 py-2.5 font-medium">Categoría</th><th className="px-5 py-2.5 font-medium">Vencimiento</th><th className="px-5 py-2.5 font-medium">Estado</th><th className="px-5 py-2.5 text-right font-medium">Monto</th></tr>
-                  </thead>
-                  <tbody>
-                    {expenses.map((expense) => (
-                      <tr key={expense.id} className="border-b border-line/60 last:border-0 hover:bg-bg-subtle">
-                        <td className="px-5 py-3"><div className="flex items-center gap-2"><div className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-bg-subtle text-ink-muted"><Receipt className="h-3.5 w-3.5" /></div><span className="font-medium text-ink">{expense.nombre}</span></div></td>
-                        <td className="px-5 py-3 text-ink-muted">{expense.sucursal}</td>
-                        <td className="px-5 py-3 text-ink-muted">{expense.categoria || "—"}</td>
-                        <td className="px-5 py-3 text-ink-muted">{IS_DATABASE ? formatDueDate(expense.vencimiento) : fixedExpenses.find((row) => row.nombre === expense.nombre)?.vencimiento ?? "—"}</td>
-                        <td className="px-5 py-3"><Badge tone={statusTone(expense.estado)}>{statusLabel(expense.estado)}</Badge></td>
-                        <td className="px-5 py-3 text-right font-semibold tabular-nums text-ink">{formatARS(expense.monto)}</td>
-                      </tr>
-                    ))}
-                    <tr className="bg-bg-elevated/60"><td colSpan={5} className="px-5 py-3 text-right text-xs uppercase tracking-wider text-ink-subtle">Total mensual</td><td className="px-5 py-3 text-right text-base font-semibold tabular-nums text-brand-300">{formatARS(totalFijos)}</td></tr>
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <div><CardTitle className="flex items-center gap-2"><Calculator className="h-4 w-4" /> Simulación de punto de equilibrio</CardTitle><p className="mt-0.5 text-xs text-ink-muted">Cuánto necesitás facturar para cubrir los gastos fijos según el margen disponible.</p></div>
-              <Badge tone="ai"><TrendingUp className="h-3 w-3" /> {margenEscenario == null ? "Margen pendiente" : `Margen ${formatPercent(margenEscenario, 0)}`}</Badge>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              {!hasMargin ? (
-                <div className="rounded-xl border border-dashed border-line px-4 py-8 text-center text-sm text-ink-muted">Todavía no hay un balance con margen bruto suficiente para calcular el punto de equilibrio.</div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-                    {(Object.keys(SCENARIO_LABEL) as Scenario[]).map((key) => {
-                      const cfg = SCENARIO_LABEL[key];
-                      return <button key={key} type="button" onClick={() => setScenario(key)} className={cn("rounded-xl border p-3 text-left transition-all", scenario === key ? "border-brand-500/60 bg-brand-500/[0.08] ring-1 ring-brand-500/30" : "border-line bg-bg-subtle/40 hover:border-line-strong")}><div className="flex items-center justify-between"><span className="text-sm font-semibold text-ink">{cfg.label}</span><Badge tone={cfg.tone}>{SCENARIO_DELTA[key] > 0 ? "+" : ""}{SCENARIO_DELTA[key]} pts</Badge></div><p className="mt-1 text-xs text-ink-muted">{cfg.description}</p></button>;
-                    })}
-                  </div>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                    <ObjetivoCard label="Por día" value={ventasDiarias!} hint="Promedio sobre 30 días." />
-                    <ObjetivoCard label="Por semana" value={ventasSemanales!} hint="Promedio mensual / 4,3." accent />
-                    <ObjetivoCard label="Por mes" value={ventasMensuales!} hint="Cobertura estimada de costos fijos." />
-                  </div>
-                  <div className="rounded-xl border border-line bg-bg-subtle/40 p-4 text-xs text-ink-muted"><span className="font-semibold text-ink">Cómo lo calculamos.</span> Dividimos {formatARS(totalFijos, { compact: true })} de gastos fijos por un margen de {formatPercent(margenEscenario!, 0)}. No incluye reinversión, retiros ni amortizaciones.</div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </>
-      )}
-
-      <Drawer
-        open={drawerOpen}
-        onClose={() => !pending && setDrawerOpen(false)}
-        title="Nuevo gasto fijo"
-        description="Registrá un costo recurrente del negocio."
-        width="max-w-lg"
-      >
-        <ExpenseForm branches={databaseData?.branches ?? []} pending={pending} onCancel={() => setDrawerOpen(false)} onSubmit={saveExpense} />
-      </Drawer>
-    </div>
-  );
-}
-
-function ExpenseForm({ branches, pending, onCancel, onSubmit }: { branches: ExpensesPageData["branches"]; pending: boolean; onCancel: () => void; onSubmit: (input: ExpenseInput) => void }) {
-  const [branchId, setBranchId] = useState(branches.length === 1 ? branches[0].id : "");
-  const [name, setName] = useState("");
-  const [category, setCategory] = useState("");
-  const [amount, setAmount] = useState("");
-  const [dueDate, setDueDate] = useState("");
-  const [status, setStatus] = useState<ExpenseInput["status"]>("pending");
-  const [error, setError] = useState("");
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const parsedAmount = Number(amount.replace(",", "."));
-    if (!branchId) return setError("Elegí una sucursal.");
-    if (!name.trim()) return setError("Ingresá el concepto del gasto.");
-    if (!category.trim()) return setError("Ingresá una categoría.");
-    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) return setError("Ingresá un monto mayor a cero.");
-    setError("");
-    onSubmit({ branchId, name: name.trim(), category: category.trim(), amount: parsedAmount, dueDate: dueDate || null, status });
+  async function execute(proposed: ExpenseOperation) {
+    if (!data?.canManage || lock.current || storageError) return;
+    const key = contextKey.current; const recovering = pendingRef.current !== null;
+    lock.current = true; setBusy(true); setOperationError(""); setNotice(""); ++generation.current;
+    let frozen: ExpenseOperation;
+    try { frozen = retainExpenseOperation(pendingRef.current, proposed); sessionStorage.setItem(key, JSON.stringify(frozen)); pendingRef.current = frozen; setPending(frozen); }
+    catch { setStorageError("No pudimos conservar el intento. No se enviaron cambios; permití el almacenamiento de esta aplicación y recargá."); lock.current = false; setBusy(false); return; }
+    try {
+      const result = frozen.kind === "save" ? await saveExpenseAction(frozen.input) : frozen.kind === "void" ? await voidExpenseAction(frozen.input) : await restoreExpenseAction(frozen.input);
+      const confirmed = result.ok || (result.persisted === false && !recovering);
+      if (confirmed) { try { sessionStorage.removeItem(key); } catch { if (mounted.current && key === contextKey.current) setStorageError("El resultado se confirmó, pero no pudimos limpiar la referencia local. Recargá para verificarla."); } }
+      if (!mounted.current || key !== contextKey.current) return;
+      if (confirmed) { pendingRef.current = null; setPending(null); }
+      if (!result.ok) { setOperationError(result.error + (recovering && result.persisted === false ? " El intento previo sigue pendiente de confirmación; no se descartó." : "")); return; }
+      setDraft(null); setStateTarget(null); setNotice(frozen.kind === "void" ? "Gasto anulado. El registro y su historial se conservan; podés restaurarlo." : frozen.kind === "restore" ? "Gasto restaurado con su historial." : "Gasto guardado. El estado de pago es un registro contable; no se ejecutó ningún pago.");
+    } catch { if (mounted.current && key === contextKey.current) setOperationError("La conexión se interrumpió. No sabemos si el gasto quedó guardado. Reintentá el mismo intento."); }
+    finally { lock.current = false; if (mounted.current && key === contextKey.current) { setBusy(false); await refresh(); } }
   }
+  function save(event: FormEvent) {
+    event.preventDefault(); if (!draft || !data || !canStart) return;
+    try { const input = parseSaveExpense({ ...draft, amount: draft.amount.replace(",", "."), requestId: crypto.randomUUID(), businessId: data.businessId, userId: data.userId }); void execute({ kind: "save", input }); }
+    catch (error) { setOperationError(error instanceof Error ? error.message : "Revisá los datos."); }
+  }
+  const mutateState = (event: FormEvent) => { event.preventDefault(); if (!stateTarget || !data || !canStart || !reason.trim()) return; void execute({ kind: stateTarget.recordStatus === "active" ? "void" : "restore", input: { requestId: crypto.randomUUID(), businessId: data.businessId, userId: data.userId, id: stateTarget.id, expectedVersion: stateTarget.version, reason: reason.trim() } }); };
 
-  return (
-    <form onSubmit={submit} className="space-y-5 p-6">
-      <Field label="Sucursal" required>
-        <select className={inputClass} value={branchId} onChange={(event) => setBranchId(event.target.value)}>
-          <option value="">Seleccioná una sucursal</option>
-          {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
-        </select>
-      </Field>
-      <Field label="Concepto" required><input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} placeholder="Ej. Alquiler" /></Field>
-      <Field label="Categoría" required><input className={inputClass} value={category} onChange={(event) => setCategory(event.target.value)} placeholder="Ej. Local" /></Field>
-      <div className="grid grid-cols-2 gap-4">
-        <Field label="Monto" required><input className={inputClass} type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0" /></Field>
-        <Field label="Vencimiento"><input className={inputClass} type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></Field>
-      </div>
-      <Field label="Estado" required>
-        <select className={inputClass} value={status} onChange={(event) => setStatus(event.target.value as ExpenseInput["status"])}>
-          <option value="pending">Pendiente</option>
-          <option value="scheduled">Programado</option>
-          <option value="paid">Pagado</option>
-        </select>
-      </Field>
-      {error && <div className="rounded-lg border border-danger-500/30 bg-danger-500/[0.06] px-3 py-2 text-xs text-danger-300">{error}</div>}
-      <div className="flex justify-end gap-2 border-t border-line pt-4">
-        <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>Cancelar</Button>
-        <Button type="submit" variant="primary" disabled={pending}>
-          {pending && <Loader2 className="h-4 w-4 animate-spin" />}
-          {pending ? "Guardando…" : "Registrar gasto"}
-        </Button>
-      </div>
-    </form>
-  );
-}
+  return <div className="space-y-6">
+    <SectionHeader eyebrow="Gastos fijos" title="Lo que cuesta abrir cada día." description="Registrá, corregí y anulá gastos conservando su historial. Los estados de pago son información contable." actions={<div className="flex gap-2"><Button size="sm" variant="ghost" onClick={() => void refresh()} disabled={loading || busy || !IS_DATABASE}><RefreshCw className="h-4 w-4" /> Actualizar</Button><Button size="sm" onClick={() => edit()} disabled={!canStart}><Plus className="h-4 w-4" /> Nuevo gasto fijo</Button></div>} />
+    {notice && <p role="status" className="rounded-xl border border-success-500/30 p-3 text-sm">{notice}</p>}
+    {storageError && <ErrorText>{storageError}</ErrorText>}
+    {pending && <div className="space-y-2 rounded-xl border border-warn-500/30 p-4"><p className="text-sm">Hay una operación pendiente de confirmar. Conservamos sus datos y referencia; las nuevas operaciones están bloqueadas.</p><p className="break-all text-xs text-ink-muted">Referencia: {pending.input.requestId}</p><Button size="sm" disabled={busy || !data?.canManage || !!storageError} onClick={() => void execute(pending)}>Reintentar mismo intento</Button></div>}
+    {operationError && !draft && !stateTarget && <ErrorText>{operationError}</ErrorText>}
+    {loadError && <ErrorText>{loadError}</ErrorText>}
+    {loading ? <p className="p-8 text-center text-sm text-ink-muted"><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" />Cargando gastos…</p> : loadError ? <Button variant="ghost" onClick={() => void refresh()}>Reintentar carga</Button> : <>
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4"><KpiCard label="Costos fijos activos" value={formatARS(totalFixed, { compact: true })} hint="Anulados excluidos" tone="brand" /><KpiCard label="Costos variables (mes)" value={formatARS(totalVariable, { compact: true })} hint="Compras del mes" /><KpiCard label="Margen promedio" value={margin === null ? "—" : formatPercent(margin, 0)} hint={margin === null ? "Sin balance vigente" : "Último balance"} tone="ai" /><KpiCard label="Punto de equilibrio" value={target === null ? "—" : formatARS(target, { compact: true })} hint="Simulación mensual" icon={<Target />} /></div>
+      <Card><CardHeader><div><CardTitle>Detalle de gastos fijos</CardTitle><p className="mt-1 text-xs text-ink-muted">Anular conserva todos los datos; restaurar revierte la anulación.</p></div><Badge>{filtered.length} registros</Badge></CardHeader>
+        <div className="grid gap-3 border-b border-line p-4 sm:grid-cols-3"><Field label="Buscar gasto"><input aria-label="Buscar gasto" className={inputClass} value={query} onChange={(e) => { setQuery(e.target.value); setPage(1); }} placeholder="Concepto o categoría" /></Field><Field label="Registros"><select aria-label="Registros" className={inputClass} value={filter} onChange={(e) => { setFilter(e.target.value); setPage(1); }}><option value="active">Activos</option><option value="voided">Anulados</option><option value="all">Todos</option></select></Field><Field label="Filtrar sucursal"><select aria-label="Filtrar sucursal" className={inputClass} value={branch} onChange={(e) => { setBranch(e.target.value); setPage(1); }}><option value="">Todas las disponibles</option>{(data?.branches ?? []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field></div>
+        {visible.length === 0 ? <CardContent><p className="py-8 text-center text-sm text-ink-muted">No hay gastos para estos filtros.</p></CardContent> : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-b border-line text-xs text-ink-subtle"><tr><th className="px-4 py-3">Concepto</th><th className="px-4 py-3">Sucursal</th><th className="px-4 py-3">Vencimiento</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3 text-right">Monto</th><th className="px-4 py-3">Acciones</th></tr></thead><tbody>{visible.map((row) => <tr key={row.id} className="border-b border-line/60"><td className="px-4 py-3"><div className="flex items-center gap-2 font-medium"><Receipt className="h-4 w-4 shrink-0" />{row.nombre}</div><p className="mt-1 text-xs text-ink-muted">{row.categoria}</p></td><td className="px-4 py-3">{row.sucursal}</td><td className="px-4 py-3">{dateLabel(row.vencimiento)}</td><td className="px-4 py-3"><Badge tone={row.recordStatus === "voided" ? "default" : statusTone(row.estado)}>{row.recordStatus === "voided" ? "Anulado" : statusLabel(row.estado)}</Badge></td><td className="px-4 py-3 text-right font-semibold tabular-nums">{formatARS(row.monto)}</td><td className="px-4 py-3"><div className="flex gap-1"><Button size="sm" variant="ghost" disabled={!IS_DATABASE || busy} onClick={() => setDetail(row)}>Detalle</Button>{row.recordStatus === "active" && <Button size="sm" variant="ghost" disabled={!canStart} onClick={() => edit(row)}>Editar</Button>}<Button size="sm" variant="ghost" disabled={!canStart} onClick={() => { setStateTarget(row); setReason(""); setOperationError(""); }}>{row.recordStatus === "active" ? "Anular" : "Restaurar"}</Button></div></td></tr>)}</tbody></table></div>}
+        <div className="flex items-center justify-between p-4 text-xs text-ink-muted"><span>Página {page} de {pages}</span><div className="flex gap-2"><Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => setPage(page - 1)}>Anterior</Button><Button size="sm" variant="ghost" disabled={page >= pages} onClick={() => setPage(page + 1)}>Siguiente</Button></div></div>
+      </Card>
+      <Card><CardHeader><CardTitle className="flex items-center gap-2"><Calculator className="h-4 w-4" /> Simulación de punto de equilibrio</CardTitle></CardHeader><CardContent className="space-y-4">{scenarioMargin === null ? <p className="text-sm text-ink-muted">Necesitamos un balance vigente para calcular el punto de equilibrio.</p> : <><div className="grid grid-cols-3 gap-3">{[["Conservador", -4], ["Esperado", 0], ["Agresivo", 4]].map(([label, delta]) => <button key={label} className={cn("rounded-xl border p-3 text-sm", scenario === delta ? "border-brand-500 bg-brand-500/10" : "border-line")} onClick={() => setScenario(Number(delta))}>{label}</button>)}</div><div className="grid gap-3 sm:grid-cols-3">{[["Por día", Math.round(target! / 30)], ["Por semana", Math.round(target! / 4.3)], ["Por mes", target!]].map(([label, value]) => <div key={label} className="rounded-xl border border-line p-4"><p className="text-xs text-ink-muted">{label}</p><p className="mt-1 text-xl font-semibold">{formatARS(Number(value))}</p></div>)}</div><p className="text-xs text-ink-muted">Gastos activos / margen de {formatPercent(scenarioMargin, 0)}. No incluye reinversión, retiros ni amortizaciones.</p></>}</CardContent></Card>
+    </>}
 
-function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
-  return <label className="block space-y-1.5"><span className="text-xs font-medium text-ink-muted">{label}{required ? " *" : ""}</span>{children}</label>;
-}
-
-function ObjetivoCard({ label, value, hint, accent }: { label: string; value: number; hint: string; accent?: boolean }) {
-  return <div className={cn("rounded-2xl border p-4", accent ? "border-brand-500/30 bg-brand-500/[0.06]" : "border-line bg-bg-subtle/40")}><div className="eyebrow">{label}</div><div className={cn("mt-1 text-2xl font-semibold tracking-tight tabular-nums", accent ? "text-brand-300" : "text-ink")}>{formatARS(value)}</div><p className="mt-1 text-xs text-ink-muted">{hint}</p></div>;
+    <Drawer open={draft !== null} onClose={closeEditor} title={draft?.id ? "Editar gasto" : "Nuevo gasto fijo"} description="El cambio queda registrado con su historial. Marcar pagado no ejecuta un pago." width="max-w-lg">
+      {draft && <form onSubmit={save} className="space-y-4 p-6" aria-busy={busy}><fieldset disabled={!canStart} className="space-y-4">
+        <Field label="Sucursal"><select aria-label="Sucursal" required className={inputClass} value={draft.branchId} onChange={(e) => setDraft({ ...draft, branchId: e.target.value })}><option value="">Seleccioná una sucursal</option>{data?.branches.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+        <Field label="Concepto"><input aria-label="Concepto" required maxLength={200} className={inputClass} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="Categoría"><input aria-label="Categoría" required maxLength={80} className={inputClass} value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} /></Field>
+        <div className="grid grid-cols-2 gap-4"><Field label="Monto"><input aria-label="Monto" required inputMode="decimal" className={inputClass} value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: e.target.value })} placeholder="0,00" /></Field><Field label="Vencimiento"><input aria-label="Vencimiento" type="date" className={inputClass} value={draft.dueDate ?? ""} onChange={(e) => setDraft({ ...draft, dueDate: e.target.value || null })} /></Field></div>
+        <Field label="Estado contable"><select aria-label="Estado contable" className={inputClass} value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value as Draft["status"] })}><option value="">Seleccioná un estado</option><option value="pending">Pendiente</option><option value="scheduled">Programado</option><option value="paid">Pagado</option></select></Field>
+      </fieldset>{operationError && <ErrorText>{operationError}</ErrorText>}<div className="flex flex-wrap gap-2"><Button type="submit" disabled={!canStart}>{busy ? "Guardando…" : "Guardar gasto"}</Button><Button type="button" variant="ghost" onClick={closeEditor} disabled={busy}>{pending ? "Cerrar y revisar" : "Cancelar"}</Button></div></form>}
+    </Drawer>
+    <Drawer open={stateTarget !== null} onClose={closeEditor} title={stateTarget?.recordStatus === "active" ? "Anular gasto" : "Restaurar gasto"} description="Se conserva el importe, estado de pago e historial. No se ejecuta ningún pago." width="max-w-lg">
+      {stateTarget && <form onSubmit={mutateState} className="space-y-4 p-6"><p className="font-semibold">{stateTarget.nombre} · {formatARS(stateTarget.monto)}</p><Field label="Motivo obligatorio"><input aria-label="Motivo obligatorio" required maxLength={1000} className={inputClass} disabled={!canStart} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>{operationError && <ErrorText>{operationError}</ErrorText>}<div className="flex gap-2"><Button type="submit" disabled={!canStart || !reason.trim()}>{stateTarget.recordStatus === "active" ? "Confirmar anulación" : "Confirmar restauración"}</Button><Button type="button" variant="ghost" disabled={busy} onClick={closeEditor}>{pending ? "Cerrar y revisar" : "Cancelar"}</Button></div></form>}
+    </Drawer>
+    <Drawer open={detail !== null} onClose={() => setDetail(null)} title={detail?.nombre} description="Detalle actual e historial de cambios." width="max-w-xl">
+      {detail && <div className="space-y-5 p-6"><p className="text-2xl font-semibold">{formatARS(detail.monto)}</p><div className="grid grid-cols-2 gap-3 text-sm"><p>Sucursal: {detail.sucursal}</p><p>Categoría: {detail.categoria}</p><p>Estado: {detail.recordStatus === "voided" ? "Anulado" : "Activo"}</p><p>Pago: {statusLabel(detail.estado)}</p><p>Origen: {detail.source ? sourceLabel[detail.source] ?? detail.source : "Sin dato histórico"}</p><p>Versión: {detail.version}</p><p>Vencimiento: {dateLabel(detail.vencimiento)}</p></div>{detail.voidReason && <p className="text-sm">Motivo de anulación: {detail.voidReason}</p>}<h3 className="text-sm font-semibold">Historial</h3>{historyLoading ? <p>Cargando historial…</p> : historyError ? <ErrorText>{historyError}</ErrorText> : history.length === 0 ? <p className="text-sm text-ink-muted">No hay revisiones registradas para este gasto histórico.</p> : history.map((entry) => <div key={entry.request_id} className="space-y-2 rounded-xl border border-line p-3 text-xs"><p className="font-semibold">{entry.operation === "void" ? "Anulado" : entry.operation === "restore" ? "Restaurado" : entry.before_snapshot ? "Editado" : "Creado"} · {new Date(entry.created_at).toLocaleString("es-AR")}</p><p>{sourceLabel[entry.source] ?? entry.source} · {entry.actor_role} · versión {entry.after_snapshot.version}</p>{entry.before_snapshot && <p>Antes: {entry.before_snapshot.name} · {entry.before_snapshot.category} · {formatARS(Number(entry.before_snapshot.amount))} · {statusLabel(entry.before_snapshot.status)} · {dateLabel(entry.before_snapshot.due_date)}</p>}<p>Después: {entry.after_snapshot.name} · {entry.after_snapshot.category} · {formatARS(Number(entry.after_snapshot.amount))} · {statusLabel(entry.after_snapshot.status)} · {dateLabel(entry.after_snapshot.due_date)}</p>{entry.payload.input.reason && <p>Motivo: {entry.payload.input.reason}</p>}<p className="break-all text-ink-subtle">Referencia: {entry.request_id}</p></div>)}</div>}
+    </Drawer>
+  </div>;
 }

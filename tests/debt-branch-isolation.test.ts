@@ -92,7 +92,7 @@ test("debt migration and WhatsApp adapter enforce branch scope", () => {
   assert.match(migration, /can_access_business_branch\(business_id, branch_id\)/);
   assert.match(migration, /debt_payments branch scoped read/);
   assert.match(adapter, /if \(call\.name === "debts\.list"\)[\s\S]*branchQuery\(query, actor\)/);
-  assert.match(adapter, /if \(call\.name === "debts\.create"\)[\s\S]*branch_id: branchId/);
+  assert.match(adapter, /if \(isDebtPlanTool\(call\.name\)\) return executeDebtTool\(db, actor, call\)/);
   assert.match(adapter, /if \(branches\.data\.length !== 1\) throw new Error\("branch_ambiguous"\)/);
   const validation = readFileSync("lib/whatsapp-agent/validation.ts", "utf8");
   assert.match(validation, /"debts\.create": \{[^\n]*branchId: "string"/);
@@ -100,7 +100,9 @@ test("debt migration and WhatsApp adapter enforce branch scope", () => {
 
 test("Inbox propagates the extraction branch to purchases and debts", () => {
   const inbox = readFileSync("app/actions/inbox.ts", "utf8");
-  assert.match(inbox, /createPurchase\(db, businessId, branchId,/);
-  assert.match(inbox, /createDebt\(db, businessId, branchId,/);
-  assert.match(inbox, /\.insert\(\{[\s\S]*business_id: businessId,[\s\S]*branch_id: branchId/);
+  assert.match(inbox, /purchase_review_required/);
+  assert.match(readFileSync("app/actions/inbox-purchases.ts", "utf8"), /e\.branch_id \?\? message\.data\.branch_id/);
+  assert.match(inbox, /executeInboxDebt\(db, ctx, extraction, debtReviewDigest\)/);
+  assert.match(readFileSync("lib/whatsapp-agent/inbox-debts.ts", "utf8"), /sourceBranch !== value\.branchId/);
+  assert.doesNotMatch(inbox, /async function createPurchase/);
 });

@@ -9,6 +9,7 @@ let rpcResult: any = null;
 let rpcArgs: any = null;
 
 const records: Record<string, any[]> = {
+  profiles: [{ id: "viewer-a", active: true }],
   businesses: [{ id: "business-a", organization_id: "org-a" }],
   invoices: [
     { id: "invoice-a", business_id: "business-a", branch_id: branchA, storage_path: "org-a/business-a/a.pdf", storage_bucket: "invoices", file_mime: "application/pdf" },
@@ -70,7 +71,8 @@ loader._load = function(name: string, ...args: any[]) {
         isAuthenticated: true,
         userId: "viewer-a",
         businessId: "business-a",
-        role: "viewer",
+        role: "accountant",
+        enabledModules: ["invoices_ocr"],
         assignedBranchIds,
       }),
     },
@@ -105,33 +107,10 @@ test("invoice attachment signing fails closed without assignments", async () => 
   assert.equal((await invoiceActions.getInvoiceAttachmentUrlAction("invoice-shared")).ok, false);
 });
 
-test("invoice approval delegates one tenant-bound atomic RPC and is idempotent", async () => {
-  assignedBranchIds = null;
-  rpcResult = {
-    ok: true,
-    already_approved: false,
-    purchase_id: "purchase-a",
-    ingredient_ids: [],
-  };
+test("ID-only invoice approval cannot bypass explicit version review", async () => {
   rpcArgs = null;
-
-  const first = await invoiceActions.approveInvoiceAction("invoice-a");
-  assert.equal(first.ok, true);
-  assert.equal(first.purchase_id, "purchase-a");
-  assert.deepEqual(rpcArgs, {
-    p_invoice_id: "invoice-a",
-    p_business_id: "business-a",
-    p_actor_id: "viewer-a",
-  });
-
-  rpcResult = {
-    ok: true,
-    already_approved: true,
-    purchase_id: "purchase-a",
-    ingredient_ids: [],
-  };
-  const retry = await invoiceActions.approveInvoiceAction("invoice-a");
-  assert.equal(retry.ok, true);
-  assert.equal(retry.purchase_id, "purchase-a");
-  assert.deepEqual(retry.recalc, []);
+  const result = await invoiceActions.approveInvoiceAction("invoice-a");
+  assert.equal(result.ok, false);
+  assert.equal(result.persisted, false);
+  assert.equal(rpcArgs, null);
 });

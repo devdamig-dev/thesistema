@@ -1,0 +1,95 @@
+-- Disposable fictitious fixtures, transaction rolled back. Never production.
+begin;
+create function pg_temp.i_assert(p_ok boolean,p_message text) returns void language plpgsql as $$begin if p_ok is distinct from true then raise exception 'ASSERTION FAILED: %',p_message;end if;end$$;
+create function pg_temp.i_throws(p_sql text,p_message text) returns void language plpgsql as $$begin begin execute p_sql;exception when others then if position(p_message in sqlerrm)>0 then return;end if;raise exception 'Expected %, got %',p_message,sqlerrm;end;raise exception 'Expected failure %',p_message;end$$;
+insert into auth.users(id,email)select('00000000-0000-4000-8000-'||lpad(i::text,12,'0'))::uuid,'invoice-'||i||'@example.invalid'from generate_series(1,7)i;
+insert into public.organizations(id,name)values('00000000-0000-4000-8000-000000000020','Manual invoice test');
+update public.profiles set organization_id='00000000-0000-4000-8000-000000000020'where id::text like'00000000-0000-4000-8000-%';
+update public.profiles set active=false where id='00000000-0000-4000-8000-000000000004';
+insert into public.businesses(id,organization_id,name)values('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000020','Invoice A'),('00000000-0000-4000-8000-000000000022','00000000-0000-4000-8000-000000000020','Invoice B');
+insert into public.business_members(id,business_id,user_id,role)select('00000000-0000-4000-8000-'||lpad((100+i)::text,12,'0'))::uuid,'00000000-0000-4000-8000-000000000021',('00000000-0000-4000-8000-'||lpad(i::text,12,'0'))::uuid,r::public.role_key from unnest(array['owner','admin','viewer','owner','manager','accountant','employee'])with ordinality t(r,i);
+insert into public.branches(id,business_id,name)values('00000000-0000-4000-8000-000000000031','00000000-0000-4000-8000-000000000021','A1'),('00000000-0000-4000-8000-000000000032','00000000-0000-4000-8000-000000000022','B1');
+insert into public.business_modules(business_id,module_key,enabled)values('00000000-0000-4000-8000-000000000021','invoices_ocr',true);
+insert into public.suppliers(id,business_id,name)values('00000000-0000-4000-8000-000000000041','00000000-0000-4000-8000-000000000021','Supplier A'),('00000000-0000-4000-8000-000000000042','00000000-0000-4000-8000-000000000022','Supplier B');
+insert into public.ingredients(id,business_id,name,unit)values('00000000-0000-4000-8000-000000000051','00000000-0000-4000-8000-000000000021','Flour','kg'),('00000000-0000-4000-8000-000000000052','00000000-0000-4000-8000-000000000022','Foreign','kg');
+insert into public.invoices(id,business_id,branch_id,number,type,invoice_date,subtotal,tax,total,status,source,ocr_text,processing_error)values('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000031','TEMP-failed','B','2026-01-01',0,0,0,'failed','pdf','Original failed OCR text','original failure');
+insert into public.balance_snapshots(business_id,period_month,purchases_total) values('00000000-0000-4000-8000-000000000021','2026-01-01',999),('00000000-0000-4000-8000-000000000021','2026-02-01',777);
+create function pg_temp.invoice_input(p_id uuid default null,p_version integer default null)returns jsonb language sql as $$select jsonb_build_object('requestId',gen_random_uuid(),'businessId','00000000-0000-4000-8000-000000000021','userId',auth.uid(),'id',p_id,'expectedVersion',p_version,'branchId','00000000-0000-4000-8000-000000000031','supplierId','00000000-0000-4000-8000-000000000041','number','REAL-123','type','A','invoiceDate','2026-01-01','dueDate','2026-02-01','taxId',null,'paymentMethod','Cuenta corriente','tax','0.63','items',jsonb_build_array(jsonb_build_object('description','Flour actual line','quantity','1.5','unit','kg','unitPrice','2.01','ingredientId','00000000-0000-4000-8000-000000000051')),'reviewed',true)$$;
+create table pg_temp.saved(k text primary key,v jsonb);grant select,insert,update on pg_temp.saved to authenticated,service_role;
+set local role authenticated;
+select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',true);
+select pg_temp.i_assert(not has_table_privilege('authenticated','public.invoices','UPDATE'),'header REST mutation blocked');
+select pg_temp.i_assert(not has_table_privilege('authenticated','public.invoice_items','UPDATE'),'line REST mutation blocked');
+select pg_temp.i_assert(not has_table_privilege('service_role','public.invoice_mutations','INSERT'),'review proof cannot be forged');
+select pg_temp.i_assert(not has_function_privilege('authenticated','public.approve_invoice_reviewed_atomic(uuid,uuid,jsonb)','EXECUTE'),'reviewed approval is server transport only');
+select pg_temp.i_assert(not has_function_privilege('anon','public.save_invoice_review_atomic(uuid,jsonb)','EXECUTE'),'anonymous review denied');
+do $$declare p jsonb;r jsonb;r2 jsonb;sid uuid;n integer;begin
+ p:=pg_temp.invoice_input('00000000-0000-4000-8000-000000000061',0);r:=public.save_invoice_review_atomic('00000000-0000-4000-8000-000000000021',p);perform pg_temp.i_assert(r->>'ok'='true','failed OCR correction: '||r::text);sid:=(r->>'id')::uuid;
+ perform pg_temp.i_assert((select number='REAL-123' and type='A' and subtotal=3.02 and tax=0.63 and total=3.65 and source='pdf' and ocr_text='Original failed OCR text' and processing_error='original failure' and status='needs_review' and reviewed_version=edit_version from public.invoices where id=sid),'review stores actual numbers without rewriting OCR provenance');
+ perform pg_temp.i_assert((select count(*)from public.purchases)=0 and(select count(*)from public.stock_movements)=0,'review has no accounting or stock effects');
+ perform pg_temp.i_assert((select before_snapshot->'invoice'->>'number'='TEMP-failed' and after_snapshot->'invoice'->>'number'='REAL-123' from public.invoice_mutations where request_id=(p->>'requestId')::uuid),'before/after preserves placeholder history');
+ r2:=public.save_invoice_review_atomic('00000000-0000-4000-8000-000000000021',p);perform pg_temp.i_assert(r=r2,'review replay returns same version');
+ r2:=public.save_invoice_review_atomic('00000000-0000-4000-8000-000000000021',p||'{"number":"OTHER"}');perform pg_temp.i_assert(r2->>'error'='invoice_idempotency_conflict','changed replay blocked');
+ r2:=public.save_invoice_review_atomic('00000000-0000-4000-8000-000000000021',p||jsonb_build_object('requestId',gen_random_uuid()));perform pg_temp.i_assert(r2->>'error'='invoice_conflict','stale version blocked');
+ insert into pg_temp.saved values('approval',jsonb_build_object('requestId',gen_random_uuid(),'businessId',p->>'businessId','userId',auth.uid(),'id',sid,'expectedVersion',(r->>'version')::integer));
+ insert into pg_temp.saved values('review',p);
+ p:=pg_temp.invoice_input();r:=public.save_invoice_review_atomic('00000000-0000-4000-8000-000000000021',p);perform pg_temp.i_assert(r->>'ok'='true','manual creation: '||r::text);perform pg_temp.i_assert((select source='manual' and ocr_text is null and storage_path is null from public.invoices where id=(r->>'id')::uuid),'manual origin factual');
+ insert into pg_temp.saved values('manual_approval',jsonb_build_object('requestId',gen_random_uuid(),'businessId',p->>'businessId','userId',auth.uid(),'id',r->>'id','expectedVersion',(r->>'version')::integer));
+end$$;
+-- Invalid/foreign/placeholder fields and missing review never persist.
+do $$declare bad jsonb;r jsonb;n integer;a integer;begin
+ select count(*)into n from public.invoices;select count(*)into a from public.invoice_mutations;
+ for bad in select * from jsonb_array_elements('[{"reviewed":false},{"number":"TEMP-bogus"},{"number":"  temp-bogus  "},{"type":""},{"invoiceDate":"2026-02-30"},{"invoiceDate":"2099-01-01"},{"dueDate":"2025-01-01"},{"tax":"0.001"},{"total":"500"},{"branchId":"00000000-0000-4000-8000-000000000032"},{"supplierId":"00000000-0000-4000-8000-000000000042"},{"items":[]}]'::jsonb)loop
+  r:=public.save_invoice_review_atomic('00000000-0000-4000-8000-000000000021',pg_temp.invoice_input()||bad);perform pg_temp.i_assert(r->>'ok'='false','invalid denied: '||bad::text||r::text);
+ end loop;
+ perform pg_temp.i_assert((select count(*)from public.invoices)=n and(select count(*)from public.invoice_mutations)=a,'invalid mutations leave no writes');
+ for i in 2..7 loop
+  perform set_config('request.jwt.claim.sub','00000000-0000-4000-8000-'||lpad(i::text,12,'0'),true);r:=public.save_invoice_review_atomic('00000000-0000-4000-8000-000000000021',pg_temp.invoice_input());perform pg_temp.i_assert(r->>'ok'=case when i in(2,5)then'true'else'false'end,'role '||i||' result '||r::text);
+ end loop;
+end$$;
+reset role;
+set local role service_role;
+select set_config('request.jwt.claim.sub','',true);
+do $$declare p jsonb;r jsonb;r2 jsonb;n integer;sid uuid;begin
+ select v into p from pg_temp.saved where k='approval';sid:=(p->>'id')::uuid;
+ perform pg_temp.i_assert(to_regprocedure('invoices_private.approve_ledger(uuid,uuid,uuid)') is null,'private ID-only accounting shortcut removed');
+ r:=invoices_private.approve_ledger(sid,'00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001',0);perform pg_temp.i_assert(r->>'error'='invoice_conflict','private ledger requires exact version');
+ perform pg_temp.i_throws(format('update public.invoices set status=''approved'' where id=%L',sid),'invoice_approval_required');
+ r:=public.approve_invoice_atomic(sid,'00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001');perform pg_temp.i_assert(r->>'error'='invoice_review_required','legacy ID-only approval closed');
+ r:=public.approve_invoice_reviewed_atomic('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001',p||'{"expectedVersion":0}');perform pg_temp.i_assert(r->>'error'='invoice_conflict','approval exact version required');
+ r:=public.approve_invoice_reviewed_atomic('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000005',p||'{"userId":"00000000-0000-4000-8000-000000000005"}');perform pg_temp.i_assert(r->>'error'='invoice_permission_denied','manager review cannot approve');
+ r:=public.approve_invoice_reviewed_atomic('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001',p);perform pg_temp.i_assert(r->>'ok'='true','versioned approval: '||r::text);
+ perform pg_temp.i_assert((select purchases_data_stale and purchases_total=999 from public.balance_snapshots where period_month='2026-01-01'),'invoice approval invalidates affected purchase snapshot without rewriting totals');
+ perform pg_temp.i_assert((select not purchases_data_stale and purchases_total=777 from public.balance_snapshots where period_month='2026-02-01'),'unaffected snapshot preserved');
+ perform pg_temp.i_assert((select count(*)from public.purchases where invoice_id=sid)=1,'one purchase');perform pg_temp.i_assert((select count(*)from public.stock_movements where source='ocr')=1,'one OCR stock event');perform pg_temp.i_assert((select current from public.stock_items where ingredient_id='00000000-0000-4000-8000-000000000051')=1.5,'reviewed quantity to stock');
+ r2:=public.approve_invoice_reviewed_atomic('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001',p);perform pg_temp.i_assert(r2=r,'approval retry idempotent');perform pg_temp.i_assert((select count(*)from public.stock_movements)=1,'retry no duplicate stock');
+ perform pg_temp.i_throws(format('update public.invoices set total=99 where id=%L',sid),'invoice_readonly');perform pg_temp.i_throws(format('update public.invoices set status=''rejected'' where id=%L',sid),'invoice_readonly');perform pg_temp.i_throws(format('update public.invoice_items set total=99 where invoice_id=%L',sid),'invoice_readonly');perform pg_temp.i_throws(format('delete from public.invoice_items where invoice_id=%L',sid),'invoice_readonly');
+ select v into p from pg_temp.saved where k='manual_approval';r:=public.approve_invoice_reviewed_atomic('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001',p);perform pg_temp.i_assert(r->>'ok'='true','manual invoice approval');perform pg_temp.i_assert((select count(*)from public.stock_movements where source='manual')=1,'manual invoice stock origin factual');
+end$$;
+-- Flush approval receipts in the same service transport context as its commit,
+-- before this multi-scenario fixture switches caller and hides invoices via RLS.
+set constraints all immediate;
+set constraints all deferred;
+reset role;
+-- Later OCR/service changes invalidate a saved review, including line changes.
+set local role authenticated;
+select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',true);
+do $$declare p jsonb;r jsonb;begin p:=pg_temp.invoice_input();r:=public.save_invoice_review_atomic('00000000-0000-4000-8000-000000000021',p);insert into pg_temp.saved values('changed',jsonb_build_object('requestId',gen_random_uuid(),'businessId',p->>'businessId','userId',auth.uid(),'id',r->>'id','expectedVersion',(r->>'version')::integer));end$$;
+reset role;
+set local role service_role;
+update public.invoice_items set unit_price=3 where invoice_id=(select(v->>'id')::uuid from pg_temp.saved where k='changed');
+select pg_temp.i_throws($q$update public.invoices set status='approved' where id=(select(v->>'id')::uuid from pg_temp.saved where k='changed')$q$,'invoice_review_required');
+select pg_temp.i_assert((select reviewed_version is null from public.invoices where id=(select(v->>'id')::uuid from pg_temp.saved where k='changed')),'line mutation invalidates reviewed version');
+select pg_temp.i_assert(public.approve_invoice_reviewed_atomic('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001',(select v from pg_temp.saved where k='changed'))->>'error'='invoice_conflict','old review cannot approve changed line');
+select pg_temp.i_assert(invoices_private.approve_ledger((select(v->>'id')::uuid from pg_temp.saved where k='changed'),'00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001',(select edit_version from public.invoices where id=(select(v->>'id')::uuid from pg_temp.saved where k='changed')))->>'error'='invoice_review_required','private ledger cannot bypass invalidated review');
+select pg_temp.i_assert((select count(*) from public.purchases)=2 and (select count(*) from public.stock_movements)=2,'rejected private call produces no additional effects');
+reset role;
+update public.business_modules set enabled=false where module_key='invoices_ocr';
+set local role service_role;
+select pg_temp.i_assert(invoices_private.approve_ledger((select(v->>'id')::uuid from pg_temp.saved where k='changed'),'00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001',(select edit_version from public.invoices where id=(select(v->>'id')::uuid from pg_temp.saved where k='changed')))->>'error'='invoice_module_disabled','private ledger cannot bypass disabled module');
+reset role;
+set local role authenticated;
+select pg_temp.i_assert((select count(*)from public.invoices)=0,'disabled module hides invoices');
+select pg_temp.i_assert(public.save_invoice_review_atomic('00000000-0000-4000-8000-000000000021',pg_temp.invoice_input())->>'error'='invoice_module_disabled','disabled module blocks edits');
+set constraints all immediate;
+rollback;

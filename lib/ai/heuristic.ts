@@ -283,6 +283,8 @@ function detectStockUpdate(text: string): ExtractionResult | null {
       qty: parseFloat(m[1].replace(",", ".")),
       unit: m[2],
       reason: "manual_adjust",
+      operation: "set",
+      reason_note: text.trim(),
     },
     missing_fields: [],
     suggested_action: "Actualizar stock manual.",

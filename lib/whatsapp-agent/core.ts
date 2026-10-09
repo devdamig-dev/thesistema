@@ -1,12 +1,29 @@
+import { isPurchaseWrite, purchaseConfirmationText } from "../purchases/agent";
+import { isSaleWrite, saleConfirmationText } from "../sales/agent";
+import { debtConfirmationText, isDebtPlanWrite } from "./debt-contract";
 import { getMissingArguments } from "./interpreter";
 import { getTool, toolsForActor } from "./registry";
 import type { AgentDependencies, AgentReply, IncomingAgentMessage } from "./types";
 import { validateToolCall } from "./validation";
 
+const isDurableWrite = (name: string) => isSaleWrite(name) || isDebtPlanWrite(name) || isPurchaseWrite(name);
+
 const CANCELLATION = /^(no|cancelar|cancel[aá]|cancelo|no confirmar)[.!\s]*$/i;
 const CONFIRMATION = /^(s[ií]|confirmo|dale|ok|confirmar)[.!\s]*$/i;
 const labels: Record<string, string> = {
   paymentMethod: "medio de pago",
+  purchasedAt: "fecha de compra completa (AAAA-MM-DD)",
+  supplier: "proveedor", supplierId: "ID del proveedor",
+  saleId: "ID de la venta", occurredAt: "fecha y hora completas con zona horaria (AAAA-MM-DDTHH:mm:ss-03:00)", channel: "canal (salon, delivery, whatsapp, pedidos_ya, rappi, mp_qr)", items: "renglones: concepto; cantidad; precio unitario, o una lista JSON con productId, description, quantity y unitPrice",
+  paidAt: "fecha de pago completa (AAAA-MM-DD)", takenAt: "fecha de origen completa (AAAA-MM-DD)",
+  creditorType: "tipo de acreedor (proveedor, banco, tarjeta, organismo, persona u otro)",
+  currency: "moneda (por ejemplo ARS o USD)", mode: "modalidad (pago único o cuotas)",
+  originalAmountCents: "capital original", totalFinancedCents: "total financiado confirmado, sin adivinar intereses",
+  installmentCount: "cantidad de cuotas", periodicity: "periodicidad (semanal, quincenal, mensual o personalizada)",
+  firstDueDate: "primer vencimiento con año (AAAA-MM-DD)", dueDate: "vencimiento completo",
+  dueDates: "todas las fechas de vencimiento (AAAA-MM-DD, separadas por coma)",
+  amountCents: "importe explícito del pago", allocationRule: "imputación (cuota seleccionada o cuotas pendientes más antiguas)",
+  installmentNumber: "número de cuota", branchId: "ID de la sucursal", debtId: "ID de la deuda",
   from: "fecha inicial",
   to: "fecha final",
   creditor: "acreedor",
@@ -14,6 +31,8 @@ const labels: Record<string, string> = {
   ingredient: "insumo",
   quantity: "cantidad",
   operation: "tipo de movimiento",
+  reason: "motivo",
+  unit: "unidad",
 };
 
 const money = (value: unknown) =>
@@ -21,24 +40,43 @@ const money = (value: unknown) =>
     .format(Number(value ?? 0));
 
 function confirmationText(toolName: string, argumentsValue: Record<string, unknown>, description: string): string {
+  if (isPurchaseWrite(toolName)) return purchaseConfirmationText({ name: toolName, arguments: argumentsValue });
+  if (isSaleWrite(toolName)) return saleConfirmationText({ name: toolName, arguments: argumentsValue });
+  if (isDebtPlanWrite(toolName)) return debtConfirmationText({ name: toolName, arguments: argumentsValue });
   if (toolName === "debts.registerPayment") {
-    return `Voy a registrar un pago a ${String(argumentsValue.creditor)} por ${money(argumentsValue.amount)} mediante ${String(argumentsValue.paymentMethod)}. Respondé “Sí” para confirmar o “Cancelar” para descartar.`;
+    return `Voy a registrar un pago a ${String(argumentsValue.creditor)} por ${money(argumentsValue.amount)} mediante ${String(argumentsValue.paymentMethod)} el ${String(argumentsValue.paidAt)}. Respondé “Sí” para confirmar o “Cancelar” para descartar.`;
   }
   return `Voy a ejecutar “${description}”. Respondé “Sí” para confirmar o “Cancelar” para descartar.`;
 }
 
 function formatResult(toolName: string, result: unknown): string {
   const data = result as any;
+  const debtMoney = (cents: number, currency: string | null) => `${currency ?? "moneda no informada"} ${(cents / 100).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (toolName === "debts.getPlan") {
+    const parts = data?.projection?.installments ?? [];
+    return `${data.creditor}: saldo ${debtMoney(data.pendingCents, data.currency)}. ${parts.length ? `${data.projection.paidInstallmentCount}/${parts.length} cuotas pagadas.\n${parts.slice(0, 20).map((p: any) => `Cuota ${p.installmentNumber}: ${debtMoney(p.pendingAmountCents, data.currency)} pendientes; ${p.dueDate ?? "sin fecha informada"}; ${p.status}`).join("\n")}${parts.length > 20 ? "\nSe muestran las primeras 20 cuotas. El cronograma completo está en Deudas." : ""}` : "Deuda histórica sin plan de cuotas."}`;
+  }
+  if (toolName === "debts.listDue") {
+    const rows = data?.debts ?? [];
+    if (!rows.length) return `No encontré vencimientos pendientes entre ${data.from} y ${data.to}.`;
+    const lines: string[] = rows.flatMap((d: any) => d.legacyDue ? [`${d.creditor}: ${debtMoney(d.legacyDue.pendingAmountCents, d.currency)}, ${d.legacyDue.dueDate}`] : d.installments.map((p: any) => `${d.creditor}, cuota ${p.installmentNumber}: ${debtMoney(p.pendingAmountCents, d.currency)}, ${p.dueDate}`));
+    const shown: string[] = []; let length = 0;
+    for (const line of lines) { if (length + line.length > 3000) break; shown.push(line); length += line.length + 1; }
+    return `Vencimientos entre ${data.from} y ${data.to}:\n${shown.join("\n")}${shown.length < lines.length ? `\nSe muestran ${shown.length} de ${lines.length} vencimientos. Acotá las fechas o consultá Deudas para ver el detalle completo.` : ""}`;
+  }
+  if (isPurchaseWrite(toolName)) return `Compra resumida ${data?.id} guardada y auditada. Sin renglones de detalle ni movimiento de stock.`;
+  if (isSaleWrite(toolName)) return `Venta ${data?.id} ${toolName === "sales.void" ? "anulada" : "guardada"} y auditada. No se modificó stock físico.`;
+  if (isDebtPlanWrite(toolName)) return `Operación registrada y auditada en la deuda ${data?.debt_id}.`;
 
   if (toolName === "sales.getToday" || toolName === "sales.getPeriod") {
-    return `Ventas: ${money(data?.total)} en ${Number(data?.count ?? 0)} movimiento(s).`;
+    return `Ventas: ${Number(data?.total ?? 0).toLocaleString("es-AR",{minimumFractionDigits:2,maximumFractionDigits:2})} (moneda no informada) en ${Number(data?.count ?? 0)} registro(s). Tickets con detalle conocido: ${Number(data?.detailedTickets ?? 0)}.`;
   }
   if (toolName === "sales.comparePeriods") {
     const current = Number(data?.current?.total ?? 0);
     const previous = Number(data?.previous?.total ?? 0);
     const difference = Number(data?.difference ?? current - previous);
     const pct = previous > 0 ? (difference / previous) * 100 : null;
-    return `Período actual: ${money(current)}. Período anterior: ${money(previous)}. Diferencia: ${money(difference)}${pct === null ? "" : ` (${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%)`}.`;
+    return `Importes con moneda no informada. Período actual: ${current.toLocaleString("es-AR")}. Período anterior: ${previous.toLocaleString("es-AR")}. Diferencia: ${difference.toLocaleString("es-AR")}${pct === null ? "" : ` (${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%)`}.`;
   }
   if (toolName === "purchases.list") {
     const rows = Array.isArray(data) ? data : [];
@@ -49,9 +87,8 @@ function formatResult(toolName: string, result: unknown): string {
   if (toolName === "debts.list") {
     const rows = Array.isArray(data) ? data : [];
     if (!rows.length) return "No hay deudas activas registradas.";
-    const total = rows.reduce((sum: number, row: any) => sum + Number(row?.pending_amount ?? 0), 0);
-    const preview = rows.slice(0, 5).map((row: any) => `${row.creditor}: ${money(row.pending_amount)}`).join("; ");
-    return `Hay ${rows.length} deuda(s) activas por ${money(total)}. ${preview}`;
+    const preview = rows.slice(0, 5).map((row: any) => `${row.creditor}: ${row.currency ?? "moneda no informada"} ${Number(row.pending_amount).toLocaleString("es-AR")}`).join("; ");
+    return `Hay ${rows.length} deuda(s) activas. ${preview}${rows.length > 5 ? ". Se muestran las primeras 5; consultá una deuda para ver su cronograma." : ""}`;
   }
   if (toolName === "stock.getLowStock") {
     const rows = Array.isArray(data) ? data : [];
@@ -95,15 +132,43 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
   }
 
   const available = toolsForActor(actor);
-  let pending = await deps.getPending(actor);
-  if (pending && new Date(pending.expiresAt) <= deps.now()) {
+  let pending;
+  try { pending = await deps.getPending(actor); }
+  catch (error) {
+    const code = error instanceof Error ? error.message : "pending_read_failed";
+    await safeAudit(deps, { actor, input, error: code });
+    return { status: "failed", text: code === "pending_scope_ambiguous" ? "Hay más de una confirmación pendiente en esta conversación. No voy a elegir una ni ejecutar cambios; revisá las operaciones en el sistema." : "No pude verificar las confirmaciones pendientes. No ejecuté ninguna operación." };
+  }
+  if (pending?.resultUncertain && new Date(pending.expiresAt) <= deps.now() && !CANCELLATION.test(input.text)) return { status: "needs_input", tool: pending.toolCall.name, text: "El resultado del intento anterior sigue sin verificar. Revisá el historial del módulo antes de iniciar otra operación." };
+  // Do not auto-consume a durable confirmation from a stale read: another worker
+  // may have claimed it and durably marked it uncertain since this snapshot.
+  if (pending && isDurableWrite(pending.toolCall.name) && pending.kind === "confirmation" && new Date(pending.expiresAt) <= deps.now() && !CANCELLATION.test(input.text)) {
+    return { status: "needs_input", tool: pending.toolCall.name, text: "Ese pedido venció. Revisá el módulo y respondé Cancelar para cerrar esta referencia antes de preparar otra operación." };
+  }
+  if (pending && !pending.resultUncertain && !(isDurableWrite(pending.toolCall.name) && pending.kind === "confirmation") && new Date(pending.expiresAt) <= deps.now()) {
     await deps.consumePending(pending.id, actor);
     pending = null;
   }
 
   if (pending && CANCELLATION.test(input.text)) {
     try {
-      const consumed = await deps.consumePending(pending.id, actor, true);
+      let consumed: boolean;
+      if (isPurchaseWrite(pending.toolCall.name) && pending.kind === "confirmation") {
+        if (!deps.cancelPurchasePending) throw new Error("purchase_pending_unavailable");
+        const cancelled = await deps.cancelPurchasePending(pending.id, actor);
+        consumed = cancelled.consumed;
+        pending = { ...pending, resultUncertain: cancelled.resultUncertain };
+      } else if (isSaleWrite(pending.toolCall.name)) {
+        if (!deps.cancelSalePending) throw new Error("sale_pending_unavailable");
+        const cancelled = await deps.cancelSalePending(pending.id,actor);
+        consumed=cancelled.consumed; pending={...pending,resultUncertain:cancelled.resultUncertain};
+
+      } else if (isDebtPlanWrite(pending.toolCall.name)) {
+        if (!deps.cancelDebtPending) throw new Error("debt_pending_unavailable");
+        const cancellation = await deps.cancelDebtPending(pending.id, actor);
+        consumed = cancellation.consumed;
+        pending = { ...pending, resultUncertain: cancellation.resultUncertain };
+      } else consumed = await deps.consumePending(pending.id, actor, !pending.resultUncertain);
       if (!consumed) {
         return { status: "rejected", text: "Ese pedido ya no está pendiente. No se canceló ninguna operación." };
       }
@@ -111,9 +176,15 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
       return { status: "failed", text: "No pude cancelar el pedido. Intentá nuevamente." };
     }
     await safeAudit(deps, { actor, input, tool: pending.toolCall.name, error: "operation_cancelled" });
-    return { status: "cancelled", text: "Pedido cancelado. No se realizó ningún cambio.", tool: pending.toolCall.name };
+    return { status: "cancelled", text: pending.resultUncertain ? "Dejé de reintentar. El resultado original podría haberse guardado; revisá el historial antes de registrar otra operación." : "Pedido cancelado. No se realizó ningún cambio.", tool: pending.toolCall.name };
   }
 
+  if (pending?.kind === "clarification" && CONFIRMATION.test(input.text)) {
+    const key = pending.clarificationKey ?? getMissingArguments(pending.toolCall, available)[0];
+    return { status: "needs_input", tool: pending.toolCall.name, text: `Todavía falta aclarar ${labels[key] ?? key ?? "el dato solicitado"}. Una confirmación no completa ese dato.` };
+  }
+
+  const recoveringUncertain = pending?.resultUncertain === true;
   let confirmed = false;
   if (pending?.kind === "confirmation") {
     if (!CONFIRMATION.test(input.text)) {
@@ -144,8 +215,25 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
     return { status: "rejected", text: "No tenés permiso para realizar esa operación." };
   }
 
+  if (tool.name === "debts.registerPayment") {
+    if (pending?.toolCall.name === tool.name) { try { await deps.consumePending(pending.id, actor); } catch { /* The disabled command can never execute. */ } }
+    await safeAudit(deps, { actor, input, tool: tool.name, module: tool.module, error: "legacy_payment_requires_review" });
+    return { status: "needs_input", tool: tool.name, text: "Los pagos de deudas históricas requieren revisión manual en Deudas. Para una deuda con plan, indicá cuota o imputación, importe, fecha y método: voy a mostrar el destino y la moneda antes de confirmar." };
+  }
+
+  // Operation identity and execution state come only from our durable pending
+  // row. An interpreter or clarification answer cannot adopt a historical UUID.
+  if (!confirmed && isDurableWrite(tool.name) && interpreted.arguments && typeof interpreted.arguments === "object"
+    && ["requestId", "expectedVersion", "__resultUncertain", "__clarificationKey", ...(isPurchaseWrite(tool.name) ? ["supplierLabel", "branchLabel"] : [])].some(key => Object.hasOwn(interpreted.arguments, key))) {
+    return { status: "rejected", tool: tool.name, text: "La operación incluye datos internos no permitidos y no fue ejecutada." };
+  }
+
   const validation = validateToolCall(interpreted);
-  const call = validation.call;
+  let call = validation.call;
+  if (confirmed && isDurableWrite(tool.name) && (validation.issues.length || getMissingArguments(call, available).length
+    || isPurchaseWrite(tool.name) && ["requestId", "supplierId", "branchId"].some(key => !call.arguments[key]))) {
+    return { status: "needs_input", tool: tool.name, text: "No pude validar la referencia guardada. Revisá el módulo antes de cancelar este pedido o registrar otro; no puedo descartar un intento anterior." };
+  }
   if (validation.issues.length) {
     const unexpected = validation.issues.some((issue) => issue.unexpected);
     await safeAudit(deps, {
@@ -162,6 +250,7 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
       actor,
       toolCall: call,
       kind: "clarification",
+      clarificationKey: issue.key,
       expiresAt: new Date(deps.now().getTime() + 15 * 60_000).toISOString(),
     });
     return {
@@ -194,7 +283,48 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
     };
   }
 
-  if (tool.risk === "SENSITIVE" && !confirmed) {
+  if (isPurchaseWrite(tool.name) && !confirmed) {
+    try {
+      if (!deps.prepare) throw new Error("purchase_prepare_unavailable");
+      call = await deps.prepare(actor, call);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "purchase_prepare_failed";
+      const fields: Record<string, string> = { purchase_branch_ambiguous: "branchId", purchase_branch_not_found: "branchId", purchase_branch_not_allowed: "branchId", purchase_supplier_ambiguous: "supplierId", purchase_supplier_not_found: "supplier" };
+      const key = fields[code];
+      await safeAudit(deps, { actor, input, tool: tool.name, arguments: call.arguments, error: code });
+      if (key) {
+        await deps.savePending({ actor, toolCall: call, kind: "clarification", clarificationKey: key, expiresAt: new Date(deps.now().getTime() + 15 * 60_000).toISOString() });
+        return { status: "needs_input", tool: tool.name, text: `No pude identificar un proveedor y una sucursal únicos y autorizados. Indicá ${labels[key] ?? key}; todavía no se guardó la compra.` };
+      }
+      return { status: "failed", tool: tool.name, text: "No pude preparar una compra completa y autorizada. Revisá los datos en Compras; todavía no se guardó este intento." };
+    }
+  }
+  if (isSaleWrite(tool.name) && !confirmed) {
+    try {
+      if (!deps.prepare) throw new Error("sale_prepare_unavailable");
+      call = await deps.prepare(actor, call);
+    } catch {
+      return { status: "needs_input", tool: tool.name, text: "No pude preparar una venta autorizada y completa. Revisá sucursal, detalle y estado de la venta en Ventas; todavía no se guardó este intento." };
+    }
+  }
+  if ((isDebtPlanWrite(tool.name) || tool.name === "debts.getPlan") && !confirmed) {
+    try {
+      if (!deps.prepare) throw new Error("debt_prepare_unavailable");
+      call = await deps.prepare(actor, call);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "debt_prepare_failed";
+      const fields: Record<string, string> = { branch_ambiguous: "branchId", branch_not_found: "branchId", branch_not_allowed: "branchId", debt_not_unambiguous: "debtId", debt_not_found: "creditor", installment_not_found: "installmentNumber", payment_not_found: "paymentId" };
+      const key = fields[code];
+      await safeAudit(deps, { actor, input, tool: tool.name, arguments: call.arguments, error: code });
+      if (key) {
+        await deps.savePending({ actor, toolCall: call, kind: "clarification", clarificationKey: key, expiresAt: new Date(deps.now().getTime() + 15 * 60_000).toISOString() });
+        return { status: "needs_input", tool: tool.name, text: `No pude identificar un destino único y autorizado. Indicá ${labels[key] ?? key}; todavía no se guardó nada.` };
+      }
+      return { status: "failed", tool: tool.name, text: code === "debt_preview_requires_ui" ? "El cronograma completo supera el espacio de un mensaje. Revisalo y confirmalo desde Deudas; no guardé la obligación." : "No pude preparar el detalle de esta deuda de forma segura. Revisá la deuda desde Deudas; no ejecuté la operación." };
+    }
+  }
+
+  if ((tool.risk === "SENSITIVE" || isDebtPlanWrite(tool.name) || tool.name === "debts.create") && !confirmed) {
     await deps.savePending({
       actor,
       toolCall: call,
@@ -216,27 +346,45 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
     };
   }
 
-  // Una confirmación se consume antes del write para que un fallo posterior
-  // de auditoría o respuesta no pueda re-ejecutar la misma operación.
+  // Sales, debt plans and purchases persist their exact identity BEFORE the domain RPC.
+  // Other modules keep their existing one-shot confirmation protocol.
   if (confirmed && pending?.kind === "confirmation") {
     try {
-      const consumed = await deps.consumePending(pending.id, actor, true);
+      const consumed = isPurchaseWrite(tool.name)
+        ? deps.claimPurchasePending ? await deps.claimPurchasePending(pending.id, actor, recoveringUncertain) : false
+        : isSaleWrite(tool.name)
+        ? deps.claimSalePending ? await deps.claimSalePending(pending.id,actor,recoveringUncertain) : false
+        : isDebtPlanWrite(tool.name)
+          ? deps.claimDebtPending ? await deps.claimDebtPending(pending.id, actor, recoveringUncertain) : false
+        : await deps.consumePending(pending.id, actor, true);
       if (!consumed) {
         return { status: "rejected", text: "Ese pedido venció o ya fue atendido. No se ejecutó nuevamente.", tool: tool.name };
       }
-      pending = null;
+      pending = isDurableWrite(tool.name) ? { ...pending, resultUncertain: true } : null;
     } catch {
       return {
         status: "failed",
-        text: "No pude confirmar la operación de forma segura. No se realizó ningún cambio.",
+        text: isPurchaseWrite(tool.name) ? `No pude confirmar el inicio de la operación. Revisá Compras con la referencia ${String(call.arguments.requestId)} antes de registrar otra; no puedo descartar un intento en curso.` : isSaleWrite(tool.name) ? "No pude confirmar el inicio de la operación. Conservá la referencia y revisá Ventas antes de registrar otra." : isDebtPlanWrite(tool.name) ? `No pude confirmar el inicio de la operación. Revisá Deudas con la referencia ${String(call.arguments.requestId)} antes de registrar otra; no puedo descartar un intento en curso.` : "No pude confirmar la operación de forma segura. No se realizó ningún cambio.",
         tool: tool.name,
       };
     }
   }
 
+  // A completed stock clarification is a one-shot command too. Different
+  // WhatsApp reply IDs can race on the same pending unit/quantity clarification.
+  if (tool.name === "stock.addMovement" && pending?.kind === "clarification") {
+    try {
+      const consumed = await deps.consumePending(pending.id, actor, true);
+      if (!consumed) return { status: "rejected", text: "Ese pedido de stock venció o ya fue atendido. No se ejecutó nuevamente.", tool: tool.name };
+      pending = null;
+    } catch {
+      return { status: "failed", text: "No pude confirmar el pedido de stock de forma segura. No se ejecutó.", tool: tool.name };
+    }
+  }
+
   let result: unknown;
   try {
-    result = await deps.execute(actor, call);
+    result = await deps.execute(actor, call, isPurchaseWrite(tool.name) ? pending?.id : undefined);
   } catch (error) {
     const message = error instanceof Error ? error.message : "tool_failed";
     await safeAudit(deps, {
@@ -248,9 +396,54 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
       error: message,
       confirmed,
     });
+    if (isPurchaseWrite(tool.name)) {
+      // Never recreate a claimed row after a timeout: a cancellation/newer request may have won.
+      let retained = false;
+      try {
+        const active = await deps.getPending(actor);
+        retained = active?.id === pending?.id && active?.resultUncertain === true
+          && active.toolCall.name === call.name && active.toolCall.arguments.requestId === call.arguments.requestId;
+      } catch { /* A failed read cannot change the durable operation. */ }
+      const rejected = message === "purchase_write_rejected";
+      return { status: rejected ? "needs_input" : "failed", tool: tool.name, text: retained
+        ? rejected
+          ? "Este intento fue rechazado por datos, estado o permisos. Conservamos la referencia porque otro reintento podría seguir en curso. Revisá Compras; podés cancelar antes de preparar una corrección. Cancelar no revierte registros."
+          : "No pude confirmar el resultado; podría haberse guardado. Respondé Sí para verificar exactamente la misma compra sin duplicarla. Cancelar sólo detiene reintentos."
+        : `No pude confirmar el resultado; podría haberse guardado. No reactivé el pedido. Revisá Compras con la referencia ${String(call.arguments.requestId)} antes de registrar otra operación.` };
+    }
+    if (isSaleWrite(tool.name)) {
+      // The pre-execution claim is already durable. Never recreate a pending row
+      // here: a concurrent cancellation may have retired it or started another.
+      let retained = false;
+      try { const active = await deps.getPending(actor); retained = active?.id === pending?.id && active?.resultUncertain === true && active.toolCall.name === call.name && active.toolCall.arguments.requestId === call.arguments.requestId; } catch { /* Only a read; do not alter another operation. */ }
+      return { status: message === "sale_write_rejected" ? "needs_input" : "failed", tool: tool.name, text: retained
+        ? message === "sale_write_rejected"
+          ? "Este intento fue rechazado por datos, estado o permisos. Conservamos la referencia porque otro reintento podría seguir en curso. Revisá Ventas; podés cancelar el pedido antes de preparar una corrección. Cancelar no revierte registros."
+          : "No pude confirmar el resultado; podría haberse guardado. Respondé Sí para verificar exactamente el mismo intento sin duplicarlo. Cancelar sólo detiene reintentos."
+        : `No pude confirmar el resultado; podría haberse guardado. No reactivé el pedido. Revisá Ventas con la referencia ${String(call.arguments.requestId)} antes de registrar otra operación.` };
+    }
+    if (isDebtPlanWrite(tool.name)) {
+      // Claim already persisted the uncertain result before execution. Never
+      // recreate it here: cancellation/newer work must win over a late failure.
+      let retained = false;
+      try {
+        const active = await deps.getPending(actor);
+        retained = active?.id === pending?.id && active?.resultUncertain === true
+          && active.toolCall.name === call.name && active.toolCall.arguments.requestId === call.arguments.requestId;
+      } catch { /* Read only: a failed check never changes the active operation. */ }
+      const rejected = ["stale_version", "amount_exceeds_pending", "amount_exceeds_installment_pending", "installment_not_found"].includes(message);
+      return { status: rejected ? "needs_input" : "failed", tool: tool.name, text: retained
+        ? rejected
+          ? "Este intento fue rechazado por datos o estado. Conservo la referencia porque otro reintento podría seguir en curso. Revisá Deudas y cancelá este pedido antes de preparar una corrección. Cancelar no revierte registros."
+          : "No pude confirmar el resultado; podría haberse guardado. Respondé Sí para verificar exactamente el mismo intento sin duplicarlo. Cancelar sólo detiene reintentos."
+        : `No pude confirmar el resultado; podría haberse guardado. No reactivé el pedido. Revisá Deudas con la referencia ${String(call.arguments.requestId)} antes de registrar otra operación.` };
+    }
+    if (["allocation_rule_required", "debt_missing_fields", "debt_not_unambiguous", "stale_version", "amount_exceeds_pending", "amount_exceeds_installment_pending"].includes(message)) return { status: "needs_input", tool: tool.name, text: message === "allocation_rule_required" ? "Esta deuda tiene un plan. Indicá cuota o imputación a las cuotas más antiguas, importe, fecha y método de pago para revisar el detalle antes de confirmar." : message === "stale_version" ? "El saldo cambió desde la confirmación. Consultá la deuda y prepará un nuevo detalle antes de pagar." : "La deuda, importe o datos del pago requieren revisión. No se registró este intento." };
     return {
       status: "failed",
-      text: message === "purchase_branch_ambiguous"
+      text: tool.name === "stock.addMovement"
+        ? "No pude confirmar el resultado del movimiento de stock. Revisá el historial antes de repetirlo para evitar duplicarlo."
+        : message === "purchase_branch_ambiguous"
         ? "Tenés más de una sucursal asignada. No registré la compra porque falta definir en cuál corresponde."
         : message === "purchase_branch_not_found"
           ? "No encontré una sucursal habilitada para registrar la compra. No se realizó ningún cambio."
@@ -259,8 +452,8 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
     };
   }
 
-  // Las aclaraciones pueden limpiarse después del execute: si falla este paso
-  // no debemos afirmar que el write se revirtió.
+  // Clear durable claims only after a validated domain response. A failed
+  // cleanup or audit does not mean the financial write was rolled back.
   let cleanupOk = true;
   if (pending) {
     try {

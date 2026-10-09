@@ -1,11 +1,14 @@
 "use server";
+import { withSalesRevision } from "../../lib/sales/read";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { canSeeModule } from "@/lib/permissions";
 import { isDatabaseMode } from "@/lib/env";
 import { assertPermission } from "@/lib/permissions/server-action";
 import { logActivity } from "@/lib/data/activity";
 import { getCurrentUserContext } from "@/lib/data/auth";
 import { applyAdminBranchScope } from "@/lib/data/branch-scope";
+import { channelLabels, sourceLabels, localDateTime, periodRange, readAllSales, type SalesPeriod } from "@/app/ventas/reporting";
 import { buildCsv, csvFilename } from "@/lib/csv";
 import {
   invoices as mockInvoices,
@@ -101,68 +104,46 @@ export async function exportPurchasesCsvAction(): Promise<ExportResult> {
   return { ok: true, persisted: false, filename: csvFilename("compras"), content: buildCsv(headers as any, rows as any), rows: rows.length };
 }
 
-export async function exportSalesCsvAction(): Promise<ExportResult> {
+export async function exportSalesCsvAction(period?: SalesPeriod, branchId: string | null = null): Promise<ExportResult> {
   const guard = await assertPermission("sales.view");
   if (guard) return guard;
-
   const headers = [
-    { key: "fecha", label: "Fecha" }, { key: "sucursal", label: "Sucursal" },
-    { key: "canal", label: "Canal" }, { key: "medio_pago", label: "Medio de pago" },
-    { key: "importe_bruto", label: "Importe bruto" }, { key: "descuentos", label: "Descuentos" },
-    { key: "comisiones", label: "Comisiones" }, { key: "importe_neto", label: "Importe neto" },
-    { key: "iva_estimado", label: "IVA estimado (21%)" }, { key: "origen", label: "Origen del dato" },
-    { key: "observaciones", label: "Observaciones" },
+    { key: "fecha", label: "Fecha y hora local" }, { key: "zona_horaria", label: "Zona horaria" },
+    { key: "sucursal", label: "Sucursal" }, { key: "canal", label: "Canal" },
+    { key: "medio_pago", label: "Medio de pago" }, { key: "importe", label: "Importe registrado" },
+    { key: "moneda", label: "Moneda" }, { key: "tipo", label: "Tipo de registro" },
+    { key: "origen", label: "Origen" }, { key: "estado", label: "Estado" }, { key: "observaciones", label: "Observaciones" },
   ] as const;
-  const commission: Record<string, number> = { pedidos_ya: 0.22 };
-  const channelLabel: Record<string, string> = {
-    salon: "Salón", delivery: "Delivery propio", pedidos_ya: "PedidosYa", whatsapp: "WhatsApp", rappi: "Rappi", mp_qr: "Mercado Pago QR",
-  };
-
   if (isDatabaseMode()) {
     try {
       const resolved = await getDatabaseContext();
       if (!resolved) return { ok: false, persisted: false, error: "No hay un negocio autenticado para exportar." };
       const { ctx, db, businessId } = resolved;
-      let query = db.from("sales")
-        .select("occurred_at, channel, amount, branches(name)")
-        .eq("business_id", businessId)
-        .order("occurred_at", { ascending: false })
-        .limit(5000);
-      query = applyAdminBranchScope(query, ctx.assignedBranchIds);
-      const res = await query;
-      if (res.error) return dbError(res.error);
-      const rows = ((res.data as any[]) ?? []).map((r) => {
-        const bruto = Number(r.amount ?? 0);
-        const com = Math.round(bruto * (commission[r.channel] ?? 0));
-        const neto = bruto - com;
-        const branch = Array.isArray(r.branches) ? r.branches[0] : r.branches;
-        return {
-          fecha: r.occurred_at ? String(r.occurred_at).slice(0, 10) : "", sucursal: branch?.name ?? "—",
-          canal: channelLabel[r.channel] ?? r.channel ?? "", medio_pago: "", importe_bruto: bruto, descuentos: 0,
-          comisiones: com, importe_neto: neto, iva_estimado: Math.round((neto / 1.21) * 0.21),
-          origen: "Registro de ventas", observaciones: com > 0 ? "Comisión estimada según canal" : "",
-        };
+      if (!ctx.userId || !canSeeModule(ctx.role, "sales", ctx.enabledModules)) return { ok: false, persisted: false, error: "El módulo Ventas no está disponible para esta sesión." };
+      const profile = await db.from("profiles").select("active").eq("id", ctx.userId).maybeSingle();
+      if (profile.error || profile.data?.active !== true) return { ok: false, persisted: false, error: "La sesión no está habilitada para exportar ventas." };
+      if (period && !["current_month", "previous_month", "last_30_days"].includes(period)) return { ok: false, persisted: false, error: "Período inválido." };
+      if (branchId && (!/^[0-9a-f-]{36}$/i.test(branchId) || (ctx.assignedBranchIds !== null && !ctx.assignedBranchIds.includes(branchId)))) return { ok: false, persisted: false, error: "Sucursal no disponible." };
+      const business = await db.from("businesses").select("timezone").eq("id", businessId).maybeSingle();
+      if (business.error || typeof business.data?.timezone !== "string") throw new Error("timezone_unavailable");
+      const timezone = business.data.timezone; const range = period ? periodRange(period, timezone) : null;
+      const records = await withSalesRevision(db,businessId,()=>readAllSales<any>((from, to) => {
+        let query = db.from("sales").select("id, occurred_at, channel, amount, payment_method, currency, sale_kind, source, status, notes, branches(name)", { count: "exact" }).eq("business_id", businessId).eq("status", "active").order("occurred_at", { ascending: false }).order("id").range(from, to);
+        query = applyAdminBranchScope(query, ctx.assignedBranchIds);
+        if (branchId) query = query.eq("branch_id", branchId);
+        if (range) query = query.gte("occurred_at", range.start).lt("occurred_at", range.end);
+        return query;
+      }));
+      const rows = records.map((row) => {
+        const branch = Array.isArray(row.branches) ? row.branches[0] : row.branches;
+        return { fecha: localDateTime(row.occurred_at, timezone).replace("T", " "), zona_horaria: timezone, sucursal: branch?.name ?? "No informada", canal: channelLabels[row.channel] ?? row.channel ?? "No informado", medio_pago: row.payment_method ?? "No informado", importe: Number(row.amount), moneda: row.currency ?? "No informada", tipo: row.sale_kind === "detailed" ? "Ticket detallado" : row.sale_kind === "summary" ? "Resumen agregado (no es ticket)" : "Histórico sin detalle", origen: sourceLabels[row.source] ?? "No informado", estado: "Activa", observaciones: row.notes ?? "" };
       });
-      const csv = buildCsv(headers as any, rows as any);
-      await auditExport(businessId, "sales.exported", "sales", `Exporte CSV ventas · ${rows.length} filas`);
-      return { ok: true, persisted: true, filename: csvFilename("ventas"), content: csv, rows: rows.length };
+      await auditExport(businessId, "sales.exported", "sales", `Exporte CSV ventas · ${rows.length} registros activos`);
+      return { ok: true, persisted: true, filename: csvFilename("ventas"), content: buildCsv(headers as any, rows as any), rows: rows.length };
     } catch (error) { return dbError(error); }
   }
-
-  const demoCommission = { "Salón": 0, "Delivery propio": 0, "PedidosYa": 0.22, "WhatsApp": 0 } as const;
-  const rows: any[] = [];
-  for (const d of dailySalesTable) {
-    const entries: { canal: keyof typeof demoCommission; bruto: number }[] = [
-      { canal: "Salón", bruto: d.salon }, { canal: "Delivery propio", bruto: d.delivery },
-      { canal: "PedidosYa", bruto: d.pya }, { canal: "WhatsApp", bruto: d.wa },
-    ];
-    for (const e of entries) {
-      if (e.bruto <= 0) continue;
-      const com = Math.round(e.bruto * demoCommission[e.canal]); const neto = e.bruto - com;
-      rows.push({ fecha: d.fecha, sucursal: "Casa Central", canal: e.canal, medio_pago: e.canal === "WhatsApp" ? "Transferencia" : e.canal === "PedidosYa" ? "App" : "Mixto", importe_bruto: e.bruto, descuentos: 0, comisiones: com, importe_neto: neto, iva_estimado: Math.round((neto / 1.21) * 0.21), origen: e.canal === "Salón" ? "Cierre de caja" : "Conciliación canal", observaciones: e.canal === "PedidosYa" ? "Comisión 22% (estimada)" : "" });
-    }
-  }
-  return { ok: true, persisted: false, filename: csvFilename("ventas"), content: buildCsv(headers as any, rows as any), rows: rows.length };
+  const rows = dailySalesTable.map((day) => ({ fecha: day.fecha, zona_horaria: "Demo", sucursal: "Casa Central (demo)", canal: "Todos", medio_pago: "Ejemplo", importe: day.total, moneda: "ARS (demo)", tipo: "Resumen de demostración", origen: "Demo", estado: "Demo", observaciones: "Datos ficticios, no persistidos" }));
+  return { ok: true, persisted: false, filename: csvFilename("ventas-demo"), content: buildCsv(headers as any, rows as any), rows: rows.length };
 }
 
 export async function exportEmployeesCsvAction(): Promise<ExportResult> {

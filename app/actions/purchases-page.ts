@@ -4,10 +4,13 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentUserContext } from "@/lib/data/auth";
 import { isDatabaseMode } from "@/lib/env";
+import { hasPermission } from "@/lib/permissions";
 import { withPermission } from "@/lib/permissions/server-action";
-import { logActivity } from "@/lib/data/activity";
+import { createSupplierManualAction } from "./suppliers-page";
+import type { SupplierCreateInput } from "../../lib/suppliers/domain";
 
 export type PurchasesPageRow = {
+  id: string; version: number; status: string; source: string | null;
   fecha: string;
   proveedor: string;
   insumo: string;
@@ -29,13 +32,17 @@ export type SupplierOption = {
   id: string;
   name: string;
   category: string | null;
+  active: boolean;
 };
 
 export type BranchOption = { id: string; name: string };
 
 export type PurchasesPageData = {
+  supplierDraftScope: string;
+  canManageSuppliers: boolean;
   recentPurchases: PurchasesPageRow[];
   topSuppliers: SupplierSummaryRow[];
+  ingredients: Array<{ id: string; name: string; unit: string }>;
   suppliers: SupplierOption[];
   branches: BranchOption[];
   supplierCount: number;
@@ -43,15 +50,15 @@ export type PurchasesPageData = {
   totalMonth: number;
 };
 
-export type SupplierInput = {
-  name: string;
-  taxId?: string;
-  category?: string;
-  phone?: string;
-  email?: string;
-};
+export type SupplierInput = SupplierCreateInput;
 
 export type PurchaseInput = {
+  requestId: string;
+  replacesPurchaseId?: string;
+  expectedVersion?: number;
+  correctionReason?: string;
+  ingredientId?: string | null;
+  items?: Array<{ ingredientId: string | null; description: string; qty: number; unit: string; unitPrice: number }>;
   branchId: string;
   supplierId: string;
   purchasedAt: string;
@@ -64,7 +71,20 @@ export type PurchaseInput = {
 
 type MutationResult =
   | { ok: true; persisted: true; id: string }
-  | { ok: false; persisted: false; error: string };
+  | { ok: false; persisted: false | null; error: string };
+
+async function readCompletePurchaseRows(query:any) {
+ const rows:any[]=[]; const ids=new Set<string>(); let expected:number|null=null;
+ for(let offset=0;offset<10000;offset+=500){
+  const result=await query.range(offset,offset+499);
+  if(result.error||!Array.isArray(result.data)||!Number.isSafeInteger(result.count)||result.count>10000||expected!==null&&result.count!==expected)return {data:null,error:{message:"incomplete_purchase_report"}};
+  expected=result.count;
+  for(const row of result.data){if(ids.has(row.id))return {data:null,error:{message:"changed_purchase_report"}};ids.add(row.id);rows.push(row);}
+  if(rows.length===expected)return {data:rows,error:null};
+  if(result.data.length<500)return {data:null,error:{message:"incomplete_purchase_report"}};
+ }
+ return {data:null,error:{message:"purchase_report_limit"}};
+}
 
 export async function getPurchasesPageDataAction(): Promise<
   { ok: true; data: PurchasesPageData } | { ok: false; error: string }
@@ -74,6 +94,8 @@ export async function getPurchasesPageDataAction(): Promise<
 
   const ctx = await getCurrentUserContext();
   if (!ctx.businessId) return { ok: false, error: "No se pudo resolver el negocio activo." };
+  const profile=await supabase.from("profiles").select("active").eq("id",ctx.userId).maybeSingle();
+  if(profile.error||!profile.data?.active)return {ok:false,error:"El perfil no está activo."};
 
   const monthStart = new Date().toLocaleDateString("en-CA", {
     timeZone: "America/Argentina/Buenos_Aires",
@@ -91,33 +113,37 @@ export async function getPurchasesPageDataAction(): Promise<
       : branchesQuery.in("id", ["00000000-0000-0000-0000-000000000000"]);
   }
 
-  const [recentRes, monthRes, suppliersRes, branchesRes] = await Promise.all([
+  const [recentRes, monthRes, suppliersRes, branchesRes, ingredientsRes] = await Promise.all([
     supabase
       .from("purchases")
-      .select("id, branch_id, supplier_id, purchased_at, total, branches(name)")
+      .select("id, branch_id, supplier_id, purchased_at, total, version,record_status,source,branches(name)")
       .eq("business_id", ctx.businessId)
       .order("purchased_at", { ascending: false })
       .limit(50),
-    supabase
+    readCompletePurchaseRows(supabase
       .from("purchases")
-      .select("id, branch_id, supplier_id, purchased_at, total, branches(name)")
+      .select("id, branch_id, supplier_id, purchased_at, total, version,record_status,source,branches(name)",{count:"exact"})
       .eq("business_id", ctx.businessId)
+      .eq("record_status", "active")
       .gte("purchased_at", monthStart)
-      .order("purchased_at", { ascending: false }),
+      .order("purchased_at", { ascending: false }).order("id")),
     supabase
       .from("suppliers")
-      .select("id, name, category")
+      .select("id, name, category, active")
       .eq("business_id", ctx.businessId)
       .order("name"),
     branchesQuery,
+    supabase.from("ingredients").select("id,name,unit", { count: "exact" }).eq("business_id", ctx.businessId).eq("active", true).order("name").limit(1000),
   ]);
 
+  if (ingredientsRes.error || (ingredientsRes.count ?? 0) > (ingredientsRes.data?.length ?? 0)) return { ok: false, error: "No pudimos cargar el catálogo completo de insumos." };
   if (recentRes.error) return { ok: false, error: "No pudimos cargar las compras recientes." };
   if (monthRes.error) return { ok: false, error: "No pudimos cargar las compras del mes." };
   if (suppliersRes.error) return { ok: false, error: "No pudimos cargar los proveedores." };
   if (branchesRes.error) return { ok: false, error: "No pudimos cargar las sucursales disponibles." };
 
   type PurchaseDbRow = {
+    version: number; record_status: string; source: string | null;
     id: string;
     branch_id: string;
     supplier_id: string | null;
@@ -162,6 +188,7 @@ export async function getPurchasesPageDataAction(): Promise<
     const qty = Number(item?.qty ?? 0);
     const branch = Array.isArray(purchase.branches) ? purchase.branches[0] : purchase.branches;
     return {
+      id: purchase.id, version: purchase.version, status: purchase.record_status, source: purchase.source,
       fecha: new Intl.DateTimeFormat("es-AR", {
         day: "2-digit",
         month: "2-digit",
@@ -200,77 +227,37 @@ export async function getPurchasesPageDataAction(): Promise<
   return {
     ok: true,
     data: {
+      ingredients: ingredientsRes.data ?? [],
       recentPurchases,
       topSuppliers,
-      suppliers,
+      supplierDraftScope: `${ctx.userId}:${ctx.businessId}`,
+      canManageSuppliers: hasPermission(ctx.role, "purchases.create"),
+      suppliers: suppliers.filter((supplier) => supplier.active),
       branches,
-      supplierCount: suppliers.length,
+      supplierCount: suppliers.filter((supplier) => supplier.active).length,
       orderCount: monthPurchases.length,
       totalMonth: monthPurchases.reduce((sum, purchase) => sum + Number(purchase.total ?? 0), 0),
     },
   };
 }
 
-function validateSupplier(input: SupplierInput): string | null {
-  if (!input.name.trim()) return "Ingresá el nombre del proveedor.";
-  if (input.email?.trim() && !/^\S+@\S+\.\S+$/.test(input.email.trim())) return "Ingresá un email válido.";
-  return null;
+// Legacy action name; callers now supply a stable UUID for safe create reconciliation.
+export async function createSupplierAction(input: SupplierInput) {
+  return createSupplierManualAction(input);
 }
-
-export const createSupplierAction = withPermission<[SupplierInput], MutationResult>(
-  "purchases.create",
-  async (ctx, input) => {
-    if (!isDatabaseMode()) return { ok: false, persisted: false, error: "Esta acción requiere un negocio activo." };
-    if (!ctx.businessId) return { ok: false, persisted: false, error: "No pudimos identificar el negocio activo." };
-
-    const validation = validateSupplier(input);
-    if (validation) return { ok: false, persisted: false, error: validation };
-
-    const db = await createSupabaseServerClient() as any;
-    if (!db) return { ok: false, persisted: false, error: "No pudimos conectar con tus datos." };
-
-    const res = await db
-      .from("suppliers")
-      .insert({
-        business_id: ctx.businessId,
-        name: input.name.trim(),
-        tax_id: input.taxId?.trim() || null,
-        category: input.category?.trim() || null,
-        phone: input.phone?.trim() || null,
-        email: input.email?.trim() || null,
-      })
-      .select("id")
-      .maybeSingle();
-
-    if (res.error || !res.data?.id) return { ok: false, persisted: false, error: "No pudimos registrar el proveedor." };
-
-    await logActivity({
-      businessId: ctx.businessId,
-      actorId: ctx.userId,
-      actorName: ctx.fullName,
-      actorRole: ctx.role,
-      action: "supplier.created",
-      targetType: "suppliers",
-      targetId: res.data.id,
-      summary: `Proveedor registrado · ${input.name.trim()}`,
-      data: { category: input.category?.trim() || null },
-    });
-
-    revalidatePath("/compras");
-    revalidatePath("/auditoria");
-    return { ok: true, persisted: true, id: res.data.id };
-  },
-);
 
 function validatePurchase(input: PurchaseInput): string | null {
   if (!input.branchId) return "Elegí una sucursal.";
   if (!input.supplierId) return "Elegí un proveedor.";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.purchasedAt)) return "Ingresá una fecha válida.";
   if (!input.paymentMethod.trim()) return "Elegí un medio de pago.";
-  if (!input.description.trim()) return "Ingresá el insumo o concepto comprado.";
-  if (!Number.isFinite(Number(input.qty)) || Number(input.qty) <= 0) return "Ingresá una cantidad mayor a cero.";
-  if (!input.unit.trim()) return "Ingresá la unidad.";
-  if (!Number.isFinite(Number(input.unitPrice)) || Number(input.unitPrice) < 0) return "Ingresá un precio unitario válido.";
+  if (input.items && (!Array.isArray(input.items) || input.items.length < 1 || input.items.length > 100)) return "Agregá entre 1 y 100 líneas.";
+  for (const line of input.items ?? [input]) {
+  if (!line.description.trim()) return "Ingresá el insumo o concepto comprado.";
+  if (!Number.isFinite(Number(line.qty)) || Number(line.qty) <= 0) return "Ingresá una cantidad mayor a cero.";
+  if (!line.unit.trim()) return "Ingresá la unidad.";
+  if (!Number.isFinite(Number(line.unitPrice)) || Number(line.unitPrice) < 0) return "Ingresá un precio unitario válido.";
+  }
   return null;
 }
 
@@ -290,6 +277,7 @@ export const createPurchaseAction = withPermission<[PurchaseInput], MutationResu
       .from("suppliers")
       .select("id,name")
       .eq("id", input.supplierId)
+      .eq("active", true)
       .eq("business_id", ctx.businessId)
       .maybeSingle();
     if (supplierRes.error || !supplierRes.data?.id) return { ok: false, persisted: false, error: "El proveedor seleccionado no está disponible." };
@@ -303,69 +291,54 @@ export const createPurchaseAction = withPermission<[PurchaseInput], MutationResu
       return { ok: false, persisted: false, error: "La sucursal seleccionada no está disponible." };
     }
 
-    const qty = Number(input.qty);
-    const unitPrice = Number(input.unitPrice);
-    const total = Math.round(qty * unitPrice * 100) / 100;
-
-    const purchaseRes = await db
-      .from("purchases")
-      .insert({
-        business_id: ctx.businessId,
-        branch_id: input.branchId,
-        supplier_id: input.supplierId,
-        purchased_at: input.purchasedAt,
-        total,
-        payment_method: input.paymentMethod.trim(),
-        created_by: ctx.userId,
-      })
-      .select("id")
-      .maybeSingle();
-
-    if (purchaseRes.error || !purchaseRes.data?.id) return { ok: false, persisted: false, error: "No pudimos registrar la compra." };
-
-    const purchaseId = purchaseRes.data.id as string;
-    const itemRes = await db.from("purchase_items").insert({
-      purchase_id: purchaseId,
-      ingredient_id: null,
-      description: input.description.trim(),
-      qty,
-      unit: input.unit.trim(),
-      unit_price: unitPrice,
-      total,
-    });
-
-    if (itemRes.error) {
-      await db.from("purchases").delete().eq("id", purchaseId).eq("business_id", ctx.businessId);
-      return { ok: false, persisted: false, error: "No pudimos guardar el detalle de la compra." };
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.requestId ?? "")) {
+      return { ok: false, persisted: false, error: "Falta la referencia del intento. Reabrí el formulario." };
     }
-
-    await logActivity({
-      businessId: ctx.businessId,
-      actorId: ctx.userId,
-      actorName: ctx.fullName,
-      actorRole: ctx.role,
-      action: "purchase.created",
-      targetType: "purchases",
-      targetId: purchaseId,
-      summary: `Compra registrada · ${supplierRes.data.name}`,
-      data: {
-        supplier_id: input.supplierId,
-        branch_id: input.branchId,
-        branch_name: branchRes.data.name,
-        purchased_at: input.purchasedAt,
-        payment_method: input.paymentMethod.trim(),
-        description: input.description.trim(),
-        qty,
-        unit: input.unit.trim(),
-        unit_price: unitPrice,
-        total,
-      },
-    });
-
-    revalidatePath("/compras");
-    revalidatePath("/gastos");
-    revalidatePath("/balances");
-    revalidatePath("/auditoria");
-    return { ok: true, persisted: true, id: purchaseId };
+    let response;
+    try {
+      const payload = {
+        requestId: input.requestId, branchId: input.branchId, supplierId: input.supplierId,
+        purchasedAt: input.purchasedAt, paymentMethod: input.paymentMethod.trim(),
+        ...(input.replacesPurchaseId ? {replacesPurchaseId:input.replacesPurchaseId,correctionReason:input.correctionReason?.trim()} : {}),
+        items: (input.items ?? [input]).map(line => ({ ingredientId: line.ingredientId ?? null, description: line.description.trim(),
+          qty: String(line.qty), unit: line.unit.trim(), unitPrice: String(line.unitPrice) })),
+      };
+      response = input.replacesPurchaseId ? await db.rpc("replace_purchase_manual_atomic", {p_business_id:ctx.businessId,p_original_id:input.replacesPurchaseId,p_expected_version:input.expectedVersion,p_reason:input.correctionReason?.trim(),p_input:payload})
+        : await db.rpc("create_purchase_manual_atomic", {p_business_id:ctx.businessId,p_input:payload});
+    } catch {
+      return { ok: false, persisted: null, error: "No se confirmó el resultado. Conservá este intento y revisá Compras antes de volver a cargarlo." };
+    }
+    if (response.error || !response.data?.ok || !response.data?.id) {
+      const rejected = typeof response.error?.code === "string" && /^(22|23|42|P0001)/.test(response.error.code);
+      return { ok: false, persisted: rejected ? false : null, error: "No se confirmó la compra. Revisá datos y Compras; reutilizá el mismo intento para evitar duplicados." };
+    }
+    try {
+      for (const path of ["/compras", "/gastos", "/balances", "/stock", "/auditoria"]) revalidatePath(path);
+    } catch { /* The database transaction is already confirmed. */ }
+    return { ok: true, persisted: true, id: response.data.id };
   },
 );
+
+export const voidPurchaseAction = withPermission<[{ id: string; expectedVersion: number; reason: string }], MutationResult>("purchases.create", async (ctx,input) => {
+  if (!isDatabaseMode() || !ctx.businessId || !input.id || !Number.isSafeInteger(input.expectedVersion) || !input.reason.trim()) return {ok:false,persisted:false,error:"Revisá el registro y el motivo."};
+  const db=await createSupabaseServerClient() as any;
+  if(!db)return {ok:false,persisted:false,error:"No se pudo conectar."};
+  try {
+    const result=await db.rpc("void_purchase_manual_atomic",{p_business_id:ctx.businessId,p_id:input.id,p_expected_version:input.expectedVersion,p_reason:input.reason.trim()});
+    if(result.error||!result.data?.ok)return {ok:false,persisted:null,error:"No se confirmó la anulación. Revisá si la compra cambió o si sus insumos ya se consumieron. Reintentá el mismo motivo para verificar."};
+    try {for(const path of ["/compras","/stock","/gastos","/balances","/auditoria"])revalidatePath(path);}catch{}
+    return {ok:true,persisted:true,id:result.data.id};
+  }catch{return {ok:false,persisted:null,error:"Conexión interrumpida. Revisá el estado antes de crear otra operación."};}
+});
+
+export const getPurchaseCorrectionAction = withPermission<[string], {ok:true;input:PurchaseInput}|{ok:false;error:string}>("purchases.create",async(ctx,id)=>{
+ const db=await createSupabaseServerClient() as any;
+ if(!isDatabaseMode()||!db||!ctx.businessId)return {ok:false,error:"No se pudo conectar al negocio."};
+ const result=await db.from("purchases").select("id,branch_id,supplier_id,purchased_at,payment_method,version,record_status,source").eq("id",id).eq("business_id",ctx.businessId).maybeSingle();
+ const p=result.data;
+ if(result.error||!p||p.source!=="manual"||p.record_status!=="active"||ctx.assignedBranchIds!==null&&!ctx.assignedBranchIds.includes(p.branch_id))return {ok:false,error:"La compra no está disponible para corregir."};
+ const lines=await db.from("purchase_items").select("ingredient_id,description,qty,unit,unit_price",{count:"exact"}).eq("purchase_id",p.id).order("id").limit(100);
+ if(lines.error||!lines.data?.length||lines.count!==lines.data.length)return {ok:false,error:"No se pudo leer el detalle completo."};
+ const items=lines.data.map((l:any)=>({ingredientId:l.ingredient_id,description:l.description,qty:Number(l.qty),unit:l.unit,unitPrice:Number(l.unit_price)}));
+ return {ok:true,input:{requestId:"",replacesPurchaseId:p.id,expectedVersion:p.version,correctionReason:"",branchId:p.branch_id,supplierId:p.supplier_id,purchasedAt:p.purchased_at,paymentMethod:p.payment_method,...items[0],items}};
+});

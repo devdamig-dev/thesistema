@@ -11,6 +11,9 @@
   },
   "include": [
     "./*.test.ts",
+    "../lib/customers/**/*.ts",
+    "../app/actions/customers.ts",
+    "../app/actions/customers-page.ts",
     "../lib/whatsapp-agent/core.ts",
     "../lib/whatsapp-agent/interpreter.ts",
     "../lib/whatsapp-agent/registry.ts",
@@ -23,6 +26,7 @@
     "../app/actions/onboarding.ts",
     "../app/actions/exports.ts",
     "../app/actions/invoices.ts",
+    "../app/actions/inbox.ts",
     "../app/actions/purchases-page.ts",
     "../app/actions/debts.ts",
     "../lib/data/team.ts",
@@ -31,6 +35,8 @@
     "../lib/ocr/**/*.ts",
     "../lib/env.ts",
     "../app/api/webhooks/whatsapp/route.ts",
-    "../app/api/integrations/whatsapp/complete/route.ts"
+    "../app/api/integrations/whatsapp/complete/route.ts",
+    "../app/actions/catalog.ts",
+    "../app/actions/products-page.ts"
   ]
 }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import Module from "node:module";
+import * as salesReporting from "../app/ventas/reporting";
 
 const branchA = "a0000000-0000-4000-8000-000000000001";
 const branchA2 = "a0000000-0000-4000-8000-000000000002";
@@ -15,11 +16,14 @@ let ctx: any = {
 };
 
 const records: Record<string, any[]> = {
+  profiles: [{ id: "restricted-user", active: true }],
+  businesses: [{ id: "business-a", timezone: "America/Argentina/Buenos_Aires" }],
   sales: [
-    { business_id: "business-a", branch_id: branchA, occurred_at: "2026-10-04T10:00:00-03:00", channel: "salon", amount: 100, branches: { name: "Principal" } },
-    { business_id: "business-a", branch_id: branchA2, occurred_at: "2026-10-04T11:00:00-03:00", channel: "delivery", amount: 200, branches: { name: "Norte" } },
-    { business_id: "business-a", branch_id: null, occurred_at: "2026-10-04T12:00:00-03:00", channel: "whatsapp", amount: 50, branches: null },
-    { business_id: "business-b", branch_id: branchB, occurred_at: "2026-10-04T13:00:00-03:00", channel: "salon", amount: 900, branches: { name: "Otro negocio" } },
+    { business_id: "business-a", branch_id: branchA, occurred_at: "2026-10-04T09:00:00-03:00", status: "voided", sale_kind: "detailed", channel: "salon", amount: 99000, branches: { name: "Principal" } },
+    { business_id: "business-a", branch_id: branchA, occurred_at: "2026-10-04T10:00:00-03:00", status: "active", sale_kind: "legacy", channel: "salon", amount: 100, branches: { name: "Principal" } },
+    { business_id: "business-a", branch_id: branchA2, occurred_at: "2026-10-04T11:00:00-03:00", status: "active", sale_kind: "summary", channel: "delivery", amount: 200, branches: { name: "Norte" } },
+    { business_id: "business-a", branch_id: null, occurred_at: "2026-10-04T12:00:00-03:00", status: "active", sale_kind: "detailed", channel: "whatsapp", amount: 50, branches: null },
+    { business_id: "business-b", branch_id: branchB, occurred_at: "2026-10-04T13:00:00-03:00", status: "active", sale_kind: "legacy", channel: "salon", amount: 900, branches: { name: "Otro negocio" } },
   ],
   invoices: [
     { business_id: "business-a", branch_id: branchA, invoice_date: "2026-10-04", number: "A-1", total: 110, suppliers: { name: "Proveedor A" } },
@@ -31,8 +35,11 @@ const records: Record<string, any[]> = {
 
 function adminDb() {
   return {
+    rpc:async()=>({data:"0",error:null}),
     from(table: string) {
       const filters: Array<(row: any) => boolean> = [];
+      let from = 0; let to = Infinity;
+      let single = false;
       const query: any = {
         select() { return query; },
         eq(column: string, value: unknown) { filters.push((row) => row[column] === value); return query; },
@@ -46,9 +53,11 @@ function adminDb() {
         },
         order() { return query; },
         limit() { return query; },
+        maybeSingle() { single = true; return query; },
+        range(start: number, end: number) { from = start; to = end; return query; },
         then(resolve: any, reject: any) {
           const data = (records[table] ?? []).filter((row) => filters.every((filter) => filter(row)));
-          return Promise.resolve({ data, error: null }).then(resolve, reject);
+          return Promise.resolve({ data: single ? data[0] ?? null : data.slice(from, to + 1), count: data.length, error: null }).then(resolve, reject);
         },
       };
       return query;
@@ -61,6 +70,7 @@ const original = loader._load;
 loader._load = function(name: string, ...args: any[]) {
   const mocks: Record<string, any> = {
     "@/lib/supabase/admin": { createSupabaseAdminClient: adminDb },
+    "@/lib/permissions": { canSeeModule: () => true },
     "@/lib/env": { isDatabaseMode: () => true },
     "@/lib/permissions/server-action": { assertPermission: async () => null },
     "@/lib/data/activity": { logActivity: async () => {} },
@@ -74,6 +84,7 @@ loader._load = function(name: string, ...args: any[]) {
         return query.or(`branch_id.in.(${branchIds.join(",")}),branch_id.is.null`);
       },
     },
+    "@/app/ventas/reporting": salesReporting,
     "@/lib/csv": {
       csvFilename: (name: string) => `${name}.csv`,
       buildCsv: (_headers: unknown, rows: unknown) => JSON.stringify(rows),
@@ -97,6 +108,9 @@ test("restricted exports include only assigned and business-level rows", async (
   assert.match(sales.content, /50/);
   assert.doesNotMatch(sales.content, /200/);
   assert.doesNotMatch(sales.content, /900/);
+  assert.doesNotMatch(sales.content, /99000/);
+  assert.doesNotMatch(sales.content, /comisiones|iva_estimado|descuentos/);
+  assert.match(sales.content, /No informada/);
 
   const purchases = await exportsActions.exportPurchasesCsvAction();
   assert.equal(purchases.ok, true);

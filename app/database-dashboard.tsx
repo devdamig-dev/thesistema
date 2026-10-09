@@ -1,10 +1,10 @@
+import { withSalesRevision } from "../lib/sales/read";
 import Link from "next/link";
 import {
   CheckCircle2,
   Inbox,
   MessageSquareText,
   ReceiptText,
-  ShoppingCart,
   Sparkles,
   Wallet,
 } from "lucide-react";
@@ -16,6 +16,8 @@ import { Badge } from "@/components/ui/badge";
 import { RealtimeRefresher } from "@/components/realtime/realtime-refresher";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentUserContext } from "@/lib/data/auth";
+import { localDate, localDateTimeToIso, readAllSales, sumSaleAmounts } from "@/app/ventas/reporting";
+import { applyAdminBranchScope } from "@/lib/data/branch-scope";
 import { formatARS } from "@/lib/format";
 
 function sumAmounts(rows: { amount?: number | string | null; total?: number | string | null }[]) {
@@ -27,16 +29,8 @@ export default async function DatabaseDashboard() {
   const supabase = await createSupabaseServerClient();
   const db = supabase as any;
 
-  const todayAR = new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
-  const monthAR = todayAR.slice(0, 7);
-  const todayStart = `${todayAR}T00:00:00-03:00`;
-  const monthStart = `${monthAR}-01T00:00:00-03:00`;
-  const todayLabel = new Intl.DateTimeFormat("es-AR", {
-    timeZone: "America/Argentina/Buenos_Aires",
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  }).format(new Date());
+  let todayLabel = "";
+  const amount = (value: number) => new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 
   let businessName = "Tu negocio";
   let salesToday: any[] = [];
@@ -50,15 +44,32 @@ export default async function DatabaseDashboard() {
   if (!db || !ctx.businessId) {
     loadError = "No pudimos resolver la conexión o el negocio activo de esta sesión.";
   } else {
-    const [bizRes, todayRes, monthRes, purchasesRes, pendingRes, approvedRes] = await Promise.all([
-      db.from("businesses").select("name, whatsapp_connected").eq("id", ctx.businessId).maybeSingle(),
-      db.from("sales").select("amount").eq("business_id", ctx.businessId).gte("occurred_at", todayStart),
-      db.from("sales").select("amount").eq("business_id", ctx.businessId).gte("occurred_at", monthStart),
-      db.from("purchases").select("total").eq("business_id", ctx.businessId).gte("purchased_at", `${monthAR}-01`),
+    const bizRes = await db.from("businesses").select("name, whatsapp_connected, timezone").eq("id", ctx.businessId).maybeSingle();
+    let todayStart = ""; let monthStart = ""; let monthDate = "";
+    try {
+      if (bizRes.error || typeof bizRes.data?.timezone !== "string") throw new Error("timezone_unavailable");
+      const timezone = bizRes.data.timezone; const today = localDate(new Date(), timezone); monthDate = `${today.slice(0, 7)}-01`;
+      todayStart = localDateTimeToIso(`${today}T00:00`, timezone); monthStart = localDateTimeToIso(`${monthDate}T00:00`, timezone);
+      todayLabel = new Intl.DateTimeFormat("es-AR", { timeZone: timezone, weekday: "long", day: "numeric", month: "long" }).format(new Date());
+    } catch { loadError = "No pudimos resolver la zona horaria del negocio para calcular sus ventas."; }
+    const now = new Date().toISOString();
+    async function loadSales(since: string) {
+      try {
+        if (!since) throw new Error("timezone_unavailable");
+        const data = await withSalesRevision(db,ctx.businessId!,()=>readAllSales<any>((from, to) => applyAdminBranchScope(db.from("sales").select("id, amount, sale_kind", { count: "exact" }).eq("business_id", ctx.businessId).eq("status", "active").gte("occurred_at", since).lt("occurred_at", now).order("occurred_at").order("id").range(from, to), ctx.assignedBranchIds)));
+        return { data, error: null };
+      } catch (error) { return { data: [], error }; }
+    }
+    const salesPair=withSalesRevision(db,ctx.businessId,()=>Promise.all([loadSales(todayStart),loadSales(monthStart)]))
+      .catch(error=>[{data:[],error},{data:[],error}]);
+    const [salesResults, purchasesRes, pendingRes, approvedRes] = await Promise.all([
+      salesPair,
+      db.from("purchases").select("total").eq("record_status", "active").eq("business_id", ctx.businessId).gte("purchased_at", monthDate),
       db.from("ai_extractions").select("id", { count: "exact", head: true }).eq("business_id", ctx.businessId).eq("status", "pending"),
-      db.from("ai_extractions").select("id", { count: "exact", head: true }).eq("business_id", ctx.businessId).eq("status", "approved").gte("approved_at", todayStart),
+      db.from("ai_extractions").select("id", { count: "exact", head: true }).eq("business_id", ctx.businessId).eq("status", "approved").gte("approved_at", todayStart || now),
     ]);
 
+    const [todayRes,monthRes]=salesResults;
     const failedQueries = [
       ["business", bizRes],
       ["sales_today", todayRes],
@@ -111,11 +122,12 @@ export default async function DatabaseDashboard() {
     );
   }
 
-  const ventasHoy = sumAmounts(salesToday);
-  const ventasMes = sumAmounts(salesMonth);
+  const ventasHoy = sumSaleAmounts(salesToday);
+  const ventasMes = sumSaleAmounts(salesMonth);
   const comprasMes = sumAmounts(purchasesMonth);
-  const ticketsHoy = salesToday.length;
-  const ticketPromedio = ticketsHoy > 0 ? ventasHoy / ticketsHoy : 0;
+  const detailedToday = salesToday.filter((row) => row.sale_kind === "detailed");
+  const ticketsHoy = detailedToday.length;
+  const ticketPromedio = ticketsHoy > 0 ? sumSaleAmounts(detailedToday) / ticketsHoy : null;
   const hasOperationalData = salesMonth.length > 0 || purchasesMonth.length > 0 || pendingCount > 0 || approvedToday > 0;
 
   return (
@@ -146,25 +158,25 @@ export default async function DatabaseDashboard() {
             <div className="mb-2 text-[11px] font-medium capitalize text-success-400">Hoy · {todayLabel}</div>
             <h2 className="text-2xl font-semibold tracking-tight text-ink md:text-3xl">
               {ventasHoy > 0 ? (
-                <>Tu negocio lleva facturado <span className="text-gradient-brand">{formatARS(ventasHoy)}</span> hoy.</>
+                <>Tu negocio lleva registrado <span className="text-gradient-brand">{amount(ventasHoy)}</span> hoy.</>
               ) : (
                 <>Todavía no hay ventas cargadas hoy.</>
               )}
             </h2>
             <p className="mt-3 max-w-xl text-sm text-ink-muted">
               {hasOperationalData
-                ? "Los indicadores se calculan únicamente con información registrada en tu base real."
+                ? "Las ventas se expresan en moneda no informada. Sólo los registros detallados cuentan como tickets; los resúmenes conservan sus importes."
                 : "Empezá cargando ventas, compras o aprobaciones. Cuando exista historial suficiente, aparecerán comparaciones y tendencias reales."}
             </p>
             <div className="mt-5 flex flex-wrap gap-2">
               <Link href="/inbox"><Button variant="primary" size="md"><Inbox className="h-4 w-4" /> Revisar {pendingCount} pendientes</Button></Link>
-              <Link href="/compras"><Button variant="ghost" size="md"><ShoppingCart className="h-4 w-4" /> Cargar operación</Button></Link>
+              <Link href="/ventas"><Button variant="ghost" size="md"><ReceiptText className="h-4 w-4" /> Cargar venta</Button></Link>
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <RealStat icon={ReceiptText} label="Tickets hoy" value={String(ticketsHoy)} />
-            <RealStat icon={Wallet} label="Ticket prom." value={formatARS(ticketPromedio)} />
+            <RealStat icon={ReceiptText} label="Tickets detallados hoy" value={String(ticketsHoy)} />
+            <RealStat icon={Wallet} label="Promedio detallados" value={ticketPromedio === null ? "Sin detalle" : amount(ticketPromedio)} />
             <RealStat icon={CheckCircle2} label="Aprobados hoy" value={String(approvedToday)} />
             <RealStat icon={Inbox} label="Pendientes" value={String(pendingCount)} />
           </div>
@@ -172,8 +184,8 @@ export default async function DatabaseDashboard() {
       </section>
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Metric label="Ventas hoy" value={formatARS(ventasHoy)} hint={ticketsHoy ? `${ticketsHoy} tickets registrados` : "Sin movimientos todavía"} />
-        <Metric label="Ventas del mes" value={formatARS(ventasMes)} hint="Acumulado real del mes" />
+        <Metric label="Ventas hoy" value={amount(ventasHoy)} hint={`${salesToday.length} registros activos · Moneda no informada`} />
+        <Metric label="Ventas del mes" value={amount(ventasMes)} hint="Acumulado activo · Moneda no informada" />
         <Metric label="Compras del mes" value={formatARS(comprasMes)} hint="Compras registradas en Supabase" />
       </section>
 

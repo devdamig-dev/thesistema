@@ -7,9 +7,12 @@ const COLORS = ["#F97316", "#FB923C", "#8B5CF6", "#A78BFA"];
 
 export function ChannelBar({
   data,
+  currencyKnown = true,
 }: {
   data: { canal: string; total: number }[];
+  currencyKnown?: boolean;
 }) {
+  const amount = (value: number, compact = false) => currencyKnown ? formatARS(value, { compact }) : new Intl.NumberFormat("es-AR", { notation: compact ? "compact" : "standard", minimumFractionDigits: compact ? 0 : 2, maximumFractionDigits: 2 }).format(value);
   return (
     <div className="h-64 w-full">
       <ResponsiveContainer>
@@ -25,7 +28,7 @@ export function ChannelBar({
             tickLine={false}
             axisLine={false}
             tick={{ fill: "#94a3b8", fontSize: 11 }}
-            tickFormatter={(v) => formatARS(v, { compact: true })}
+            tickFormatter={(v) => amount(v, true)}
             width={60}
           />
           <Tooltip
@@ -37,7 +40,7 @@ export function ChannelBar({
               fontSize: 12,
               color: "#e2e8f0",
             }}
-            formatter={(v: number) => formatARS(v)}
+            formatter={(v: number) => amount(v)}
           />
           <Bar dataKey="total" radius={[6, 6, 0, 0]}>
             {data.map((_, i) => (

@@ -47,6 +47,9 @@ export type PendingOperation = {
   actor: AgentActor;
   toolCall: ToolCall;
   kind: "clarification" | "confirmation";
+  clarificationKey?: string;
+  /** Durable pre-RPC marker; cancelling stops retries but does not undo a possible commit. */
+  resultUncertain?: boolean;
   expiresAt: string;
 };
 
@@ -58,7 +61,19 @@ export interface AgentDependencies {
   savePending(operation: Omit<PendingOperation, "id">): Promise<PendingOperation>;
   /** Atomically consumes an unconsumed row scoped to the actor. Only the winner returns true. */
   consumePending(id: string, actor: AgentActor, requireUnexpired?: boolean): Promise<boolean>;
-  execute(actor: AgentActor, call: ToolCall): Promise<unknown>;
+  /** Sales keep their operation ID durable while execution may be uncertain. */
+  claimSalePending?(id: string, actor: AgentActor, recovery: boolean): Promise<boolean>;
+  cancelSalePending?(id: string, actor: AgentActor): Promise<{ consumed: boolean; resultUncertain: boolean }>;
+  /** CAS claim persists the same debt request before execution; recovery never generates a new ID. */
+  claimDebtPending?(id: string, actor: AgentActor, recovery: boolean): Promise<boolean>;
+  /** Atomically retires a debt pending and returns its current uncertainty, even if our read is stale. */
+  cancelDebtPending?(id: string, actor: AgentActor): Promise<{ consumed: boolean; resultUncertain: boolean }>;
+  /** Same persisted purchase identity survives RPC timeouts and process interruption. */
+  claimPurchasePending?(id: string, actor: AgentActor, recovery: boolean): Promise<boolean>;
+  cancelPurchasePending?(id: string, actor: AgentActor): Promise<{ consumed: boolean; resultUncertain: boolean }>;
+  /** Read-only resolution and snapshot before a domain confirmation. Never performs writes. */
+  prepare?(actor: AgentActor, call: ToolCall): Promise<ToolCall>;
+  execute(actor: AgentActor, call: ToolCall, pendingId?: string): Promise<unknown>;
   audit(event: AgentAuditEvent): Promise<void>;
   now(): Date;
 }

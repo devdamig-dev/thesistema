@@ -1,3 +1,10 @@
+import { executePurchaseTool, isPurchaseWrite } from "../purchases/agent";
+import { withSalesRevision } from "../sales/read";
+import { applyAdminBranchScope } from "../data/branch-scope";
+import { localDate, localDateTimeToIso, shiftDate, readAllSales, sumSaleAmounts } from "../../app/ventas/reporting";
+import { isSaleWrite, executeSaleTool } from "../sales/agent";
+import { isDebtPlanTool } from "./debt-contract";
+import { executeDebtTool } from "./debt-adapter";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { permissionsFor, type ModuleKey, type Role } from "@/lib/permissions";
 import type { AgentActor, AgentAuditEvent, IncomingAgentMessage, PendingOperation, ToolCall } from "./types";
@@ -135,59 +142,39 @@ export async function claimMessage(
 }
 
 export async function getPending(db: Db, actor: AgentActor, conversationId?: string): Promise<PendingOperation | null> {
-  const res = await db
-    .from("whatsapp_agent_pending_operations")
+  const res = await db.from("whatsapp_agent_pending_operations")
     .select("id,kind,tool_name,arguments,expires_at")
-    .eq("business_id", actor.businessId)
-    .eq("member_id", actor.memberId)
+    .eq("business_id", actor.businessId).eq("member_id", actor.memberId)
     .eq("conversation_id", conversationId ?? "00000000-0000-0000-0000-000000000000")
-    .is("consumed_at", null)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (res.error) throw res.error;
-  if (!res.data) return null;
-
-  return {
-    id: res.data.id,
-    actor,
-    kind: res.data.kind,
-    toolCall: { name: res.data.tool_name, arguments: res.data.arguments ?? {} },
-    expiresAt: res.data.expires_at,
-  };
+    .is("consumed_at", null).order("created_at", { ascending: false }).limit(2);
+  if (res?.error) throw res.error;
+  if (!res || !Array.isArray(res.data)) throw new Error("pending_response_unknown");
+  if (!res.data.length) return null;
+  if (res.data.length !== 1) throw new Error("pending_scope_ambiguous");
+  const row = res.data[0];
+  if (!row || typeof row !== "object" || Array.isArray(row) || typeof row.id !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(row.id)
+    || !["clarification", "confirmation"].includes(row.kind) || typeof row.tool_name !== "string" || !row.tool_name.trim()
+    || typeof row.expires_at !== "string" || !/^\d{4}-\d{2}-\d{2}T/.test(row.expires_at) || !Number.isFinite(Date.parse(row.expires_at))
+    || !row.arguments || typeof row.arguments !== "object" || Array.isArray(row.arguments)
+    || row.arguments.__resultUncertain !== undefined && typeof row.arguments.__resultUncertain !== "boolean"
+    || row.arguments.__clarificationKey !== undefined && typeof row.arguments.__clarificationKey !== "string") throw new Error("pending_response_unknown");
+  const { __clarificationKey, __resultUncertain, ...storedArguments } = row.arguments ?? {};
+  return { id: row.id, actor, kind: row.kind,
+    ...(typeof __clarificationKey === "string" ? { clarificationKey: __clarificationKey } : {}),
+    ...(__resultUncertain === true ? { resultUncertain: true } : {}),
+    toolCall: { name: row.tool_name, arguments: storedArguments }, expiresAt: row.expires_at };
 }
 
-export async function savePending(
-  db: Db,
-  operation: Omit<PendingOperation, "id">,
-  conversationId?: string,
-): Promise<PendingOperation> {
-  const consume = await db
-    .from("whatsapp_agent_pending_operations")
-    .update({ consumed_at: new Date().toISOString() })
-    .eq("business_id", operation.actor.businessId)
-    .eq("member_id", operation.actor.memberId)
-    .eq("conversation_id", conversationId ?? "00000000-0000-0000-0000-000000000000")
-    .is("consumed_at", null);
-
-  if (consume.error) throw consume.error;
-
-  const res = await db
-    .from("whatsapp_agent_pending_operations")
-    .insert({
-      business_id: operation.actor.businessId,
-      member_id: operation.actor.memberId,
-      conversation_id: conversationId,
-      kind: operation.kind,
-      tool_name: operation.toolCall.name,
-      arguments: operation.toolCall.arguments,
-      expires_at: operation.expiresAt,
-    })
-    .select("id")
-    .single();
-
-  if (res.error) throw res.error;
+export async function savePending(db: Db, operation: Omit<PendingOperation, "id">, conversationId?: string): Promise<PendingOperation> {
+  if (!conversationId) throw new Error("pending_conversation_required");
+  const res = await db.rpc("replace_whatsapp_agent_pending", {
+    p_business_id: operation.actor.businessId, p_member_id: operation.actor.memberId,
+    p_conversation_id: conversationId, p_kind: operation.kind, p_tool_name: operation.toolCall.name,
+    p_arguments: { ...operation.toolCall.arguments, ...(operation.clarificationKey ? { __clarificationKey: operation.clarificationKey } : {}), ...(operation.resultUncertain ? { __resultUncertain: true } : {}) },
+    p_expires_at: operation.expiresAt,
+  });
+  if (res?.error) throw res.error;
+  if (res?.data?.ok !== true || typeof res.data.id !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(res.data.id)) throw new Error("pending_response_unknown");
   return { ...operation, id: res.data.id };
 }
 
@@ -210,8 +197,59 @@ export async function consumePending(
     .is("consumed_at", null);
   if (requireUnexpired) query = query.gt("expires_at", new Date().toISOString());
   const res = await query.select("id").maybeSingle();
-  if (res.error) throw res.error;
-  return Boolean(res.data);
+  if (res?.error) throw res.error;
+  if (!res || !("data" in res)) throw new Error("pending_response_unknown");
+  if (res.data === null) return false;
+  if (!res.data || typeof res.data !== "object" || Array.isArray(res.data) || res.data.id !== id) throw new Error("pending_response_unknown");
+  return true;
+}
+
+
+export async function claimSalePending(db:Db,id:string,actor:AgentActor,recovery:boolean,conversationId:string):Promise<boolean>{
+ const result=await db.rpc("claim_sales_pending_execution",{p_business_id:actor.businessId,p_member_id:actor.memberId,p_conversation_id:conversationId,p_pending_id:id,p_recovery:recovery});
+ if(result.error||typeof result.data!=="boolean")throw new Error("pending_response_unknown");return result.data;
+}
+export async function cancelSalePending(db:Db,id:string,actor:AgentActor,conversationId:string):Promise<{consumed:boolean;resultUncertain:boolean}>{
+ const result=await db.rpc("cancel_sales_pending_execution",{p_business_id:actor.businessId,p_member_id:actor.memberId,p_conversation_id:conversationId,p_pending_id:id});
+ if(result.error||typeof result.data?.consumed!=="boolean"||typeof result.data?.resultUncertain!=="boolean")throw new Error("pending_response_unknown");return result.data;
+}
+
+/** Server-only, same-row claim: a process can die after this without losing the UUID. */
+export async function claimDebtPending(db: Db, id: string, actor: AgentActor, recovery: boolean, conversationId: string): Promise<boolean> {
+  const result = await db.rpc("claim_debt_pending_execution", {
+    p_business_id: actor.businessId, p_member_id: actor.memberId, p_conversation_id: conversationId,
+    p_pending_id: id, p_recovery: recovery,
+  });
+  if (result?.error || typeof result?.data !== "boolean") throw new Error("pending_response_unknown");
+  return result.data;
+}
+
+export async function cancelDebtPending(db: Db, id: string, actor: AgentActor, conversationId: string): Promise<{ consumed: boolean; resultUncertain: boolean }> {
+  const result = await db.rpc("cancel_debt_pending_execution", {
+    p_business_id: actor.businessId, p_member_id: actor.memberId, p_conversation_id: conversationId, p_pending_id: id,
+  });
+  if (result?.error || !result?.data || typeof result.data !== "object" || Array.isArray(result.data)
+    || typeof result.data.consumed !== "boolean" || typeof result.data.resultUncertain !== "boolean") throw new Error("pending_response_unknown");
+  return { consumed: result.data.consumed, resultUncertain: result.data.resultUncertain };
+}
+
+/** Purchase claims retain the exact persisted request before any financial RPC. */
+export async function claimPurchasePending(db: Db, id: string, actor: AgentActor, recovery: boolean, conversationId: string): Promise<boolean> {
+  const result = await db.rpc("claim_purchase_pending_execution", {
+    p_business_id: actor.businessId, p_member_id: actor.memberId, p_conversation_id: conversationId,
+    p_pending_id: id, p_recovery: recovery,
+  });
+  if (result?.error || typeof result?.data !== "boolean") throw new Error("pending_response_unknown");
+  return result.data;
+}
+
+export async function cancelPurchasePending(db: Db, id: string, actor: AgentActor, conversationId: string): Promise<{ consumed: boolean; resultUncertain: boolean }> {
+  const result = await db.rpc("cancel_purchase_pending_execution", {
+    p_business_id: actor.businessId, p_member_id: actor.memberId, p_conversation_id: conversationId, p_pending_id: id,
+  });
+  if (result?.error || !result?.data || typeof result.data !== "object" || Array.isArray(result.data)
+    || typeof result.data.consumed !== "boolean" || typeof result.data.resultUncertain !== "boolean") throw new Error("pending_response_unknown");
+  return { consumed: result.data.consumed, resultUncertain: result.data.resultUncertain };
 }
 
 const sanitized = (value: unknown): unknown => {
@@ -290,47 +328,43 @@ async function resolveBranchId(db: Db, actor: AgentActor, requested?: string): P
   return branches.data[0].id;
 }
 
-export async function executeTool(db: Db, actor: AgentActor, call: ToolCall): Promise<unknown> {
+export async function executeTool(db: Db, actor: AgentActor, call: ToolCall, pendingId?: string): Promise<unknown> {
+  if (isPurchaseWrite(call.name)) return executePurchaseTool(db, actor, call, pendingId);
+  if (isSaleWrite(call.name)) return executeSaleTool(db, actor, call);
+  if (isDebtPlanTool(call.name)) return executeDebtTool(db, actor, call);
   const a = call.arguments as any;
   if ("businessId" in a || "business_id" in a) throw new Error("business_id_not_allowed");
 
   if (call.name.startsWith("sales.")) {
-    const today = new Date().toLocaleDateString("en-CA", {
-      timeZone: "America/Argentina/Buenos_Aires",
-    });
+    const business = await db.from("businesses").select("timezone").eq("id",actor.businessId).maybeSingle();
+    if (business.error || !business.data?.timezone) throw new Error("sales_timezone_unavailable");
+    const timezone = business.data.timezone;
+    const today = localDate(new Date().toISOString(),timezone);
     const period = async (from: string, to: string) => {
-      const res = await branchQuery(
-        db
-          .from("sales")
-          .select("amount")
-          .eq("business_id", actor.businessId)
-          .gte("occurred_at", `${from}T00:00:00-03:00`)
-          .lte("occurred_at", `${to}T23:59:59-03:00`),
-        actor,
-      );
-      if (res.error) throw res.error;
-      return {
-        count: res.data.length,
-        total: res.data.reduce((sum: number, row: any) => sum + Number(row.amount ?? 0), 0),
-        from,
-        to,
-      };
+      const start = localDateTimeToIso(`${from}T00:00`,timezone);
+      const end = localDateTimeToIso(`${shiftDate(to,1)}T00:00`,timezone);
+      const rows:any[] = await withSalesRevision(db,actor.businessId,()=>readAllSales((offset,last) => applyAdminBranchScope(db.from("sales")
+        .select("id,amount,sale_kind",{count:"exact"}).eq("business_id",actor.businessId).eq("status","active")
+        .gte("occurred_at",start).lt("occurred_at",end).order("occurred_at").order("id").range(offset,last),actor.branchIds)));
+      return { count:rows.length, detailedTickets:rows.filter(row=>row.sale_kind==="detailed").length,
+        total:sumSaleAmounts(rows),currency:null,from,to };
     };
 
     if (call.name === "sales.getToday") return period(today, today);
     if (call.name === "sales.getPeriod") return period(a.from, a.to);
 
-    const [current, previous] = await Promise.all([
+    const [current, previous] = await withSalesRevision(db,actor.businessId,()=>Promise.all([
       period(a.from, a.to),
       period(a.previousFrom, a.previousTo),
-    ]);
-    return { current, previous, difference: current.total - previous.total };
+    ]));
+    return { current, previous, difference: sumSaleAmounts([{amount:current.total},{amount:-previous.total}]) };
   }
 
   if (call.name === "purchases.list") {
     let query = db
       .from("purchases")
       .select("id,branch_id,purchased_at,total,payment_method,supplier_id")
+      .eq("record_status", "active")
       .eq("business_id", actor.businessId)
       .order("purchased_at", { ascending: false })
       .limit(50);
@@ -344,54 +378,10 @@ export async function executeTool(db: Db, actor: AgentActor, call: ToolCall): Pr
     return res.data;
   }
 
-  if (call.name === "purchases.create") {
-    let branchId: string | null = null;
-    if (actor.branchIds !== null) {
-      if (actor.branchIds.length !== 1) throw new Error("purchase_branch_ambiguous");
-      branchId = actor.branchIds[0];
-    } else {
-      const branch = await db.from("branches").select("id")
-        .eq("business_id", actor.businessId)
-        .order("is_main", { ascending: false })
-        .order("created_at", { ascending: true })
-        .limit(1).maybeSingle();
-      if (branch.error) throw branch.error;
-      branchId = branch.data?.id ?? null;
-    }
-    if (!branchId) throw new Error("purchase_branch_not_found");
-
-    const supplier = await db
-      .from("suppliers")
-      .select("id")
-      .eq("business_id", actor.businessId)
-      .ilike("name", a.supplier)
-      .maybeSingle();
-
-    if (supplier.error) throw supplier.error;
-    if (!supplier.data) throw new Error("supplier_not_found");
-
-    const res = await db
-      .from("purchases")
-      .insert({
-        business_id: actor.businessId,
-        branch_id: branchId,
-        supplier_id: supplier.data.id,
-        purchased_at: a.purchasedAt ?? new Date().toISOString().slice(0, 10),
-        total: Number(a.amount),
-        payment_method: a.paymentMethod,
-        created_by: actor.userId,
-      })
-      .select("id")
-      .single();
-
-    if (res.error) throw res.error;
-    return res.data;
-  }
-
   if (call.name === "debts.list") {
     let query = db
       .from("debts")
-      .select("id,creditor,concept,pending_amount,due_date,status")
+      .select("id,creditor,concept,pending_amount,due_date,status,currency")
       .eq("business_id", actor.businessId)
       .neq("status", "settled")
       .order("due_date");
@@ -401,55 +391,10 @@ export async function executeTool(db: Db, actor: AgentActor, call: ToolCall): Pr
     return res.data;
   }
 
-  if (call.name === "debts.create") {
-    const branchId = await resolveBranchId(db, actor, a.branchId);
-    const res = await db
-      .from("debts")
-      .insert({
-        business_id: actor.businessId,
-        branch_id: branchId,
-        creditor: a.creditor,
-        original_amount: Number(a.amount),
-        pending_amount: Number(a.amount),
-        concept: a.concept,
-        // category existe desde la migración contable 0011.
-        category: a.category ?? "supplier",
-      })
-      .select("id")
-      .single();
-
-    if (res.error) throw res.error;
-    return res.data;
-  }
-
   if (call.name === "debts.registerPayment") {
-    let query = db
-      .from("debts")
-      .select("id,pending_amount")
-      .eq("business_id", actor.businessId)
-      .ilike("creditor", a.creditor)
-      .neq("status", "settled")
-      .limit(2);
-    query = branchQuery(query, actor);
-    const debt = await query;
-
-    if (debt.error) throw debt.error;
-    if (debt.data?.length !== 1) throw new Error("debt_not_unambiguous");
-
-    const amount = Number(a.amount ?? debt.data[0].pending_amount);
-    const res = await db.rpc("register_debt_payment_atomic", {
-      p_debt_id: debt.data[0].id,
-      p_business_id: actor.businessId,
-      p_actor_id: actor.userId,
-      p_amount: amount,
-      p_payment_method: a.paymentMethod ?? "Transferencia",
-      p_paid_at: a.paidAt ?? new Date().toISOString().slice(0, 10),
-      p_notes: null,
-    });
-
-    if (res.error) throw res.error;
-    if (!res.data?.ok) throw new Error(res.data?.error ?? "debt_payment_failed");
-    return res.data;
+    // Historical debts lack an idempotent, currency-pinned confirmation contract.
+    // Never route a legacy command around the plan ledger or retry a possible payment.
+    throw new Error("legacy_payment_requires_review");
   }
 
   if (call.name === "stock.getLowStock") {
@@ -482,13 +427,19 @@ export async function executeTool(db: Db, actor: AgentActor, call: ToolCall): Pr
 
     const res = await db.rpc("adjust_stock_for_agent", {
       p_business_id: actor.businessId,
+      p_actor_id: actor.userId,
       p_ingredient_id: ingredient.data.id,
       p_branch_id: branchId,
       p_operation: a.operation,
       p_quantity: Number(a.quantity),
+      p_reason: a.reason,
+      p_unit: a.unit ?? null,
     });
 
     if (res.error) throw res.error;
+    const movement = Array.isArray(res.data) ? res.data[0] : res.data;
+    const validNumber = (value: unknown) => (typeof value === "number" || typeof value === "string" && value.trim() !== "") && Number.isFinite(Number(value));
+    if (!movement || !validNumber(movement.new_current) || !validNumber(movement.delta)) throw new Error("stock_result_unconfirmed");
     return res.data;
   }
 

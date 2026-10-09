@@ -26,12 +26,13 @@ const MODULE_LABEL: Record<string, string> = {
 export default async function SinPermisosPage({
   searchParams,
 }: {
-  searchParams: { m?: string; from?: string; reason?: string };
+  searchParams: Promise<{ m?: string; from?: string; reason?: string }>;
 }) {
   const ctx = await getCurrentUserContext();
-  const moduleKey = searchParams.m ?? "";
-  const fromPath = searchParams.from ?? "/";
-  const multipleBusinesses = searchParams.reason === "multiple_businesses";
+  const params = await searchParams;
+  const moduleKey = params.m ?? "";
+  const fromPath = params.from ?? "/";
+  const multipleBusinesses = params.reason === "multiple_businesses";
   const moduleLabel = MODULE_LABEL[moduleKey] ?? moduleKey ?? "esa sección";
 
   return (

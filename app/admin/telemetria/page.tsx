@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 export default async function TelemetriaPage({
   searchParams,
 }: {
-  searchParams?: Record<string, string | string[] | undefined>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const check = await checkInternalAdmin();
   if (!check.allowed) {
@@ -27,19 +27,20 @@ export default async function TelemetriaPage({
     redirect("/sin-permisos?m=internal_admin&from=/admin/telemetria");
   }
 
-  const rangeParam = String(searchParams?.range ?? "7d");
+  const params = await searchParams;
+  const rangeParam = String(params?.range ?? "7d");
   const range: TelemetryRange = (VALID_RANGES as string[]).includes(rangeParam)
     ? (rangeParam as TelemetryRange)
     : "7d";
 
   const filters: TelemetryEventsFilters = {
     range,
-    module: (searchParams?.module as string) || null,
-    user: (searchParams?.user as string) || null,
-    status: (["ok", "error", "warn"] as const).includes(searchParams?.status as any)
-      ? (searchParams?.status as "ok" | "error" | "warn")
+    module: (params?.module as string) || null,
+    user: (params?.user as string) || null,
+    status: (["ok", "error", "warn"] as const).includes(params?.status as any)
+      ? (params?.status as "ok" | "error" | "warn")
       : null,
-    q: (searchParams?.q as string) || null,
+    q: (params?.q as string) || null,
     limit: 200,
   };
 

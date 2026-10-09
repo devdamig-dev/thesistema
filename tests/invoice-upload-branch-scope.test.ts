@@ -32,6 +32,7 @@ function adminDb() {
         },
         update(value: any) { mutation = "update"; payload = value; return query; },
         async maybeSingle() {
+          if (table === "profiles") return { data: { active: true }, error: null };
           if (table === "businesses") return { data: { organization_id: "org-a" }, error: null };
           if (table === "branches") {
             const valid = filters.id === branchA || filters.id === branchB;
@@ -105,7 +106,8 @@ loader._load = function(name: string, ...args: any[]) {
         isAuthenticated: true,
         userId: "user-a",
         businessId,
-        role: "employee",
+        role: "manager",
+        enabledModules: ["invoices_ocr"],
         assignedBranchIds,
       }),
     },

@@ -1,0 +1,93 @@
+name: Quality
+on:
+  pull_request:
+  push:
+    branches: [main, qa/management-integrated-20261009]
+permissions:
+  contents: read
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_PUBLIC_APP_MODE: demo
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:ui:fixtures
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test:db:catalog
+      - run: npm run test:db:stock
+      - run: npm run test:customers:sql
+      - run: npm run test:suppliers:sql
+      - run: npm run test:debts:sql
+      - run: npm run test:sales:sql
+      - run: npm run test:employees:sql
+      - run: npm run test:closures:sql
+      - run: npm run test:expenses:sql
+      - run: npm run test:purchases:sql
+      - run: npm run test:invoices:sql
+      - run: npm run test:purchases:transports
+      - run: npm run test:advances:sql
+      - run: npm run build
+      - run: npx --no-install playwright install --with-deps chromium
+      - run: npm run test:ui
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: management-ui-fixtures
+          path: |
+            .test-artifacts/**/*.png
+            .test-artifacts/management-ui-result.json
+            .test-artifacts/**/browser-result.json
+            .test-artifacts/**/bundle-result.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+
+  postgres17:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Verify PostgreSQL17 suites and independent session races
+        run: npm run test:db:native
+
+  postgrest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Verify fixture Data API decimal casts and row isolation
+        run: npm run test:sales:rest
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: sales-postgrest-fixtures
+          path: .test-artifacts/sales-postgrest/result.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7

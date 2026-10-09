@@ -1,6 +1,11 @@
+import { isPurchaseWrite, validatePurchaseCall } from "../purchases/agent";
+import { isSaleWrite, validateSaleCall } from "../sales/agent";
+import { normalizeUnit } from "../recipes/quantities";
+import { canonicalDebtCall, isDebtPlanTool } from "./debt-contract";
+import { validateDebtToolCall } from "./debt-validation";
 import type { ToolCall } from "./types";
 
-type FieldKind = "string" | "positiveNumber" | "nonNegativeNumber" | "date" | "paymentMethod" | "stockOperation" | "debtCategory";
+type FieldKind = "string" | "positiveNumber" | "nonNegativeNumber" | "date" | "paymentMethod" | "stockOperation" | "stockUnit" | "stockReason" | "debtCategory";
 type ToolSchema = Record<string, FieldKind>;
 export type ValidationIssue = { key: string; message: string; unexpected?: boolean };
 export type ToolValidation = { call: ToolCall; issues: ValidationIssue[] };
@@ -10,12 +15,11 @@ const schemas: Record<string, ToolSchema> = {
   "sales.getPeriod": { from: "date", to: "date" },
   "sales.comparePeriods": { from: "date", to: "date", previousFrom: "date", previousTo: "date" },
   "purchases.list": {},
-  "purchases.create": { supplier: "string", amount: "positiveNumber", paymentMethod: "paymentMethod", purchasedAt: "date" },
   "debts.list": {},
   "debts.create": { creditor: "string", amount: "positiveNumber", concept: "string", category: "debtCategory", dueDate: "date", branchId: "string" },
   "debts.registerPayment": { creditor: "string", amount: "positiveNumber", paymentMethod: "paymentMethod", paidAt: "date" },
   "stock.getLowStock": {},
-  "stock.addMovement": { ingredient: "string", quantity: "positiveNumber", operation: "stockOperation", branchId: "string" },
+  "stock.addMovement": { ingredient: "string", quantity: "nonNegativeNumber", operation: "stockOperation", branchId: "string", reason: "stockReason", unit: "stockUnit" },
   "products.list": {},
   "products.create": { name: "string", price: "positiveNumber", category: "string", cost: "nonNegativeNumber" },
   "invoices.listPending": {},
@@ -31,7 +35,7 @@ const paymentMethods: Record<string, string> = {
   otro: "Otro",
 };
 const debtCategories = new Set(["supplier", "tax", "loan", "rent", "utility", "payroll", "other"]);
-const stockOperations = new Set(["in", "out", "set"]);
+const stockOperations = new Set(["in", "out", "waste", "set"]);
 const normalizeEnum = (value: string) => value.trim().toLocaleLowerCase("es").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
 function validIsoDate(value: string): boolean {
@@ -42,6 +46,14 @@ function validIsoDate(value: string): boolean {
 
 function validateField(key: string, kind: FieldKind, raw: unknown): { value?: unknown; issue?: ValidationIssue } {
   if (raw === undefined || raw === null || raw === "") return {};
+  if (kind === "stockUnit") {
+    const unit = normalizeUnit(raw);
+    return unit ? { value: unit } : { issue: { key, message: "debe ser unit, kg, g, l o ml; no se pueden inferir paquetes ni densidades" } };
+  }
+  if (kind === "stockReason") {
+    if (typeof raw !== "string" || !raw.trim() || raw.trim().length > 1000) return { issue: { key, message: "debe ser un motivo de hasta 1000 caracteres" } };
+    return { value: raw.trim() };
+  }
   if (kind === "string") {
     if (typeof raw !== "string" || !raw.trim() || raw.trim().length > 160) return { issue: { key, message: "debe ser un texto de hasta 160 caracteres" } };
     return { value: raw.trim() };
@@ -62,7 +74,7 @@ function validateField(key: string, kind: FieldKind, raw: unknown): { value?: un
     const value = paymentMethods[normalized];
     return value ? { value } : { issue: { key, message: "debe ser Transferencia, Efectivo, Débito, Crédito, Tarjeta, Cuenta corriente u Otro" } };
   }
-  if (kind === "stockOperation") return stockOperations.has(normalized) ? { value: normalized } : { issue: { key, message: "debe ser in, out o set" } };
+  if (kind === "stockOperation") return stockOperations.has(normalized) ? { value: normalized } : { issue: { key, message: "debe ser in, out, waste o set" } };
   return debtCategories.has(normalized) ? { value: normalized } : { issue: { key, message: "tiene una categoría no permitida" } };
 }
 
@@ -76,6 +88,9 @@ function validatePeriod(argumentsValue: Record<string, unknown>, from: string, t
 }
 
 export function validateToolCall(call: ToolCall): ToolValidation {
+  if (isSaleWrite(call.name)) return validateSaleCall(call);
+  if (isPurchaseWrite(call.name)) return validatePurchaseCall(call);
+  if (isDebtPlanTool(call.name)) return validateDebtToolCall(canonicalDebtCall(call));
   const schema = schemas[call.name];
   if (!schema || !call.arguments || typeof call.arguments !== "object" || Array.isArray(call.arguments)) {
     return { call: { name: call.name, arguments: {} }, issues: [{ key: "arguments", message: "no tienen un formato válido", unexpected: true }] };
@@ -94,6 +109,9 @@ export function validateToolCall(call: ToolCall): ToolValidation {
     else if (result.value !== undefined) cleaned[key] = result.value;
   }
 
+  if (call.name === "stock.addMovement" && cleaned.quantity === 0 && cleaned.operation !== "set") {
+    issues.push({ key: "quantity", message: "debe ser mayor a cero para entradas, salidas y mermas" });
+  }
   if (call.name === "sales.getPeriod") validatePeriod(cleaned, "from", "to", issues);
   if (call.name === "sales.comparePeriods") {
     validatePeriod(cleaned, "from", "to", issues);

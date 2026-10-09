@@ -1,3 +1,4 @@
+import type { CreatePlanRequest, PaymentPlanRequest } from "../../app/deudas/plan-contract";
 /**
  * Tipos del subsistema de extracción IA.
  *
@@ -67,6 +68,9 @@ export interface ExtractedExpense {
 
 export interface ExtractedStockUpdate {
   ingredient?: string;
+  ingredient_id?: string;
+  operation?: "in" | "out" | "waste" | "set";
+  reason_note?: string;
   qty?: number;
   unit?: string;
   reason?: "purchase" | "sale_consumption" | "waste" | "manual_adjust";
@@ -99,6 +103,8 @@ export interface ExtractedSupplierPriceChange {
 }
 
 export interface ExtractedDebtCreated {
+  /** Complete v2 proposal; an operator reviews the server-generated schedule before approval. */
+  planRequest?: Omit<CreatePlanRequest, "requestId" | "scheduleConfirmed">;
   creditor?: string;
   concept?: string;
   original_amount?: number;
@@ -107,6 +113,8 @@ export interface ExtractedDebtCreated {
 }
 
 export interface ExtractedDebtPayment {
+  /** Explicit debt, amount, date, method and allocation; never split into separate debts. */
+  paymentRequest?: Omit<PaymentPlanRequest, "requestId">;
   creditor?: string;
   concept?: string;
   amount?: number;
