@@ -41,6 +41,7 @@ jobs:
           name: management-ui-fixtures
           path: |
             .test-artifacts/**/*.png
+            .test-artifacts/management-ui-result.json
             .test-artifacts/**/browser-result.json
             .test-artifacts/**/bundle-result.json
           include-hidden-files: true

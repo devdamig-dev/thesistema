@@ -50,6 +50,9 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',true);
 select pg_temp.assert_true(not has_function_privilege('authenticated','debt_private.audit_change()','execute'),'private audit cannot be invoked');
 select pg_temp.assert_true(not has_function_privilege('anon','public.create_debt_installment_plan(jsonb,uuid,uuid)','execute'),'anonymous create denied');
+select pg_temp.assert_true(not has_function_privilege('service_role','public.is_admin_of_business(uuid)','execute'),'native role-cache fix cannot broaden helper access');
+select pg_temp.assert_true(debt_private.can_write('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000021'),'prime authenticated membership plan');
+select pg_temp.assert_true(debt_private.business_date('00000000-0000-4000-8000-000000000011')=(current_timestamp at time zone 'UTC')::date,'prime authenticated business date plan');
 select pg_temp.assert_true(not exists(select 1 from pg_proc where oid in ('public.create_debt_installment_plan(jsonb,uuid,uuid)'::regprocedure,'public.register_debt_plan_payment(uuid,bigint,jsonb,uuid,uuid)'::regprocedure,'public.void_debt_plan_payment(uuid,uuid,bigint,text,uuid,uuid)'::regprocedure) and prosecdef),'all RPCs security invoker');
 
 do $$
@@ -251,6 +254,8 @@ reset role;
 set local role authenticated;
 
 select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000003',true);
+select pg_temp.assert_true(not debt_private.can_write('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000021'),'authenticated viewer does not inherit service membership privilege');
+select pg_temp.assert_true(not has_function_privilege('service_role','public.is_admin_of_business(uuid)','execute'),'service helper ACL remains unchanged after role round trip');
 select pg_temp.assert_true(not exists(select 1 from public.debts where branch_id='00000000-0000-4000-8000-000000000022'),'viewer branch read isolated');
 select pg_temp.assert_true(not exists(select 1 from public.debt_installments where branch_id='00000000-0000-4000-8000-000000000022'),'installment RLS branch isolated');
 select pg_temp.assert_true(not exists(select 1 from public.activity_logs where target_type='debts' and data->>'branch_id'='00000000-0000-4000-8000-000000000022'),'audit branch isolated');

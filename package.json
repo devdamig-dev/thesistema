@@ -21,7 +21,7 @@
     "test:ui:stock": "node scripts/run-stock-ui.mjs",
     "test:ui:debts": "node tests/debt-plan-ui.browser.mjs",
     "test:ui:inbox-debts": "node tests/inbox-debt-ui.browser.mjs",
-    "test:ui": "npm run test:ui:catalog && npm run test:ui:customers && npm run test:ui:suppliers && npm run test:ui:stock && npm run test:ui:debts && npm run test:ui:inbox-debts",
+    "test:ui": "node scripts/run-management-ui.mjs",
     "test:ui:bundle": "BUNDLE_ONLY=1 npm run test:ui",
     "test:ui:fixtures": "node --test tests/management-ui-fixtures.test.mjs",
     "test:db:native": "node scripts/run-catalog-sql.mjs --native-docker && node scripts/run-catalog-sql.mjs stock-ledger --native-docker && node scripts/run-customers-sql.mjs --native-docker && node scripts/run-suppliers-sql.mjs --native-docker && node scripts/run-debt-plans-sql.mjs --native-docker"

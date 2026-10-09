@@ -75,14 +75,14 @@ await runUiHarness({
         await editor.getByText(/Equivale a 0,25 kg\./).waitFor();
         assert.deepEqual(await editor.getByLabel('Unidad de la cantidad').locator('option').evaluateAll((options) => options.map((option) => option.value)), ['', 'g']);
         const ingredients = await page.evaluate(() => window.qa.ingredients);
-        await editor.getByLabel('Insumo', { exact: true }).selectOption(ingredients[1].id);
+        await editor.getByRole('combobox', { name: 'Insumo', exact: true }).selectOption(ingredients[1].id);
         assert.equal(await editor.getByLabel('Unidad de la cantidad').inputValue(), '');
         assert.deepEqual(await editor.getByLabel('Unidad de la cantidad').locator('option').evaluateAll((options) => options.map((option) => option.value)), ['', 'ml']);
         await editor.getByLabel('Unidad de la cantidad').selectOption('ml');
         await editor.getByText(/Equivale a 0,25 l\./).waitFor();
-        await editor.getByLabel('Insumo', { exact: true }).selectOption(ingredients[2].id);
+        await editor.getByRole('combobox', { name: 'Insumo', exact: true }).selectOption(ingredients[2].id);
         assert.deepEqual(await editor.getByLabel('Unidad de la cantidad').locator('option').evaluateAll((options) => options.map((option) => option.value)), ['']);
-        await editor.getByLabel('Insumo', { exact: true }).selectOption(ingredients[0].id);
+        await editor.getByRole('combobox', { name: 'Insumo', exact: true }).selectOption(ingredients[0].id);
         await editor.getByRole('button', { name: 'Merma', exact: true }).click();
         await editor.getByLabel('Unidad de la cantidad').selectOption('g');
         await screenshot(`${prefix}-movement-draft`);

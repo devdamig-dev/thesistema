@@ -143,16 +143,23 @@ begin
 end $$;
 revoke all on function debt_private.set_actor(uuid) from public,anon;
 grant execute on function debt_private.set_actor(uuid) to authenticated,service_role;
+-- PL/pgSQL gives each invoker role a correctly scoped statement plan when a
+-- connection switches authenticated/service_role. Keep RLS, ACL and predicates
+-- unchanged; do not grant service_role access to RLS-only membership helpers.
 -- Write roles are business-wide in the existing branch model. Membership and
 -- active profile are always rechecked for the resolved actor, including servers.
 create function debt_private.can_write(p_business uuid,p_branch uuid) returns boolean
-language sql stable security invoker set search_path='' as $$
+language plpgsql stable security invoker set search_path='' as $$
+declare allowed boolean;
+begin
  select debt_private.actor_id() is not null and exists (
    select 1 from public.business_members m join public.profiles p on p.id=m.user_id
    where m.business_id=p_business and m.user_id=debt_private.actor_id() and p.active
      and m.role in ('owner','admin','manager'))
  and (current_setting('role',true)='service_role' or session_user='service_role' or public.can_access_business_branch(p_business,p_branch))
-$$;
+ into allowed;
+ return allowed;
+end $$;
 revoke all on function debt_private.can_write(uuid,uuid) from public,anon;
 grant execute on function debt_private.can_write(uuid,uuid) to authenticated,service_role;
 alter table public.debt_installments enable row level security;
@@ -203,9 +210,12 @@ grant execute on function debt_private.can_read_audit_scope(uuid,uuid) to authen
 
 -- Civil dates follow the configured business timezone; timestamps remain UTC.
 create function debt_private.business_date(p_business uuid) returns date
-language sql stable security invoker set search_path='' as $$
- select (now() at time zone b.timezone)::date from public.businesses b where b.id=p_business
-$$;
+language plpgsql stable security invoker set search_path='' as $$
+declare business_day date;
+begin
+ select (now() at time zone b.timezone)::date into business_day from public.businesses b where b.id=p_business;
+ return business_day;
+end $$;
 revoke all on function debt_private.business_date(uuid) from public,anon;
 grant execute on function debt_private.business_date(uuid) to authenticated,service_role;
 
