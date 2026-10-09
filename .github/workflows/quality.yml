@@ -44,6 +44,8 @@ jobs:
       - run: npm run test:purchases:transports
       - run: npm run test:advances:sql
       - run: npm run test:db:upgrade
+      - name: Preserve populated purchase backfill fields and trigger modes
+        run: node tests/purchase-cost-backfill-upgrade.mjs
       - run: npm run build
       - run: npx --no-install playwright install --with-deps chromium
       - run: npm run test:ui

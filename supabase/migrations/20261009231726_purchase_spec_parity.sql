@@ -443,14 +443,37 @@ begin
 end $$;
 -- Existing noninvoice detail was not repriced by the earlier kernel. Mark only
 -- those rows for an explicit owner/admin refresh; do not guess historic costs.
--- Transactional migration maintenance restores the immutable-history trigger.
-alter table public.purchases disable trigger manual_purchase_history;
-alter table public.purchases disable trigger purchase_void_audit;
-update public.purchases p set cost_refresh_pending=true
-where p.manual_request_id is not null and p.purchase_kind='detailed'
- and exists(select 1 from public.purchase_items i where i.purchase_id=p.id and i.ingredient_id is not null);
-alter table public.purchases enable trigger manual_purchase_history;
-alter table public.purchases enable trigger purchase_void_audit;
+-- This metadata flag is not a purchase edit: preserve timestamps, audit history
+-- and each affected trigger's exact ordinary/always/replica/disabled mode. One
+-- atomic statement rolls back both data and trigger changes on any failure.
+do $purchase_cost_backfill$
+declare trigger_states jsonb; legacy_trigger record;
+begin
+ lock table public.purchases in access exclusive mode;
+ select jsonb_object_agg(tgname,tgenabled::text) into trigger_states
+ from pg_catalog.pg_trigger
+ where tgrelid='public.purchases'::regclass and not tgisinternal
+  and tgname in ('manual_purchase_history','purchase_void_audit','trg_purchases_updated');
+ if trigger_states is null or not (trigger_states ?& array['manual_purchase_history','purchase_void_audit','trg_purchases_updated']) then
+  raise exception 'purchase_cost_backfill_expected_triggers_missing';
+ end if;
+ for legacy_trigger in select key as name,value as enabled from jsonb_each_text(trigger_states) loop
+  if legacy_trigger.enabled<>'D' then
+   execute format('alter table public.purchases disable trigger %I',legacy_trigger.name);
+  end if;
+ end loop;
+ update public.purchases p set cost_refresh_pending=true
+ where p.manual_request_id is not null and p.purchase_kind='detailed'
+  and exists(select 1 from public.purchase_items i where i.purchase_id=p.id and i.ingredient_id is not null);
+ for legacy_trigger in select key as name,value as enabled from jsonb_each_text(trigger_states) loop
+  if legacy_trigger.enabled<>'D' then
+   execute format('alter table public.purchases enable %s trigger %I',
+    case legacy_trigger.enabled when 'A' then 'always' when 'R' then 'replica' else '' end,
+    legacy_trigger.name);
+  end if;
+ end loop;
+end
+$purchase_cost_backfill$;
 
 create or replace function public.claim_purchase_pending_execution(
  p_business_id uuid,p_member_id uuid,p_conversation_id uuid,p_pending_id uuid,p_recovery boolean
