@@ -112,7 +112,7 @@ export function CustomersClient({ databaseMode, initial }: { databaseMode: boole
         <label className="block text-sm">Nombre *<input autoFocus required maxLength={200} className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} autoComplete="name" /></label>
         <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm">Teléfono<input type="tel" maxLength={40} className={inputClass} value={form.phone ?? ""} onChange={(e) => setForm({ ...form, phone: e.target.value })} autoComplete="tel" /></label><label className="text-sm">Email<input type="email" maxLength={254} className={inputClass} value={form.email ?? ""} onChange={(e) => setForm({ ...form, email: e.target.value })} autoComplete="email" /></label></div>
         <label className="block text-sm">Canal de contacto<input maxLength={80} className={inputClass} value={form.channel ?? ""} onChange={(e) => setForm({ ...form, channel: e.target.value })} placeholder="Por ejemplo: teléfono, local o WhatsApp" /></label>
-        <label className="block text-sm">Notas<textarea rows={4} maxLength={2000} className={inputClass} value={form.notes ?? ""} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
+        <label className="block text-sm">Notas<textarea aria-label="Notas" rows={4} maxLength={2000} className={inputClass} value={form.notes ?? ""} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
       </fieldset>
       {formError && <p role="alert" className="text-sm text-warn-500">{formError}</p>}
       {verificationRequired && <p role="status" className="text-sm text-ink-muted">El resultado necesita verificación. Cerrá este formulario para recargar el catálogo antes de guardar otra vez.</p>}
