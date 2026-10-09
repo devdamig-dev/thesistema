@@ -613,7 +613,7 @@ export type Database = {
           pending_amount: number;
           interest_rate: number | null;
           due_date: string | null;
-          status: "active" | "overdue" | "settled";
+          status: "active" | "overdue" | "settled" | "cancelled";
           taken_at: string;
           settled_at: string | null;
           notes: string | null;

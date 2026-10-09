@@ -21,6 +21,7 @@ const empty = (): DebtOperationJournal => ({ active: [], expired: [] });
 const payment = (): Extract<PendingDebtOperation, { kind: "pay" | "legacy" }> => ({ kind: "pay", request: { requestId, debtId, expectedVersion: 1, amountCents: 5000, paidAt: "2026-10-09", paymentMethod: "Transferencia privada", allocation: { rule: "oldest_due" }, notes: "Nota confidencial" } });
 const create = (): Extract<PendingDebtOperation, { kind: "create" }> => ({ kind: "create", request: { requestId, branchId, creditor: "Acreedor privado", creditorType: "bank", takenAt: "2026-10-09", planInput: { mode: "single", currency: "ARS", originalAmountCents: 10000, financing: { totalFinancedCents: 10000 }, dueDate: "2026-11-10" }, scheduleConfirmed: true } });
 const variants: PendingDebtOperation[] = [
+  { kind: "cancel", request: { requestId, debtId, expectedVersion: 2, reason: "Registro duplicado", administrativeOnlyConfirmed: true } },
   create(),
   payment(),
   { ...payment(), kind: "legacy" },
@@ -45,7 +46,7 @@ test("missing storage produces an empty journal and new retention stamps the sup
 });
 
 test("every operation kind round-trips while active and produces a minimal recovery reference", () => {
-  const expectedTargets = [null, null, null, installmentId, paymentId, null, installmentId];
+  const expectedTargets = [null, null, null, null, installmentId, paymentId, null, installmentId];
   variants.forEach((operation, index) => {
     const journal = retainDebtOperation(empty(), operation, NOW);
     assert.deepEqual(parseOperationJournal(serializeOperationJournal(journal, NOW + 1), NOW + 1), journal);

@@ -14,7 +14,7 @@ import { Drawer } from "@/components/ui/drawer";
 import { useToast } from "@/components/ui/toast";
 import { exportPurchasesCsvAction } from "@/app/actions/exports";
 import {
-  createPurchaseAction, voidPurchaseAction, getPurchaseCorrectionAction, type PurchasesPageRow,
+  createPurchaseAction, refreshPurchaseCostsAction, voidPurchaseAction, getPurchaseCorrectionAction, type PurchasesPageRow,
   getPurchasesPageDataAction,
   type PurchaseInput,
   type PurchasesPageData,
@@ -99,7 +99,7 @@ export default function ComprasPage() {
         toast({ tone: "warn", title: "No pudimos registrar la compra", description: res.error });
         return res.persisted;
       }
-      toast({ tone: "success", title: "Compra registrada", description: "Compra, líneas y existencias guardadas juntas." });
+      toast({ tone: "success", title: "Compra registrada", description: res.costRefreshPending ? "Compra y stock guardados. Un propietario o administrador debe actualizar los costos en Compras." : "Compra y detalle declarado guardados juntos." });
       setPurchaseDrawerOpen(false);
       await loadPurchases();
       return true;
@@ -148,6 +148,9 @@ export default function ComprasPage() {
         </div>
       ) : loadError ? null : (
         <>
+          {IS_DATABASE && databaseData?.costRefreshPending && <div role="status" className="rounded-xl border border-warn-500/30 p-4 text-sm">Hay compras con costos pendientes de actualización. Los márgenes afectados requieren revisión por un propietario o administrador.
+            {databaseData.canRefreshCosts && <Button disabled={pending} onClick={()=>startMutation(async()=>{const result=await refreshPurchaseCostsAction();if(result.ok){toast({tone:"success",title:result.pending ? "Costos todavía por verificar" : "Costos actualizados",description:result.pending ? "Hay insumos sin compras activas. Se conserva el último costo conocido y sus márgenes siguen ocultos." : undefined});await loadPurchases();}else toast({tone:"warn",title:"No se pudieron actualizar los costos",description:result.error});})}>Actualizar costos de compras</Button>}
+          </div>}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <KpiCard label="Compras del mes" value={formatARS(totalMes, { compact: true })} delta={IS_DATABASE ? undefined : 14.1} tone="brand" />
             <KpiCard label="Órdenes" value={String(orderCount)} delta={IS_DATABASE ? undefined : 5} />
@@ -195,7 +198,7 @@ export default function ComprasPage() {
                         <th className="px-5 py-2.5 font-medium">Insumo</th>
                         <th className="px-5 py-2.5 text-right font-medium">Cant.</th>
                         <th className="px-5 py-2.5 text-right font-medium">Var.</th>
-                        <th className="px-5 py-2.5 text-right font-medium">Monto</th><th className="px-5 py-2.5">Estado</th>
+                        <th className="px-5 py-2.5 text-right font-medium">Monto</th><th className="px-5 py-2.5">Origen y referencia</th><th className="px-5 py-2.5">Estado</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -215,7 +218,8 @@ export default function ComprasPage() {
                             )}
                           </td>
                           <td className="px-5 py-3 text-right font-semibold tabular-nums text-ink">{formatARS(p.monto)}</td>
-                          <td className="px-5 py-3">{IS_DATABASE && "status" in p ? p.status === "voided" ? "Anulada" : (p as PurchasesPageRow).source === "manual" ? <div className="flex gap-1"><Button size="sm" variant="ghost" disabled={pending} onClick={() => {const id=(p as PurchasesPageRow).id;startMutation(async()=>{const result=await getPurchaseCorrectionAction(id);if(result.ok){setCorrection(result.input);setPurchaseDrawerOpen(true);}else toast({tone:"warn",title:"No se pudo abrir",description:result.error});});}}>Corregir</Button><Button size="sm" variant="ghost" disabled={pending} onClick={() => {setVoidTarget(p as PurchasesPageRow);setVoidReason("");}}>Anular</Button></div> : "Original" : "Demo"}</td>
+                          <td className="px-5 py-3 text-xs">{IS_DATABASE && "status" in p ? <>{purchaseOriginLabel(p as PurchasesPageRow)}{(p as PurchasesPageRow).receiptReference && <div>Referencia: {(p as PurchasesPageRow).receiptReference}</div>}{(p as PurchasesPageRow).costRefreshPending && <div>Costos pendientes</div>}</> : "Demo"}</td>
+                          <td className="px-5 py-3">{IS_DATABASE && "status" in p ? p.status === "voided" ? "Anulada" : ["manual","inbox","whatsapp"].includes((p as PurchasesPageRow).source ?? "") ? <div className="flex gap-1"><Button size="sm" variant="ghost" disabled={pending} onClick={() => {const id=(p as PurchasesPageRow).id;startMutation(async()=>{const result=await getPurchaseCorrectionAction(id);if(result.ok){setCorrection(result.input);setPurchaseDrawerOpen(true);}else toast({tone:"warn",title:"No se pudo abrir",description:result.error});});}}>Corregir</Button><Button size="sm" variant="ghost" disabled={pending} onClick={() => {setVoidTarget(p as PurchasesPageRow);setVoidReason("");}}>Anular</Button></div> : "Original" : "Demo"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -322,27 +326,39 @@ function PurchaseForm({ pending, suppliers, branches, ingredients, scope, correc
   const [supplierId, setSupplierId] = useState(initialInput?.supplierId ?? "");
   const [branchId, setBranchId] = useState(initialInput?.branchId ?? "");
   const [purchasedAt, setPurchasedAt] = useState(initialInput?.purchasedAt ?? new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" }));
+  const [kind,setKind]=useState<"summary"|"detailed">(initialInput?.kind ?? "detailed");
+  const [amount,setAmount]=useState(initialInput?.amount ?? "");
+  const [receiptReference,setReceiptReference]=useState(initialInput?.receiptReference ?? "");
   const [paymentMethod, setPaymentMethod] = useState(initialInput?.paymentMethod ?? "Transferencia");
   const blank = () => ({ ingredientId: "", description: "", qty: "1", unit: "u", unitPrice: "" });
-  const [lines, setLines] = useState(() => initialInput ? (initialInput.items ?? [initialInput]).map(line => ({ ingredientId:line.ingredientId ?? "",description:line.description,qty:String(line.qty),unit:line.unit,unitPrice:String(line.unitPrice) })) : [blank()]);
+  const [lines, setLines] = useState(() => initialInput && initialInput.kind !== "summary" ? (initialInput.items ?? [initialInput]).map(line => ({ ingredientId:line.ingredientId ?? "",description:line.description,qty:String(line.qty),unit:line.unit,unitPrice:String(line.unitPrice) })) : [blank()]);
   const [correctionReason,setCorrectionReason]=useState(initialInput?.correctionReason ?? "");
   const [error, setError] = useState("");
   const attempt = useRef<{ key: string; input: PurchaseInput } | null>(initialAttempt);
+  // Any restored journal may already have committed, including pre-upgrade v1 entries.
+  const uncertainAttempt=useRef(initialAttempt !== null);
   const sending=useRef(false);
   const [attemptKey, setAttemptKey] = useState<string | null>(initialAttempt?.key ?? null);
   const locked = pending || attemptKey !== null;
-  const total = lines.reduce((sum,line) => sum + Number(line.qty.replace(",",".")) * Number(line.unitPrice.replace(",",".")),0);
+  const total = kind === "summary" ? Number(amount.replace(",",".")) : lines.reduce((sum,line) => sum + Number(line.qty.replace(",",".")) * Number(line.unitPrice.replace(",",".")),0);
   function patch(index: number, fields: Partial<ReturnType<typeof blank>>) {
     setLines(previous => previous.map((line,i) => i === index ? { ...line, ...fields } : line));
   }
   async function sendAttempt(input: PurchaseInput) {
     if(sending.current)return;
     sending.current=true;
+    const wasUncertain=uncertainAttempt.current;
     try {
       try { sessionStorage.setItem(journalKey,JSON.stringify({key:input.requestId,input})); }
       catch {setError("No se puede conservar el intento en este navegador. Habilitá almacenamiento antes de guardar.");return;}
-      const result=await onSubmit(input);
-      if(result !== null){sessionStorage.removeItem(journalKey);attempt.current=null;setAttemptKey(null);}
+      uncertainAttempt.current=true;
+      let result: false | null | true=null;
+      try { result=await onSubmit(input); } catch { /* The first request may have committed. */ }
+      if(result === true || result === false && !wasUncertain){
+        sessionStorage.removeItem(journalKey);attempt.current=null;uncertainAttempt.current=false;setAttemptKey(null);
+      } else if(result === false) {
+        setError("Este rechazo no descarta que el intento anterior se haya guardado. Se conserva la misma referencia; verificá la compra antes de iniciar otra.");
+      }
     } finally {sending.current=false;}
   }
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -351,9 +367,10 @@ function PurchaseForm({ pending, suppliers, branches, ingredients, scope, correc
     if (attempt.current) { void sendAttempt(attempt.current.input); return; }
     if (!supplierId || !branchId) return setError("Elegí proveedor y sucursal.");
     const items = lines.map(line => ({ ...line, ingredientId: line.ingredientId || null, qty: Number(line.qty.replace(",",".")), unitPrice: Number(line.unitPrice.replace(",",".")) }));
-    if (items.some(line => !line.description.trim() || !line.unit.trim() || !Number.isFinite(line.qty) || line.qty <= 0 || !Number.isFinite(line.unitPrice) || line.unitPrice < 0)) return setError("Revisá descripción, cantidad, unidad y precio de cada línea.");
+    if (kind === "summary" && (!/^(0|[1-9]\d{0,9})(?:[.,]\d{1,2})?$/.test(amount) || Number(amount.replace(",","."))<=0))return setError("Ingresá un importe total explícito mayor a cero.");
+    if (kind === "detailed" && items.some(line => !line.description.trim() || !line.unit.trim() || !Number.isFinite(line.qty) || line.qty <= 0 || !Number.isFinite(line.unitPrice) || line.unitPrice < 0)) return setError("Revisá descripción, cantidad, unidad y precio de cada línea.");
     if(correction && !correctionReason.trim())return setError("Ingresá el motivo de la corrección.");
-    const input: PurchaseInput = { ...(correction ? {replacesPurchaseId:correction.replacesPurchaseId,expectedVersion:correction.expectedVersion,correctionReason} : {}), requestId: crypto.randomUUID(), branchId, supplierId, purchasedAt, paymentMethod, ...items[0], ingredientId: items[0].ingredientId, items };
+    const input: PurchaseInput = { ...(correction ? {replacesPurchaseId:correction.replacesPurchaseId,expectedVersion:correction.expectedVersion,correctionReason} : {}), requestId: crypto.randomUUID(), branchId, supplierId, purchasedAt, paymentMethod, kind, ...(kind==="summary"?{amount:amount.replace(",",".")} : {}), receiptReference:receiptReference.trim(), ...items[0], ingredientId: items[0].ingredientId, items };
     attempt.current = { key: input.requestId, input };
     setAttemptKey(input.requestId);
     setError(""); void sendAttempt(input);
@@ -366,15 +383,19 @@ function PurchaseForm({ pending, suppliers, branches, ingredients, scope, correc
       {suppliers.length === 0 && canCreateSupplier && <Button type="button" onClick={onCreateSupplier}>Crear proveedor</Button>}
       <Field label="Fecha *"><input className={inputClass} type="date" value={purchasedAt} onChange={e => setPurchasedAt(e.target.value)} /></Field>
       <Field label="Medio de pago declarado *"><select className={inputClass} value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}><option>Transferencia</option><option>Efectivo</option><option>Tarjeta</option><option>Cuenta corriente</option><option>Otro</option></select></Field>
-      {lines.map((line,i) => <div key={i} className="space-y-3 rounded-xl border border-line p-3">
+      <Field label="Referencia de comprobante (opcional)"><input maxLength={200} className={inputClass} value={receiptReference} onChange={e=>setReceiptReference(e.target.value)}/></Field>
+      <p className="text-xs text-ink-muted">Referencia de texto, como un número de ticket. No adjunta ni sube archivos.</p>
+      <Field label="Tipo de compra"><select className={inputClass} value={kind} onChange={e=>setKind(e.target.value as "summary"|"detailed")}><option value="detailed">Detallada</option><option value="summary">Resumida, sin stock</option></select></Field>
+      {kind === "summary" && <Field label="Importe total *"><input className={inputClass} inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value)}/></Field>}
+      {kind === "detailed" && lines.map((line,i) => <div key={i} className="space-y-3 rounded-xl border border-line p-3">
         <Field label={`Línea ${i + 1}: insumo opcional`}><select className={inputClass} value={line.ingredientId} onChange={e => { const ingredient = ingredients.find(v => v.id === e.target.value); patch(i,{ ingredientId:e.target.value, ...(ingredient ? { description:ingredient.name, unit:ingredient.unit } : {}) }); }}><option value="">Concepto sin entrada de stock</option>{ingredients.map(v => <option key={v.id} value={v.id}>{v.name} ({v.unit})</option>)}</select></Field>
         <Field label="Descripción *"><input className={inputClass} value={line.description} onChange={e => patch(i,{description:e.target.value})}/></Field>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3"><Field label="Cantidad *"><input className={inputClass} inputMode="decimal" value={line.qty} onChange={e => patch(i,{qty:e.target.value})}/></Field><Field label="Unidad *"><input className={inputClass} value={line.unit} onChange={e => patch(i,{unit:e.target.value})}/></Field><Field label="Precio unitario *"><input className={inputClass} inputMode="decimal" value={line.unitPrice} onChange={e => patch(i,{unitPrice:e.target.value})}/></Field></div>
         {lines.length > 1 && <Button type="button" variant="ghost" onClick={() => setLines(values => values.filter((_,n) => n !== i))}>Quitar línea</Button>}
       </div>)}
-      <Button type="button" disabled={lines.length >= 100} onClick={() => setLines(values => [...values,blank()])}>Agregar línea</Button>
+      {kind === "detailed" && <Button type="button" disabled={lines.length >= 100} onClick={() => setLines(values => [...values,blank()])}>Agregar línea</Button>}
     </fieldset>
-    <p className="text-sm">Total: {Number.isFinite(total) ? formatARS(total) : "—"}. Elegir un insumo registra su entrada de stock; un concepto libre no modifica existencias.</p>
+    <p className="text-sm">Total: {Number.isFinite(total) ? formatARS(total) : "—"}. {kind === "summary" ? "Compra resumida sin movimiento de stock." : "Elegir un insumo registra su entrada de stock; un concepto libre no modifica existencias."}</p>
     {error && <p role="alert" className="text-sm text-danger-400">{error}</p>}
     {attemptKey && <p className="text-sm text-ink-muted">Intento {attemptKey}. Si la respuesta se interrumpió, reintentar conserva exactamente los datos y evita duplicados. Antes de cancelar y crear otra compra, revisá el listado.</p>}
     <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>Cerrar</Button><Button type="submit" variant="primary" disabled={pending}>{pending ? "Guardando…" : attemptKey ? "Verificar el mismo intento" : "Registrar compra"}</Button></div>
@@ -384,4 +405,10 @@ function PurchaseForm({ pending, suppliers, branches, ingredients, scope, correc
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   const control = isValidElement(children) ? cloneElement(children as ReactElement<{ "aria-label"?: string }>, { "aria-label": label }) : children;
   return <label className="block min-w-0 space-y-1.5"><span className="text-xs font-medium text-ink-muted">{label}</span>{control}</label>;
+}
+
+function purchaseOriginLabel(row: PurchasesPageRow) {
+ const source=row.correctionOrigin ?? row.source;
+ const label=source==="whatsapp"?"WhatsApp":source==="inbox"?"Inbox":source==="manual"?"Manual":row.invoiceSource==="manual"?"Factura manual":row.invoiceSource?"Factura OCR":"Histórico sin origen informado";
+ return `${label}${row.correctionOrigin ? " · corrección manual" : ""}`;
 }

@@ -1,3 +1,4 @@
+import { interpretReplenishmentCall } from "../replenishment/agent";
 import { interpretPurchaseCall, isPurchaseWrite, missingPurchaseArguments } from "../purchases/agent";
 import { isSaleWrite, missingSaleArguments, interpretSaleCall } from "../sales/agent";
 import { isDebtPlanTool, missingDebtArguments } from "./debt-contract";
@@ -28,6 +29,10 @@ const amount = (text: string) => {
   return parsed === undefined ? undefined : parsed * (match[2] ? 1000 : 1);
 };
 
+// Product price/cost clarification must be one explicit monetary value.
+// Never extract the first number from ranges, ingredient lists or product names.
+const productAmount = (text: string) => /^(?:ARS\s*|\$\s*)?-?\d+(?:[.,]\d+)*(?:\s*(?:mil|k))?\s*[.!]?$/i.test(text.trim()) ? amount(text) : undefined;
+
 const stockArguments = (text: string): Record<string, unknown> => {
   const match = text.match(/(?:sum[aá]|agreg[aá]|ingres[aá])\s+(-?\d+(?:[.,]\d+)*)\s*(kg|kilos?|kilogramos?|g|gramos?|l|litros?|ml|mililitros?|u|unidades?)?\s+(?:de\s+)?(.+?)\s+al stock[.!]?$/i);
   const suppliedUnit = match?.[2]?.toLocaleLowerCase("es");
@@ -46,7 +51,10 @@ export async function interpretHeuristically(
   text: string,
   tools: ToolDefinition[],
   pending?: PendingOperation | null,
+  context?: { timezone?: string; now?: Date },
 ): Promise<ToolCall | null> {
+  const replenishmentCall = interpretReplenishmentCall(text, tools, pending, context);
+  if (replenishmentCall) return replenishmentCall;
   const saleCall = interpretSaleCall(text, tools, pending);
   if (saleCall) return saleCall;
   const normalized = text.trim().toLocaleLowerCase("es");
@@ -54,13 +62,15 @@ export async function interpretHeuristically(
   if (pending?.kind === "clarification" && isPurchaseWrite(pending.toolCall.name)) return interpretPurchaseCall(text, tools, pending);
   if (pending?.kind === "clarification") {
     const missing = getMissingArguments(pending.toolCall, tools);
-    if (!missing.length) return pending.toolCall;
-    const key = missing[0];
-    const value = key === "quantity" && pending.toolCall.name === "stock.addMovement" ? stockQuantity(text)
-      : ["amount", "quantity", "price"].includes(key) ? amount(text) : text.trim();
+    if (!missing.length && !pending.clarificationKey) return pending.toolCall;
+    const key = pending.clarificationKey ?? missing[0];
+    const value = pending.toolCall.name === "products.create" && ["price", "cost"].includes(key) ? productAmount(text)
+      : key === "quantity" && pending.toolCall.name === "stock.addMovement" ? stockQuantity(text)
+      : key === "active" && pending.toolCall.name === "products.create" ? /^(activo|true)$/i.test(text.trim()) ? true : /^(inactivo|false)$/i.test(text.trim()) ? false : undefined
+      : ["amount", "quantity", "price", "cost"].includes(key) ? amount(text) : text.trim();
     return { ...pending.toolCall, arguments: { ...pending.toolCall.arguments, [key]: value } };
   }
-  const debtCall = interpretDebtCall(text, tools);
+  const debtCall = interpretDebtCall(text, tools, context?.now ?? new Date(), context?.timezone);
   if (debtCall) return debtCall;
   const purchaseCall = interpretPurchaseCall(text, tools, pending);
   if (purchaseCall) return purchaseCall;
@@ -70,14 +80,23 @@ export async function interpretHeuristically(
   if (/facturas?.*pendiente|pendientes?.*facturas?/.test(normalized) && allowed("invoices.listPending")) return { name: "invoices.listPending", arguments: {} };
   if (/stock|insumos?/.test(normalized) && /(bajo|faltan|cr[ií]tic)/.test(normalized) && allowed("stock.getLowStock")) return { name: "stock.getLowStock", arguments: {} };
   if (/(sum[aá]|agreg[aá]|ingres[aá]).*(stock|kg|unidad)/.test(normalized) && allowed("stock.addMovement")) return { name: "stock.addMovement", arguments: stockArguments(text) };
-  if (/cre[aá].*(producto|hamburguesa)|producto.*\$/.test(normalized) && allowed("products.create")) return { name: "products.create", arguments: { name: text.match(/cre[aá]\s+(.+?)\s+(?:a|por)\s+\$/i)?.[1], price: amount(normalized) } };
+  if (/cre[aá].*(producto|hamburguesa)|producto.*\$/.test(normalized) && allowed("products.create")) return { name: "products.create", arguments: {
+    name: text.match(/cre[aá]\s+(.+?)\s+(?:a|por)\s+\$/i)?.[1],
+    price: amount(text.match(/(?:a|por)\s+\$\s*-?\d+(?:[.,]\d+)*(?:\s*(?:mil|k)\b)?/i)?.[0] ?? ""),
+    // Preserve unsupported composition intent so validation rejects the whole
+    // request instead of creating a product while silently dropping its recipe.
+    ...(/\b(receta|composici[oó]n|ingredientes?|insumos?|lleva|contiene)\b|\bcon\s+\d/i.test(text) ? { recipe: text } : {}),
+  } };
   if (/productos?/.test(normalized) && allowed("products.list")) return { name: "products.list", arguments: {} };
   if (/(pagad[ao]|pago).*(deuda|debemos)|deuda.*pagad[ao]/.test(normalized) && allowed("debts.registerPayment")) return { name: "debts.registerPayment", arguments: { creditor: text.match(/de(?:uda de)?\s+([\p{L} ]+)/iu)?.[1]?.trim() ?? text.match(/de\s+([\p{L} ]+)\.?$/iu)?.[1]?.trim() } };
   if (/registr[aá].*deuda/.test(normalized) && allowed("debts.create")) return { name: "debts.create", arguments: { creditor: text.match(/(?:a|de)\s+([\p{L} ]+?)\s+(?:por|de)\s+\$?/iu)?.[1]?.trim(), amount: amount(normalized) } };
   if (/deudas?|debemos/.test(normalized) && allowed("debts.list")) return { name: "debts.list", arguments: {} };
   if (/compras?/.test(normalized) && allowed("purchases.list")) return { name: "purchases.list", arguments: {} };
   if (/compar/.test(normalized) && /semana/.test(normalized) && allowed("sales.comparePeriods")) {
-    const now = new Date(); const day = now.getUTCDay() || 7; const start = new Date(now); start.setUTCDate(now.getUTCDate() - day + 1);
+    let local: string | undefined;
+    if (context?.timezone) { try { local = (context.now ?? new Date()).toLocaleDateString("en-CA", { timeZone: context.timezone }); } catch { /* ask for explicit dates */ } }
+    if (!local) return { name: "sales.comparePeriods", arguments: {} };
+    const now = new Date(`${local}T00:00:00Z`); const day = now.getUTCDay() || 7; const start = new Date(now); start.setUTCDate(now.getUTCDate() - day + 1);
     const previousTo = new Date(start); previousTo.setUTCDate(start.getUTCDate() - 1); const previousFrom = new Date(previousTo); previousFrom.setUTCDate(previousTo.getUTCDate() - 6);
     const iso = (d: Date) => d.toISOString().slice(0, 10);
     return { name: "sales.comparePeriods", arguments: { from: iso(start), to: iso(now), previousFrom: iso(previousFrom), previousTo: iso(previousTo) } };

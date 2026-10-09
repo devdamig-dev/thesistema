@@ -21,11 +21,12 @@ export async function verifyExpensesConcurrency(db){
   const [a,b]=await Promise.all([first.promise,second.promise]);assert(waited,'second independent session did not demonstrably wait');assert(a.code===0,a.stderr);assert(b.code===0,b.stderr);return [parse(a.stdout),parse(b.stdout)];
  }
  const request='00000000-0000-4000-8000-000000000501';
- const create=`select public.save_expense_atomic('${business}',expenses_test.expense_input('${request}'))`;
+ const operating="'{\"expenseDate\":\"2026-10-09\",\"paymentMethod\":\"Transferencia\",\"supplierId\":null,\"isRecurring\":true,\"periodicity\":\"monthly\"}'::jsonb";
+ const create=`select public.save_expense_atomic('${business}',expenses_test.expense_input('${request}')||${operating})`;
  const [created,replayed]=await race(`select pg_advisory_xact_lock(hashtextextended('${business}'||'${request}',0))`,create,create);
  assert(created?.ok&&JSON.stringify(created)===JSON.stringify(replayed),'same request did not replay same result');
  const id=created.id;let counts=await db.exec(`select count(*) from public.expense_mutations where business_id='${business}' and request_id='${request}';`);assert(counts.trim()==='1','duplicate create receipt');
- const update=(key,name,version)=>`select public.save_expense_atomic('${business}',expenses_test.expense_input('${key}')||jsonb_build_object('id','${id}','expectedVersion',${version},'name','${name}'))`;
+ const update=(key,name,version)=>`select public.save_expense_atomic('${business}',expenses_test.expense_input('${key}')||${operating}||jsonb_build_object('id','${id}','expectedVersion',${version},'name','${name}'))`;
  let [first,second]=await race(`select id from public.expenses where id='${id}' for update`,update('00000000-0000-4000-8000-000000000502','first',1),update('00000000-0000-4000-8000-000000000503','second',1));
  assert(first?.ok&&second?.error==='expense_conflict','stale concurrent edit must fail');
  const voidKey='00000000-0000-4000-8000-000000000504';
@@ -33,6 +34,7 @@ export async function verifyExpensesConcurrency(db){
  [first,second]=await race(`select id from public.expenses where id='${id}' for update`,voidSql,update('00000000-0000-4000-8000-000000000505','late',2));
  assert(first?.ok&&second?.error==='expense_conflict','void/edit race must preserve one winning version');
  const again=parse(await db.exec(`begin;${auth}${voidSql};commit;`));assert(again?.id===id&&again?.version===3,'void response recovery must replay receipt');
+ const facts=await db.exec(`select expense_date='2026-10-09' and payment_method='Transferencia' and is_recurring and periodicity='monthly' from public.expenses where id='${id}';`);assert(facts.trim()==='t','concurrent updates and void must preserve reviewed operational facts');
  // A profile revocation held by one session must be rechecked by the waiting
  // mutation, rather than using a previously resolved server/agent role.
  let marked;const marker=new Promise(resolve=>{marked=resolve;});

@@ -160,6 +160,92 @@ begin
  perform pg_temp.assert_true((r->>'ok')::boolean,'second branch fixture');
 end $$;
 
+-- Exact user case: a bank plan for 3 x ARS 200,000. These are ledger-only
+-- recordings, run against disposable PostgreSQL and rolled back with the suite.
+do $$
+declare p jsonb:=pg_temp.payload(); r jsonb; d uuid; i1 uuid; i2 uuid; i3 uuid;
+  create_key uuid:=gen_random_uuid(); partial_key uuid:=gen_random_uuid(); pay1 uuid; pay3 uuid;
+begin
+ p:=p || '{"creditor":"Banco caso 3 x 200000","creditor_type":"bank","concept":"Capital de trabajo"}'::jsonb;
+ p:=jsonb_set(p,'{plan}',(p->'plan') || '{"originalAmountCents":60000000,"totalFinancedCents":60000000,"regularInstallmentAmountCents":20000000,"amountSource":"explicit_installment","monthlyAnchorDay":10,"installments":[{"installmentNumber":1,"dueDate":"2026-11-10","totalAmountCents":20000000,"capitalAmountCents":null,"interestAmountCents":null,"feesAmountCents":null},{"installmentNumber":2,"dueDate":"2026-12-10","totalAmountCents":20000000,"capitalAmountCents":null,"interestAmountCents":null,"feesAmountCents":null},{"installmentNumber":3,"dueDate":"2027-01-10","totalAmountCents":20000000,"capitalAmountCents":null,"interestAmountCents":null,"feesAmountCents":null}]}'::jsonb);
+ r:=public.create_debt_installment_plan(p,create_key);
+ perform pg_temp.assert_true((r->>'ok')::boolean,'bank exact create: '||r::text); d:=(r->>'debt_id')::uuid;
+ perform pg_temp.assert_true((select creditor_type='bank' and currency='ARS' and original_amount=600000 and total_financed_amount=600000 and pending_amount=600000 and plan_version=0 from public.debts where id=d),'bank exact original and financed total ARS 600000');
+ perform pg_temp.assert_true((select count(*)=3 and bool_and(total_amount=200000) and sum(total_amount)=600000 from public.debt_installments where debt_id=d),'bank exact three installments of ARS 200000');
+ perform pg_temp.assert_true((select array_agg(due_date order by installment_number)=array['2026-11-10','2026-12-10','2027-01-10']::date[] from public.debt_installments where debt_id=d),'bank exact monthly schedule');
+ r:=public.create_debt_installment_plan(p,create_key);
+ perform pg_temp.assert_true((r->>'idempotent')::boolean and (r->>'debt_id')::uuid=d,'bank exact plan retry does not duplicate debt');
+ select id into i1 from public.debt_installments where debt_id=d and installment_number=1;
+ select id into i2 from public.debt_installments where debt_id=d and installment_number=2;
+ select id into i3 from public.debt_installments where debt_id=d and installment_number=3;
+ r:=public.register_debt_plan_payment(d,0,pg_temp.payment(10000000,i1),partial_key); pay1:=(r->>'payment_id')::uuid;
+ perform pg_temp.assert_true((r->>'ok')::boolean and (r->>'pending_amount')::numeric=500000 and (r->>'version')::int=1,'bank exact ARS 100000 partial leaves ARS 500000: '||r::text);
+ perform pg_temp.assert_true((select count(*)=1 and min(installment_id::text)=i1::text and sum(amount)=100000 from public.debt_payment_allocations where payment_id=pay1),'bank exact partial affects only installment 1');
+ r:=public.register_debt_plan_payment(d,0,pg_temp.payment(10000000,i1),partial_key);
+ perform pg_temp.assert_true((r->>'idempotent')::boolean and (r->>'payment_id')::uuid=pay1,'bank exact partial retry does not duplicate payment');
+ r:=public.register_debt_plan_payment(d,1,pg_temp.payment(10000001,i1),gen_random_uuid());
+ perform pg_temp.assert_true(r->>'error'='amount_exceeds_installment_pending','bank exact selected overpayment rejected');
+ r:=public.register_debt_plan_payment(d,1,pg_temp.payment(20000000,i2),gen_random_uuid());
+ perform pg_temp.assert_true((r->>'ok')::boolean and (r->>'pending_amount')::numeric=300000 and (r->>'version')::int=2,'bank exact full installment 2 leaves ARS 300000: '||r::text);
+ perform pg_temp.assert_true((select sum(amount)=200000 from public.debt_payment_allocations where debt_id=d and installment_id=i2),'bank exact installment 2 fully paid');
+ perform pg_temp.assert_true(not exists(select 1 from public.debt_payment_allocations where debt_id=d and installment_id=i3),'bank exact installment 3 still untouched');
+ r:=public.register_debt_plan_payment(d,2,pg_temp.payment(30000000),gen_random_uuid()); pay3:=(r->>'payment_id')::uuid;
+ perform pg_temp.assert_true((r->>'ok')::boolean and (r->>'pending_amount')::numeric=0 and (r->>'version')::int=3,'bank exact remaining ARS 300000 settles debt: '||r::text);
+ perform pg_temp.assert_true((select count(*)=2 and sum(amount)=300000 from public.debt_payment_allocations where payment_id=pay3),'bank exact global settlement splits only across unpaid installments');
+ perform pg_temp.assert_true((select amount=100000 from public.debt_payment_allocations where payment_id=pay3 and installment_id=i1) and (select amount=200000 from public.debt_payment_allocations where payment_id=pay3 and installment_id=i3),'bank exact settlement allocation ARS 100000 + ARS 200000');
+ perform pg_temp.assert_true((select count(*)=3 and sum(amount)=600000 from public.debt_payments where debt_id=d),'bank exact immutable payment history totals ARS 600000');
+ perform pg_temp.assert_true((select pending_amount=0 and status='settled' and due_date is null and settled_at is not null from public.debts where id=d),'bank exact settled status and no future debt commitment');
+ perform pg_temp.assert_true(exists(select 1 from public.activity_logs where target_id=d and action='debt.closed'),'bank exact debt closure audited');
+ r:=public.register_debt_plan_payment(d,3,pg_temp.payment(1),gen_random_uuid());
+ perform pg_temp.assert_true(r->>'error'='amount_exceeds_pending','bank exact paid debt cannot be overpaid');
+end $$;
+
+select pg_temp.assert_true(not has_function_privilege('anon','public.cancel_debt_plan_record(uuid,bigint,text,uuid,uuid)','execute'),'anonymous cancellation denied');
+select pg_temp.assert_true(not (select prosecdef from pg_proc where oid='public.cancel_debt_plan_record(uuid,bigint,text,uuid,uuid)'::regprocedure),'cancellation RPC does not bypass RLS');
+
+-- Administrative record cancellation must never fabricate a payment or erase
+-- principal, installments, existing payment allocations or the unpaid balance.
+do $$
+declare r jsonb; d uuid; i uuid; pay uuid; req uuid:=gen_random_uuid();
+begin
+ r:=public.create_debt_installment_plan(pg_temp.payload(),gen_random_uuid()); d:=(r->>'debt_id')::uuid;
+ select id into i from public.debt_installments where debt_id=d and installment_number=1;
+ r:=public.register_debt_plan_payment(d,0,pg_temp.payment(1000,i),gen_random_uuid()); pay:=(r->>'payment_id')::uuid;
+ r:=public.cancel_debt_plan_record(d,0,'Registro duplicado',req);
+ perform pg_temp.assert_true(r->>'error'='stale_version','cancellation rejects pre-payment stale version');
+ r:=public.cancel_debt_plan_record(d,1,' ',req);
+ perform pg_temp.assert_true(r->>'error'='invalid_arguments','cancellation requires a reason');
+ r:=public.cancel_debt_plan_record(d,1,'Registro duplicado',req);
+ perform pg_temp.assert_true((r->>'ok')::boolean and (r->>'pending_amount')::numeric=90 and (r->>'version')::int=2,'administrative cancellation retains historical balance: '||r::text);
+ perform pg_temp.assert_true((select status='cancelled' and cancelled_at is not null and cancelled_on=debt_private.business_date(business_id) and cancelled_by=auth.uid() and cancel_reason='Registro duplicado' and original_amount=100 and pending_amount=90 and settled_at is null and due_date is null from public.debts where id=d),'cancelled metadata is factual, not settlement');
+ perform pg_temp.assert_true((select count(*)=1 and sum(amount)=10 from public.debt_payments where debt_id=d) and (select count(*)=3 and sum(total_amount)=100 from public.debt_installments where debt_id=d),'cancellation keeps all installments and payments');
+ perform pg_temp.assert_true((select sum(amount)=10 from public.debt_payment_allocations where payment_id=pay),'cancellation keeps original allocation history');
+ perform pg_temp.assert_true((select count(*)=1 from public.activity_logs where target_id=d and action='debt.cancelled' and actor_id=auth.uid() and data->'after'->>'cancel_reason'='Registro duplicado' and (data->'after'->>'pending_amount')::numeric=90),'one attributed cancellation audit');
+ r:=public.cancel_debt_plan_record(d,1,'Registro duplicado',req);
+ perform pg_temp.assert_true((r->>'idempotent')::boolean and (r->>'debt_id')::uuid=d,'cancellation retry works before stale version check');
+ r:=public.cancel_debt_plan_record(d,2,'Motivo cambiado',req);
+ perform pg_temp.assert_true(r->>'error'='idempotency_conflict','cancellation key cannot change its reason');
+ r:=public.get_debt_operation_result('cancel',req,d);
+ perform pg_temp.assert_true((r->>'found')::boolean and (r->>'debt_id')::uuid=d,'lost cancellation reply recoverable by UUID');
+ r:=public.register_debt_plan_payment(d,2,pg_temp.payment(1),gen_random_uuid());
+ perform pg_temp.assert_true(r->>'error'='debt_cancelled','cancelled record rejects further payments');
+ r:=public.void_debt_plan_payment(d,pay,2,'After cancellation',gen_random_uuid());
+ perform pg_temp.assert_true(r->>'error'='debt_cancelled','cancelled record keeps frozen payment history');
+ r:=public.update_debt_plan_notes(d,2,'Edited after cancellation',gen_random_uuid());
+ perform pg_temp.assert_true(r->>'error'='debt_cancelled','cancelled record rejects notes editing');
+ r:=public.edit_debt_installment(d,i,2,'2026-01-30','Edited after cancellation',gen_random_uuid());
+ perform pg_temp.assert_true(r->>'error'='debt_cancelled','cancelled record rejects installment editing');
+ perform pg_temp.throws(format('update public.debts set cancelled_at=null,cancelled_on=null,cancelled_by=null,cancel_reason=null,cancel_request_id=null where id=%L',d),'debt_cancelled');
+ perform pg_temp.throws(format('update public.debts set pending_amount=0 where id=%L',d),'debt_cancelled');
+ perform pg_temp.throws(format('delete from public.debts where id=%L',d),'plan_history_immutable');
+ perform set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000003',true);
+ r:=public.cancel_debt_plan_record(d,2,'Viewer request',gen_random_uuid());
+ perform pg_temp.assert_true(r->>'error' in ('permission_denied','debt_not_found'),'viewer cannot cancel records');
+ r:=public.get_debt_operation_result('cancel',req,d);
+ perform pg_temp.assert_true(not (r->>'found')::boolean,'cancellation receipt remains actor-scoped');
+ perform set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',true);
+end $$;
+
 -- Single-payment plans can be undated, and financed charges may exceed principal.
 do $$ declare p jsonb:=pg_temp.payload(); r jsonb; d uuid; i uuid; begin
  p:=jsonb_set(p,'{plan}',(p->'plan')||'{"mode":"single","installmentCount":1,"regularInstallmentAmountCents":10000,"periodicity":null,"monthlyAnchorDay":null,"originalAmountCents":8000,"installments":[{"installmentNumber":1,"dueDate":null,"totalAmountCents":10000,"capitalAmountCents":null,"interestAmountCents":null,"feesAmountCents":null}]}');
@@ -378,6 +464,9 @@ do $$ declare n bigint; r jsonb; d uuid; balance numeric; version bigint; begin
  r:=public.update_debt_plan_notes(d,version,'Must rollback',gen_random_uuid());
  perform pg_temp.assert_true(r->>'error'='test_audit_failure','notes audit failure returned');
  perform pg_temp.assert_true((select plan_version=version and notes is distinct from 'Must rollback' from public.debts where id=d),'audit failure rolls back edited notes/version');
+ r:=public.cancel_debt_plan_record(d,version,'Must rollback cancellation',gen_random_uuid());
+ perform pg_temp.assert_true(r->>'error'='test_audit_failure','cancellation audit failure returned');
+ perform pg_temp.assert_true((select cancelled_at is null and plan_version=version and pending_amount=balance from public.debts where id=d),'audit failure rolls back cancellation and preserves ledger');
  perform pg_temp.throws($q$delete from public.debts where id='00000000-0000-4000-8000-000000000051'$q$,'test_audit_failure');
  perform pg_temp.assert_true(exists(select 1 from public.debts where id='00000000-0000-4000-8000-000000000051') and exists(select 1 from public.debt_payments where debt_id='00000000-0000-4000-8000-000000000051'),'failed deletion audit rolls back parent and cascade');
 end $$;

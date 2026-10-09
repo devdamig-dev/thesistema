@@ -348,7 +348,7 @@ do $$ declare v_token timestamptz; v_result jsonb; v_avg numeric; begin
   select updated_at into v_token from public.recipes where product_id='00000000-0000-4000-8000-000000000052';
   v_result := public.save_recipe_atomic('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000052',v_token,
     '[{"ingredientId":"00000000-0000-4000-8000-000000000048","quantity":200,"unit":"g"}]');
-  perform pg_temp.catalog_assert((v_result->>'ok')::boolean and (v_result->>'cost')::numeric=200,'weighted-average fixture recipe');
+  perform pg_temp.catalog_assert((v_result->>'ok')::boolean and (v_result->>'cost')::numeric=1,'recipe uses automatically refreshed weighted purchase cost');
   v_avg := public.recalc_ingredient_cost('00000000-0000-4000-8000-000000000048');
   perform pg_temp.catalog_assert(v_avg=0.005,'weighted average (.01+0)/2 retains .005');
   perform pg_temp.catalog_assert((select avg_unit_cost from public.ingredients where id='00000000-0000-4000-8000-000000000048')=0.005,'weighted average persists precision');
@@ -383,16 +383,20 @@ savepoint catalog_invalid_purchase;
 -- testing the authenticated cost reader. The savepoint removes the fixture
 -- without bypassing the immutable-history UPDATE/DELETE protections.
 alter table public.purchases disable trigger purchase_origin_guard;
+alter table public.purchases disable trigger purchase_origin_lock;
 alter table public.purchases disable trigger purchase_receipt_complete;
 alter table public.purchase_items disable trigger purchase_item_insert_guard;
+alter table public.purchase_items disable trigger purchase_item_recalculate;
 alter table public.purchase_items disable trigger purchase_item_receipt_complete;
 insert into public.purchases(id,business_id,branch_id,purchased_at,total) values
  ('00000000-0000-4000-8000-000000000074','00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000021',current_date,5);
 insert into public.purchase_items(id,purchase_id,ingredient_id,description,qty,unit,unit_price,total) values
  ('00000000-0000-4000-8000-000000000079','00000000-0000-4000-8000-000000000074','00000000-0000-4000-8000-000000000049','Unknown package',1,'pack',5,5);
 alter table public.purchases enable trigger purchase_origin_guard;
+alter table public.purchases enable trigger purchase_origin_lock;
 alter table public.purchases enable trigger purchase_receipt_complete;
 alter table public.purchase_items enable trigger purchase_item_insert_guard;
+alter table public.purchase_items enable trigger purchase_item_recalculate;
 alter table public.purchase_items enable trigger purchase_item_receipt_complete;
 set local role authenticated;
 select pg_temp.catalog_throws($q$select public.recalc_ingredient_cost('00000000-0000-4000-8000-000000000049')$q$,'purchase_cost_unit_or_quantity_invalid');
@@ -403,20 +407,24 @@ release savepoint catalog_invalid_purchase;
 -- A privileged internal call still excludes malformed foreign-business purchase
 -- links that predate receipt validation. Seed only as the disposable test owner.
 alter table public.purchases disable trigger purchase_origin_guard;
+alter table public.purchases disable trigger purchase_origin_lock;
 alter table public.purchases disable trigger purchase_receipt_complete;
 alter table public.purchase_items disable trigger purchase_item_insert_guard;
+alter table public.purchase_items disable trigger purchase_item_recalculate;
 alter table public.purchase_items disable trigger purchase_item_receipt_complete;
 insert into public.purchases(id,business_id,branch_id,purchased_at,total) values
  ('00000000-0000-4000-8000-000000000072','00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000022',current_date,999999);
 insert into public.purchase_items(purchase_id,ingredient_id,description,qty,unit,unit_price,total) values
  ('00000000-0000-4000-8000-000000000072','00000000-0000-4000-8000-000000000049','Foreign link fixture',1,'kg',999999,999999);
 alter table public.purchases enable trigger purchase_origin_guard;
+alter table public.purchases enable trigger purchase_origin_lock;
 alter table public.purchases enable trigger purchase_receipt_complete;
 alter table public.purchase_items enable trigger purchase_item_insert_guard;
+alter table public.purchase_items enable trigger purchase_item_recalculate;
 alter table public.purchase_items enable trigger purchase_item_receipt_complete;
-select pg_temp.catalog_assert((select count(*)=4 and bool_and(tgenabled='O') from pg_trigger
- where (tgrelid='public.purchases'::regclass and tgname in ('purchase_origin_guard','purchase_receipt_complete'))
-    or (tgrelid='public.purchase_items'::regclass and tgname in ('purchase_item_insert_guard','purchase_item_receipt_complete'))),
+select pg_temp.catalog_assert((select count(*)=6 and bool_and(tgenabled='O') from pg_trigger
+ where (tgrelid='public.purchases'::regclass and tgname in ('purchase_origin_guard','purchase_origin_lock','purchase_receipt_complete'))
+    or (tgrelid='public.purchase_items'::regclass and tgname in ('purchase_item_insert_guard','purchase_item_recalculate','purchase_item_receipt_complete'))),
  'all purchase receipt guards restored after historical seeding');
 set local role service_role;
 select set_config('request.jwt.claim.sub','',true);

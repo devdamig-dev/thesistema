@@ -46,3 +46,24 @@ test("expense reads paginate beyond 1000 and reject incomplete/changing totals",
   assert.equal(await readExpenseRevision({ rpc: async () => ({ data: "27", error: null }) }, id(2)), "27");
   await assert.rejects(readExpenseRevision({ rpc: async () => ({ data: 27, error: null }) }, id(2)));
 });
+
+test("expense operating facts are explicit, complete and independent from due/payment status", () => {
+  const full = { ...input(), expenseDate: "2026-10-09", paymentMethod: "Transferencia", supplierId: id(8), isRecurring: true, periodicity: "monthly" };
+  const parsed = parseSaveExpense(full);
+  assert.equal(parsed.expenseDate, "2026-10-09"); assert.equal(parsed.dueDate, "2026-10-31"); assert.equal(parsed.paymentMethod, "Transferencia"); assert.equal(parsed.isRecurring, true); assert.equal(parsed.periodicity, "monthly");
+  for (const patch of [{ expenseDate: "2026-02-30" }, { expenseDate: "0000-01-01" }, { expenseDate: null }, { paymentMethod: null }, { paymentMethod: "" }, { paymentMethod: "x".repeat(81) }, { paymentMethod: "cash\n" }, { supplierId: "bad" }, { isRecurring: "false" }, { isRecurring: null }, { periodicity: "sometimes" }, { periodicity: null }, { isRecurring: false }]) assert.throws(() => parseSaveExpense({ ...full, ...patch }), JSON.stringify(patch));
+  for (const field of ["expenseDate", "paymentMethod", "supplierId", "isRecurring", "periodicity"]) { const missing: any = { ...full }; delete missing[field]; assert.throws(() => parseSaveExpense(missing)); }
+  assert.equal(parseSaveExpense({ ...full, isRecurring: false, periodicity: null, supplierId: null }).isRecurring, false);
+  assert.deepEqual(parseSaveExpense(input()), input());
+  const historical = parseSaveExpense({ ...full, id: id(50), expectedVersion: 0, expenseDate: null, paymentMethod: null, supplierId: null, isRecurring: null, periodicity: null });
+  assert.equal(historical.expenseDate, null); assert.equal(historical.paymentMethod, null); assert.equal(historical.isRecurring, null);
+});
+test("extended expense facts remain immutable through retry and identical across transports", async () => {
+  const full = parseSaveExpense({ ...input(), expenseDate: "2026-10-09", paymentMethod: "Efectivo", supplierId: null, isRecurring: false, periodicity: null });
+  const frozen = retainExpenseOperation(null, { kind: "save", input: full });
+  assert.deepEqual(readExpenseOperation(JSON.stringify(frozen), full.businessId, full.userId), frozen);
+  assert.throws(() => retainExpenseOperation(frozen, { kind: "save", input: { ...full, expenseDate: "2026-10-10" } }));
+  const calls: any[] = []; const db = { rpc: async (name: string, args: any) => { calls.push({ name, args }); return { data: { ok: true, id: id(9), version: 1 }, error: null }; } };
+  for (const source of ["manual", "whatsapp"] as const) await mutateExpense(db, { businessId: full.businessId, userId: full.userId, source }, "save", full);
+  assert.deepEqual(calls[0].args.p_input, full); assert.deepEqual(calls[1].args.p_input, full);
+});
