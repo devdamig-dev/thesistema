@@ -9,3 +9,9 @@ next-env.d.ts
 .vercel
 *.tsbuildinfo
 .test-dist/
+
+# Local Supabase CLI cache
+supabase/.temp/
+
+# Generated isolated UI fixtures
+.test-artifacts/

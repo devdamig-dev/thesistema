@@ -373,6 +373,8 @@ export type Database = {
           phone: string | null;
           email: string | null;
           channel: string | null;
+          notes: string | null;
+          active: boolean;
           visits: number;
           total_spend: number;
           last_visit_at: string | null;

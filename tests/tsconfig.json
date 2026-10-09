@@ -11,6 +11,9 @@
   },
   "include": [
     "./*.test.ts",
+    "../lib/customers/**/*.ts",
+    "../app/actions/customers.ts",
+    "../app/actions/customers-page.ts",
     "../lib/whatsapp-agent/core.ts",
     "../lib/whatsapp-agent/interpreter.ts",
     "../lib/whatsapp-agent/registry.ts",
