@@ -153,3 +153,13 @@ test('fixture write gate stays pending until explicitly released', async (t) => 
   state.releaseWrites();
   assert.equal((await result).ok, true);
 });
+
+test('stock replenishment fixture exposes observed period and independent theoretical/physical quantities', async (t) => {
+  const { actions, state } = await fixture(t, 'stock');
+  const input = { branchId: state.branches[0].id, from: '2026-10-01', to: '2026-10-08' };
+  const report = (await actions.getStockReplenishmentAction(input)).data;
+  assert.equal(report.rows[0].current, 20); assert.equal(report.rows[0].recordedOutflow, 3); assert.equal(report.rows[0].theoreticalUsage, 2);
+  assert.equal(report.coverageDays, null); assert.deepEqual(state.replenishmentQueries[0], input);
+  state.replenishmentMode = 'error';
+  assert.equal((await actions.getStockReplenishmentAction(input)).ok, false);
+});

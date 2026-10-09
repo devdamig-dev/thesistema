@@ -49,3 +49,26 @@ export async function adjustStockManualAction(input) {
   if (state.response === 'throw-after-commit') throw new Error('QA ficticio: resultado incierto después de guardar.');
   return { ok: true, persisted: true, newCurrent: next, delta: next - before };
 }
+
+state.replenishmentQueries = []; state.replenishmentMode = 'success'; state.holdReplenishment = false;
+const waitingReplenishment = [];
+state.releaseReplenishment = () => { state.holdReplenishment = false; waitingReplenishment.splice(0).forEach((release) => release()); };
+export async function getStockReplenishmentAction(input) {
+  state.replenishmentQueries.push(clone(input));
+  const branch = branches.find((item) => item.id === input.branchId);
+  const rows = state.stock.filter((item) => item.branchId === input.branchId).map((item) => ({
+    ingredientId: item.ingredientId, name: item.insumo, active: true, unit: item.unidad, current: item.stock, minimum: item.minimo,
+    minimumShortfall: Math.max(0, item.minimo - item.stock), updatedAt: item.updatedAt,
+    recordedOutflow: 3, recordedPurchaseReversal: 0, recordedWaste: 0.25, recordedAdjustment: -0.5, recordedMovementCount: 3, unverifiedMovementCount: 1,
+    theoreticalUsage: 2, contributors: [{ productId: '77777777-7777-4777-8777-777777777771', productName: 'Pizza QA Ficticia', soldQuantity: 10, theoreticalQuantity: 2, saleLineCount: 1 }],
+    recentReceipts: [{ purchaseId: '88888888-8888-4888-8888-888888888881', lineId: '88888888-8888-4888-8888-888888888882', purchasedAt: input.from, description: 'Entrega QA ficticia', quantity: 5, unit: item.unidad }],
+    unverifiedReceiptCount: 0, attention: item.stock < item.minimo ? 'below_minimum' : 'none',
+  }));
+  const response = state.replenishmentMode === 'error' ? { ok: false, error: 'QA ficticio: no se pudo verificar la versión del informe.' } : { ok: true, data: {
+    ...clone(input), branchName: branch?.name, timezone: 'America/Argentina/Buenos_Aires', readAt: '2026-10-09T12:00:00Z', partialCurrentDay: false, rows,
+    visibility: { sales: true, purchases: true }, evidence: { activeSales: 2, saleLines: 1, missingRecipeLines: 0, incompleteRecipeLines: 0, salesWithoutDetail: 1, activePurchases: 1, purchasesWithoutLinkedDetail: 0 },
+    historyCoverage: 'not_verified', coverageDays: null,
+  } };
+  if (state.holdReplenishment) await new Promise((resolve) => waitingReplenishment.push(resolve));
+  return response;
+}

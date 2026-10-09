@@ -425,7 +425,7 @@ export const debts = {
     const res = await db
       .from("debts")
       .select("pending_amount, status, due_date, creditor")
-      .neq("status", "settled");
+      .neq("status", "settled").neq("status", "cancelled");
     const rows = res.data as
       | Pick<Tables["debts"]["Row"], "pending_amount" | "status" | "due_date" | "creditor">[]
       | null;

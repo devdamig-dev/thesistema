@@ -13,6 +13,7 @@ await runUiHarness({
    await editor.getByLabel('Sucursal *', { exact: true }).selectOption({ label: 'Sucursal QA Ficticia' });
    await editor.getByLabel('Proveedor *', { exact: true }).selectOption({ label: 'Proveedor QA Ficticio' });
    await editor.getByLabel('Fecha *', { exact: true }).fill('2026-10-09');
+   if (multiline) await editor.getByLabel('Referencia de comprobante (opcional)', { exact: true }).fill('Ticket QA 123');
    if (multiline) await editor.getByLabel('Línea 1: insumo opcional', { exact: true }).selectOption({ label: 'Harina QA Ficticia (kg)' });
    await editor.getByLabel('Descripción *', { exact: true }).first().fill(description);
    await editor.getByLabel('Cantidad *', { exact: true }).first().fill(multiline ? '1,5' : '1');
@@ -42,7 +43,7 @@ await runUiHarness({
     await editor.getByRole('button', { name: 'Cerrar', exact: true }).first().click(); assert.equal(await editor.isVisible(), true);
     await releaseWrites(page); await editor.waitFor({ state: 'hidden' }); await row(description).waitFor();
     const saved = await page.evaluate((text) => window.qa.purchases.find((p) => p.insumo === text), description);
-    assert.equal(saved.items.length, 2); assert.equal(saved.items[0].ingredientId, '33333333-3333-4333-8333-333333333371'); assert.equal(saved.items[1].ingredientId, null); assert.equal(saved.monto, 950);
+    assert.equal(saved.receiptReference, 'Ticket QA 123'); assert.equal(saved.items.length, 2); assert.equal(saved.items[0].ingredientId, '33333333-3333-4333-8333-333333333371'); assert.equal(saved.items[1].ingredientId, null); assert.equal(saved.monto, 950);
     assert.equal(await page.evaluate((text) => window.qa.purchases.filter((p) => p.insumo === text).length, description), 1);
    });
    await check(`${prefix}: rechazo conocido conserva formulario editable y permite corregir`, async () => {
@@ -100,6 +101,46 @@ await runUiHarness({
     assert.equal(await editor.getByLabel('Motivo obligatorio', { exact: true }).inputValue(), 'Motivo revisado sin enviar');
     assert.equal(await page.evaluate(() => window.qa.purchases.find((p) => p.insumo === 'Compra QA Ficticia Inicial').status), 'active');
     await editor.getByRole('button', { name: 'Cerrar', exact: true }).click(); await editor.waitFor({ state: 'hidden' }); await page.evaluate(() => { window.qa.response = 'success'; });
+   });
+   await check(`${prefix}: referencia de texto y resumen sin renglones ni cantidades ficticias`, async () => {
+    let editor = await openNew();
+    await editor.getByLabel('Sucursal *', { exact: true }).selectOption({ label: 'Sucursal QA Ficticia' });
+    await editor.getByLabel('Proveedor *', { exact: true }).selectOption({ label: 'Proveedor QA Ficticio' });
+    await editor.getByLabel('Tipo de compra', { exact: true }).selectOption('summary');
+    await editor.getByLabel('Importe total *', { exact: true }).fill('45,67');
+    await editor.getByLabel('Referencia de comprobante (opcional)', { exact: true }).fill('Resumen QA 456');
+    await editor.getByText('Referencia de texto, como un número de ticket. No adjunta ni sube archivos.', { exact: true }).waitFor();
+    assert.equal(await editor.locator('input[type=file]').count(), 0);
+    assert.equal(await editor.getByLabel('Cantidad *', { exact: true }).count(), 0);
+    await editor.getByRole('button', { name: 'Registrar compra', exact: true }).click(); await editor.waitFor({ state: 'hidden' });
+    await row('Compra resumida').waitFor();
+    const saved = await page.evaluate(() => window.qa.purchases.find(p => p.insumo === 'Compra resumida'));
+    assert.equal(saved.monto, 45.67); assert.equal(saved.receiptReference, 'Resumen QA 456'); assert.deepEqual(saved.items, []);
+    await row('Compra resumida').getByRole('button', { name: 'Corregir', exact: true }).click(); editor = await editorReady(page);
+    assert.equal(await editor.getByLabel('Tipo de compra', { exact: true }).inputValue(), 'summary');
+    assert.equal(await editor.getByLabel('Importe total *', { exact: true }).inputValue(), '45.67');
+    assert.equal(await editor.getByLabel('Referencia de comprobante (opcional)', { exact: true }).inputValue(), 'Resumen QA 456');
+    await editor.getByRole('button', { name: 'Cerrar', exact: true }).last().click(); await editor.waitFor({ state: 'hidden' });
+   });
+   await check(`${prefix}: intento v1 sin kind sobrevive rechazo y reintenta sin duplicar`, async () => {
+    const legacy = await page.evaluate(() => {
+     const input = { requestId: '33333333-3333-4333-8333-333333333398', branchId: '33333333-3333-4333-8333-333333333321', supplierId: '33333333-3333-4333-8333-333333333341', purchasedAt: '2026-10-09', paymentMethod: 'Efectivo', description: 'Compra QA anterior a actualización', qty: 2, unit: 'kg', unitPrice: 100 };
+     window.qa.receipts[input.requestId] = { id: input.requestId, input: structuredClone(input) };
+     window.qa.purchases.push({ ...window.qa.purchases[0], id: input.requestId, insumo: input.description, monto: 200, status: 'active', version: 1, source: 'manual', items: [{ description: input.description, qty: 2, unit: 'kg', unitPrice: 100 }] });
+     sessionStorage.setItem('gastropilot:purchase-attempt:qa-ficticio:user:business', JSON.stringify({ key: input.requestId, input }));
+     window.qa.response = 'rejected';return input;
+    });
+    let editor = await openNew();
+    await editor.getByRole('button', { name: 'Verificar el mismo intento', exact: true }).click();
+    await editor.getByText(/Este rechazo no descarta que el intento anterior/).waitFor();
+    assert.equal(await editor.getByLabel('Descripción *', { exact: true }).isDisabled(), true);
+    const journal = await page.evaluate(() => JSON.parse(sessionStorage.getItem('gastropilot:purchase-attempt:qa-ficticio:user:business')));
+    assert.deepEqual(journal.input, legacy);assert.equal(Object.hasOwn(journal.input, 'kind'), false);
+    await editor.getByRole('button', { name: 'Cerrar', exact: true }).last().click(); await editor.waitFor({ state: 'hidden' });
+    await page.evaluate(() => { window.qa.response = 'success'; });editor = await openNew();
+    await editor.getByRole('button', { name: 'Verificar el mismo intento', exact: true }).click();await editor.waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(id => window.qa.purchases.filter(p => p.id === id).length, legacy.requestId), 1);
+    assert.equal(await page.evaluate(() => sessionStorage.getItem('gastropilot:purchase-attempt:qa-ficticio:user:business')), null);
    });
    await check(`${prefix}: lectura fallida no muestra compras de ejemplo`, async () => {
     await page.evaluate(() => { window.qa.failLoad = true; });

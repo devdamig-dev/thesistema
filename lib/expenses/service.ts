@@ -7,6 +7,7 @@ const ERRORS: Record<string, string> = {
   expense_conflict: "El gasto cambió. Recargá y revisá los cambios antes de editarlo.", expense_state_conflict: "El estado del gasto cambió. Recargá antes de continuar.",
   expense_idempotency_conflict: "Esta referencia ya se usó con otros datos. Conservá el intento y revisá el historial.",
   expense_extraction_changed: "La extracción cambió desde la revisión. Abrila nuevamente.", expense_extraction_closed: "La extracción ya está cerrada. Revisá Gastos antes de crear otro registro.",
+  expense_supplier_forbidden: "El proveedor no está disponible en este negocio. Elegí uno activo o conservá el proveedor histórico.",
   expense_not_found: "El gasto no está disponible en este negocio.", expense_invalid_input: "Revisá los datos del gasto.",
 };
 export function expenseRpcResult(response: { data: unknown; error: unknown }): ExpenseResult {

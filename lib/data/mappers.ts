@@ -295,6 +295,7 @@ const DEBT_STATUS_TO_UI = {
   active: "activa",
   overdue: "vencida",
   settled: "saldada",
+  cancelled: "cancelada",
 } as const;
 
 const DEBT_CATEGORY_TO_UI = {

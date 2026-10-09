@@ -58,7 +58,40 @@ alter table public.debt_payments
     (voided_at is null and voided_on is null and voided_by is null and void_reason is null and void_request_id is null)
     or (voided_at is not null and voided_on is not null and voided_by is not null and length(btrim(void_reason)) between 1 and 1000 and void_request_id is not null));
 -- Historical payment scope is factual and can be backfilled; currency/origin cannot.
-update public.debt_payments p set business_id=d.business_id,branch_id=d.branch_id from public.debts d where d.id=p.debt_id;
+-- This is a metadata-only migration, not a payment edit. The legacy UPDATE
+-- triggers would otherwise refresh payment/debt timestamps and reconcile debt
+-- amount/status, including valid old headers whose ledger no longer matches.
+-- Suspend only those two effects inside one atomic statement, preserving their
+-- exact previous enable modes. RLS, grants and all other triggers stay in force;
+-- any error rolls the entire DO statement back, including the trigger changes.
+do $backfill$
+declare trigger_states jsonb; legacy_trigger record;
+begin
+  lock table public.debt_payments in access exclusive mode;
+  select jsonb_object_agg(tgname,tgenabled::text) into trigger_states
+  from pg_catalog.pg_trigger
+  where tgrelid='public.debt_payments'::regclass
+    and not tgisinternal
+    and tgname in ('trg_debt_payments_updated','trg_debt_payments_recalc');
+  if trigger_states is null or not (trigger_states ?& array['trg_debt_payments_updated','trg_debt_payments_recalc']) then
+    raise exception 'debt_scope_backfill_expected_legacy_triggers_missing';
+  end if;
+  for legacy_trigger in select key as name,value as enabled from jsonb_each_text(trigger_states) loop
+    if legacy_trigger.enabled <> 'D' then
+      execute format('alter table public.debt_payments disable trigger %I',legacy_trigger.name);
+    end if;
+  end loop;
+  update public.debt_payments p set business_id=d.business_id,branch_id=d.branch_id
+  from public.debts d where d.id=p.debt_id;
+  for legacy_trigger in select key as name,value as enabled from jsonb_each_text(trigger_states) loop
+    if legacy_trigger.enabled <> 'D' then
+      execute format('alter table public.debt_payments enable %s trigger %I',
+        case legacy_trigger.enabled when 'A' then 'always' when 'R' then 'replica' else '' end,
+        legacy_trigger.name);
+    end if;
+  end loop;
+end
+$backfill$;
 
 create table public.debt_installments (
   id uuid primary key default gen_random_uuid(),

@@ -50,6 +50,7 @@ const STATUS_STYLES: Record<
   activa: { tone: "warn", label: "Activa" },
   vencida: { tone: "danger", label: "Vencida" },
   saldada: { tone: "success", label: "Saldada" },
+  cancelada: { tone: "warn", label: "Cancelada administrativamente" },
 };
 
 const CATEGORY_STYLES: Record<
@@ -151,7 +152,7 @@ export default function DeudasClient({
     for (const d of items) {
       const days = daysUntil(d.vencimiento);
       if (d.estado === "vencida") next.vencidas++;
-      else if (d.estado !== "saldada" && days != null && days >= 0 && days <= 7) {
+      else if (d.estado !== "saldada" && d.estado !== "cancelada" && days != null && days >= 0 && days <= 7) {
         next.por_vencer++;
       }
       if (d.categoria === "impuesto" || d.categoria === "sueldo") next.impuestos++;
@@ -170,7 +171,7 @@ export default function DeudasClient({
     }
     if (filter === "proveedores") return items.filter((d) => d.categoria === "proveedor");
     return items.filter((d) => {
-      if (d.estado === "saldada") return false;
+      if (d.estado === "saldada" || d.estado === "cancelada") return false;
       const days = daysUntil(d.vencimiento);
       return days != null && days >= 0 && days <= 7;
     });
@@ -446,7 +447,7 @@ export default function DeudasClient({
                       <Badge tone={cfg.tone}>{cfg.label}</Badge>
                     </td>
                     <td className="px-5 py-3 text-right">
-                      {d.estado !== "saldada" && (
+                      {d.estado !== "saldada" && d.estado !== "cancelada" && (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -609,7 +610,7 @@ function DebtDetail({
       </section>
 
       <div className="flex flex-wrap gap-2 border-t border-line pt-4">
-        {debt.estado !== "saldada" ? (
+        {debt.estado !== "saldada" && debt.estado !== "cancelada" ? (
           <>
             <Button variant="primary" onClick={onPay} disabled={pending}>
               <Banknote className="h-4 w-4" />
@@ -623,7 +624,7 @@ function DebtDetail({
         ) : (
           <div className="flex items-center gap-2 text-xs text-success-400">
             <Check className="h-4 w-4" />
-            Esta deuda ya está saldada
+            {debt.estado === "cancelada" ? "Este registro está cancelado administrativamente; conserva su historial." : "Esta deuda ya está saldada"}
           </div>
         )}
       </div>

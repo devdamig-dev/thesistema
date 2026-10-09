@@ -1,3 +1,5 @@
+import { createCatalogProduct } from "../catalog/products";
+import { readReplenishment } from "../replenishment/read";
 import { executePurchaseTool, isPurchaseWrite } from "../purchases/agent";
 import { withSalesRevision } from "../sales/read";
 import { applyAdminBranchScope } from "../data/branch-scope";
@@ -384,6 +386,7 @@ export async function executeTool(db: Db, actor: AgentActor, call: ToolCall, pen
       .select("id,creditor,concept,pending_amount,due_date,status,currency")
       .eq("business_id", actor.businessId)
       .neq("status", "settled")
+      .neq("status", "cancelled")
       .order("due_date");
     query = branchQuery(query, actor);
     const res = await query;
@@ -396,6 +399,8 @@ export async function executeTool(db: Db, actor: AgentActor, call: ToolCall, pen
     // Never route a legacy command around the plan ledger or retry a possible payment.
     throw new Error("legacy_payment_requires_review");
   }
+
+  if (call.name === "stock.getReplenishment") return readReplenishment(db, actor, call.arguments);
 
   if (call.name === "stock.getLowStock") {
     let query = db
@@ -454,21 +459,10 @@ export async function executeTool(db: Db, actor: AgentActor, call: ToolCall, pen
   }
 
   if (call.name === "products.create") {
-    const res = await db
-      .from("products")
-      .insert({
-        business_id: actor.businessId,
-        name: a.name,
-        category: a.category ?? "General",
-        price: Number(a.price),
-        cost: Number(a.cost ?? 0),
-        active: true,
-      })
-      .select("id")
-      .single();
-
-    if (res.error) throw res.error;
-    return res.data;
+    if (!["owner", "admin"].includes(actor.role) || !actor.enabledModules.includes("products")) throw new Error("product_write_forbidden");
+    const result = await createCatalogProduct(db, { businessId: actor.businessId, actorId: actor.userId, source: "whatsapp" }, call.arguments);
+    if (!result.ok) throw new Error(result.persisted === "unknown" ? "product_result_unconfirmed" : "product_write_rejected");
+    return { id: result.productId, source: result.source };
   }
 
   if (call.name === "invoices.listPending") {

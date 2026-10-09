@@ -15,14 +15,18 @@ await fs.mkdir(out,{recursive:true});
 await prepareFixtureFont(root,out);
 execFileSync(process.execPath,[path.join(root,'node_modules/tailwindcss/lib/cli.js'),'-i','app/globals.css','-o',path.join(out,'style.css'),'--minify'],{cwd:root,stdio:'inherit'});
 const catalog=`
-const state=window.qa={canEdit:true,delay:0,holdRecipe:false,releaseRecipe:null,recipeCalls:0,ingredientCalls:0,conflict:false};
+const state=window.qa={canEdit:true,delay:0,holdRecipe:false,releaseRecipe:null,recipeCalls:0,ingredientCalls:0,conflict:false,productCalls:0,productOutcome:"success",createdProducts:[]};
 const ingredients=[{id:'ing',name:'Harina',unit:'kg',unitCost:1200,active:true,supplierId:null,stock:[{branchId:'branch',branchName:'Central',current:20,minimum:5}]}];
 export const getCatalogDataAction=async()=>({ok:true,data:{ingredients,suppliers:[],branches:[{id:'branch',name:'Central'}],canEdit:state.canEdit}});
 export const getRecipeAction=async(productId)=>({ok:true,data:{productId,recipeId:'rec',updatedAt:'2026-10-09T00:00:00Z',items:[{ingredientId:'ing',quantity:250,unit:'g',name:'Harina'}]}});
 export const saveRecipeAction=async(productId,input)=>{state.recipeCalls++;state.lastRecipe=input;if(state.holdRecipe)await new Promise(r=>{state.releaseRecipe=r});await new Promise(r=>setTimeout(r,state.delay));return state.conflict?{ok:false,error:'La información cambió mientras editabas. Volvé a cargarla antes de guardar.'}:{ok:true,persisted:true,cost:300};};
 export const saveIngredientAction=async(id,input)=>{state.ingredientCalls++;state.lastIngredient=input;await new Promise(r=>setTimeout(r,state.delay));return {ok:true,persisted:true,id:id||'new'};};
 `;
-const products=`export const getProductsPageDataAction=async()=>({ok:true,data:[{id:'prod',name:'Pan casero',category:'Panadería',price:1500,cost:300,active:true,recipeId:'rec',ingredientCount:1}]});export const createProductAction=async()=>({ok:true,persisted:true,productId:'prod'});export const updateProductAction=async()=>({ok:true,persisted:true,productId:'prod'});`;
+const products=`
+export const getProductsPageDataAction=async()=>({ok:true,data:[{id:'prod',name:'Pan casero',category:'Panadería',price:1500,cost:300,active:true,recipeId:'rec',ingredientCount:1},...window.qa.createdProducts]});
+export const createProductAction=async(input)=>{const state=window.qa;state.productCalls++;state.lastProduct=input;const row={...input,id:'created-'+state.productCalls,recipeId:null,ingredientCount:0};state.createdProducts.push(row);return state.productOutcome==='unknown'?{ok:false,persisted:'unknown',error:'No pudimos confirmar el alta. Revisá Productos antes de repetirla para evitar duplicados.'}:{ok:true,persisted:true,productId:row.id};};
+export const updateProductAction=async()=>({ok:true,persisted:true,productId:'prod'});
+`;
 const bundle=await build({metafile:true,stdin:{contents:`import React from 'react';import {createRoot} from 'react-dom/client';import Page from '${root}/app/productos/database-products-page.tsx';import {ToastProvider} from '${root}/components/ui/toast.tsx';createRoot(document.getElementById('root')).render(<ToastProvider><Page/></ToastProvider>);`,loader:'tsx',resolveDir:root},outfile:out+'/app.js',bundle:true,platform:'browser',jsx:'automatic',nodePaths:[root+'/node_modules'],tsconfig:root+'/tsconfig.json',plugins:[{name:'test-actions',setup(b){b.onResolve({filter:/^@\/app\/actions\/(catalog|products-page)$/},args=>({path:args.path,namespace:'qa'}));b.onResolve({filter:/^next\/link$/},()=>({path:'next/link',namespace:'qa'}));b.onLoad({filter:/.*/,namespace:'qa'},args=>({contents:args.path.endsWith('/catalog')?catalog:args.path.endsWith('/products-page')?products:`import React from 'react';export default function Link({children,...props}){return React.createElement('a',props,children)}`,loader:'jsx',resolveDir:root}));}}]});
 assertFixtureBundle(bundle);
 await fs.writeFile(out+'/index.html','<!doctype html><html lang="es" class="dark"><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/font.css"></head><body class="font-sans"><div id="root" class="p-4"></div><script src="/app.js"></script></body></html>');
@@ -47,7 +51,24 @@ try{
  await check('conflict retains draft and offers explicit reload',async()=>{await page.evaluate(()=>{window.qa.delay=0;window.qa.conflict=true});await page.getByRole('button',{name:'Composición',exact:true}).click();await page.getByRole('button',{name:'Guardar composición'}).click();await page.getByRole('button',{name:'Descartar cambios y recargar'}).waitFor();await page.getByRole('button',{name:'Descartar cambios y recargar'}).click();await page.getByRole('button',{name:'Guardar composición'}).waitFor();await page.getByRole('button',{name:'Cancelar',exact:true}).click();await page.locator('aside').waitFor({state:'detached'});});
  await check('ingredient editor sets minimum without changing current stock',async()=>{await page.getByRole('tab',{name:'Insumos',exact:true}).click();await page.getByRole('button',{name:'Editar',exact:true}).click();await page.getByLabel('Stock mínimo en Central').fill('8');await page.getByRole('button',{name:'Guardar insumo',exact:true}).click();await page.locator('aside').waitFor({state:'detached'});const s=await page.evaluate(()=>window.qa.lastIngredient);if(s.minimums[0].minimum!==8||'current'in s)throw Error('stock payload invalid');});
  await check('new ingredient has no invented base cost',async()=>{await page.getByRole('button',{name:'Nuevo insumo',exact:true}).click();if(await page.getByLabel(/Costo por unidad/).inputValue()!=='')throw Error('cost not empty');await page.getByRole('button',{name:'Cancelar',exact:true}).click();});
- await page.setViewportSize({width:390,height:844});await page.getByRole('tab',{name:'Productos',exact:true}).click();await page.getByRole('button',{name:'Composición',exact:true}).click();await page.getByRole('button',{name:'Guardar composición'}).waitFor();await settleDrawer();await page.screenshot({path:out+'/composition-mobile.png',fullPage:false});
+ await check('uncertain product create blocks resubmission until catalog review',async()=>{
+   await page.getByRole('tab',{name:'Productos',exact:true}).click();
+   await page.evaluate(()=>{window.qa.productOutcome='unknown'});
+   await page.getByRole('button',{name:'Nuevo producto',exact:true}).click();
+   if(await page.getByLabel(/Costo base/).inputValue()!=='')throw Error('invented product cost');
+   await page.getByLabel('Nombre',{exact:false}).fill('Producto de prueba incierta');
+   await page.getByLabel('Categoría',{exact:false}).fill('Prueba');
+   await page.getByLabel(/Precio \(ARS\)/).fill('100');
+   await page.getByLabel(/Costo base/).fill('25');
+   await page.getByRole('button',{name:'Crear producto',exact:true}).click();
+   await page.getByRole('alert').filter({hasText:/Revisá Productos antes de repetirla/}).waitFor();
+   if(!await page.getByRole('button',{name:'Crear producto',exact:true}).isDisabled())throw Error('uncertain create can repeat');
+   if(await page.evaluate(()=>window.qa.productCalls)!==1)throw Error('duplicate product submission');
+   await page.getByRole('button',{name:'Cancelar',exact:true}).click();
+   await page.locator('aside').waitFor({state:'detached'});
+   await page.getByText('Producto de prueba incierta',{exact:true}).waitFor();
+ });
+ await page.setViewportSize({width:390,height:844});await page.getByRole('tab',{name:'Productos',exact:true}).click();await page.getByRole('button',{name:'Composición',exact:true}).first().click();await page.getByRole('button',{name:'Guardar composición'}).waitFor();await settleDrawer();await page.screenshot({path:out+'/composition-mobile.png',fullPage:false});
  await check('mobile editor has no page horizontal overflow',async()=>{if(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth))throw Error('mobile overflow');});
  verifyIsolation();
  if(errors.length)throw Error(errors.join('\n'));
