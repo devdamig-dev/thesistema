@@ -39,6 +39,34 @@ const page=await browser.newPage({viewport:{width:1400,height:1200},serviceWorke
 const verifyIsolation=await isolateFixturePage(page,'http://127.0.0.1:'+server.address().port,['/','/bundle.js','/style.css','/font.css',...Array.from(fontFiles,file=>'/fonts/'+file)]);
 let browserPassed=false;
 const button=name=>page.getByRole('button',{name,exact:true});
+const screenshotChecks = [];
+async function capturePaintedReview(label, review) {
+ for (let attempt = 1; attempt <= 3; attempt++) {
+  // Geometry can settle before Chromium paints a newly scrolled composited card.
+  // Wait for render frames, then inspect the actual PNG rather than DOM alone.
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const bounds = await review.boundingBox();
+  assert.ok(bounds && bounds.width > 0 && bounds.height > 0, 'review must have visible geometry');
+  const png = await page.screenshot({fullPage:false,animations:'disabled'});
+  const brightPixels = await page.evaluate(async ({base64, bounds}) => {
+   const image = new Image();
+   await new Promise((resolve,reject) => { image.onload=resolve;image.onerror=()=>reject(new Error('Fixture PNG decode failed'));image.src='data:image/png;base64,'+base64; });
+   const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;
+   const context=canvas.getContext('2d');if(!context)throw new Error('Fixture PNG canvas unavailable');
+   context.drawImage(image,0,0);
+   const scale=image.width/innerWidth;
+   const x=Math.max(0,Math.floor(bounds.x*scale)),y=Math.max(0,Math.floor(bounds.y*scale));
+   const width=Math.min(image.width-x,Math.floor(bounds.width*scale)),height=Math.min(image.height-y,Math.floor(bounds.height*scale));
+   if(width<=0||height<=0)return 0;
+   const pixels=context.getImageData(x,y,width,height).data;
+   let count=0;for(let i=0;i<pixels.length;i+=4)if(pixels[i]>150&&pixels[i+1]>150&&pixels[i+2]>150)count++;
+   return count;
+  }, {base64:png.toString('base64'),bounds});
+  screenshotChecks.push({label,attempt,brightPixels});
+  if(brightPixels>=100){await writeFile(join(dir,`${label}.png`),png);return;}
+ }
+ throw new Error(`Review screenshot ${label} remained unpainted after three captures`);
+}
 async function captureReview(viewport) {
  const review=page.getByRole('region',{name:'Detalle de deuda para confirmar',exact:true});
  const confirm=button('Confirmar este detalle');
@@ -65,11 +93,11 @@ async function captureReview(viewport) {
  await ensureInter(page);
  // Capture the real scrolled viewport: offscreen composited cards can be omitted
  // by a full-page screenshot immediately after a responsive viewport change.
- await page.screenshot({path:join(dir,`preview-${viewport}.png`),fullPage:false,animations:'disabled'});
+ await capturePaintedReview(`preview-${viewport}`,review);
  await confirm.scrollIntoViewIfNeeded();
  assert.equal(await confirm.isEnabled(),true,'confirmation must be ready after preview resolves');
  assert.equal(await confirm.evaluate(element=>{const box=element.getBoundingClientRect();return box.top>=0&&box.bottom<=innerHeight&&box.left>=0&&box.right<=innerWidth;}),true,'confirmation must be in viewport');
- await page.screenshot({path:join(dir,`confirm-${viewport}.png`),fullPage:false,animations:'disabled'});
+ await capturePaintedReview(`confirm-${viewport}`,review);
  assert.equal((await page.evaluate(()=>window.__calls)).length,0,'capturing or reviewing must not persist');
 }
 try{
@@ -91,4 +119,4 @@ try{
  await button('Confirmar este detalle').dblclick();await button('Aprobado').waitFor();
  const calls=await page.evaluate(()=>window.__calls);assert.equal(calls.length,3);assert.equal(calls[0].digest,'review-v1');assert.equal(calls[1].digest,'review-v2');assert.equal(calls[2].digest,'review-v2');verifyIsolation();assert.deepEqual(errors,[]);browserPassed=true;
  console.log('PASS: Inbox real preview is read-only, full schedule, cancel, stale-snapshot review reset, same snapshot retry after uncertain result, repeated-click protection.');
-}catch(error){await page.screenshot({path:join(dir,'failure.png'),fullPage:false,animations:'disabled'}).catch(()=>{});throw error;}finally{await writeFile(join(dir,'browser-result.json'),JSON.stringify({passed:browserPassed,fixturesOnly:true,pageErrors:errors},null,2));await browser.close();await new Promise(resolve=>server.close(resolve));}
+}catch(error){await page.screenshot({path:join(dir,'failure.png'),fullPage:false,animations:'disabled'}).catch(()=>{});throw error;}finally{await writeFile(join(dir,'browser-result.json'),JSON.stringify({passed:browserPassed,fixturesOnly:true,pageErrors:errors,screenshotChecks},null,2));await browser.close();await new Promise(resolve=>server.close(resolve));}
