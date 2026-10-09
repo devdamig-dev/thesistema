@@ -8,7 +8,10 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "rm -rf .test-dist && tsc -p tests/tsconfig.json && node --test .test-dist/tests/*.test.js"
+    "test": "rm -rf .test-dist && tsc -p tests/tsconfig.json && node --test .test-dist/tests/*.test.js",
+    "test:suppliers:sql": "node scripts/run-suppliers-sql.mjs",
+    "test:suppliers:ui": "node scripts/run-suppliers-ui.mjs",
+    "test:suppliers:sql:docker": "node scripts/run-suppliers-sql.mjs --native --docker"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",
@@ -24,6 +27,7 @@
     "tailwind-merge": "^2.5.4"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@types/node": "^20.16.10",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
@@ -33,6 +37,8 @@
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",
     "tailwindcss-animate": "^1.0.7",
-    "typescript": "^5.6.2"
+    "typescript": "^5.6.2",
+    "esbuild": "0.28.2",
+    "playwright": "1.64.0"
   }
 }

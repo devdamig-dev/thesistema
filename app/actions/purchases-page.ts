@@ -4,7 +4,10 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentUserContext } from "@/lib/data/auth";
 import { isDatabaseMode } from "@/lib/env";
+import { hasPermission } from "@/lib/permissions";
 import { withPermission } from "@/lib/permissions/server-action";
+import { createSupplierManualAction } from "./suppliers-page";
+import type { SupplierCreateInput } from "../../lib/suppliers/domain";
 import { logActivity } from "@/lib/data/activity";
 
 export type PurchasesPageRow = {
@@ -29,11 +32,14 @@ export type SupplierOption = {
   id: string;
   name: string;
   category: string | null;
+  active: boolean;
 };
 
 export type BranchOption = { id: string; name: string };
 
 export type PurchasesPageData = {
+  supplierDraftScope: string;
+  canManageSuppliers: boolean;
   recentPurchases: PurchasesPageRow[];
   topSuppliers: SupplierSummaryRow[];
   suppliers: SupplierOption[];
@@ -43,13 +49,7 @@ export type PurchasesPageData = {
   totalMonth: number;
 };
 
-export type SupplierInput = {
-  name: string;
-  taxId?: string;
-  category?: string;
-  phone?: string;
-  email?: string;
-};
+export type SupplierInput = SupplierCreateInput;
 
 export type PurchaseInput = {
   branchId: string;
@@ -106,7 +106,7 @@ export async function getPurchasesPageDataAction(): Promise<
       .order("purchased_at", { ascending: false }),
     supabase
       .from("suppliers")
-      .select("id, name, category")
+      .select("id, name, category, active")
       .eq("business_id", ctx.businessId)
       .order("name"),
     branchesQuery,
@@ -202,65 +202,21 @@ export async function getPurchasesPageDataAction(): Promise<
     data: {
       recentPurchases,
       topSuppliers,
-      suppliers,
+      supplierDraftScope: `${ctx.userId}:${ctx.businessId}`,
+      canManageSuppliers: hasPermission(ctx.role, "purchases.create"),
+      suppliers: suppliers.filter((supplier) => supplier.active),
       branches,
-      supplierCount: suppliers.length,
+      supplierCount: suppliers.filter((supplier) => supplier.active).length,
       orderCount: monthPurchases.length,
       totalMonth: monthPurchases.reduce((sum, purchase) => sum + Number(purchase.total ?? 0), 0),
     },
   };
 }
 
-function validateSupplier(input: SupplierInput): string | null {
-  if (!input.name.trim()) return "Ingresá el nombre del proveedor.";
-  if (input.email?.trim() && !/^\S+@\S+\.\S+$/.test(input.email.trim())) return "Ingresá un email válido.";
-  return null;
+// Legacy action name; callers now supply a stable UUID for safe create reconciliation.
+export async function createSupplierAction(input: SupplierInput) {
+  return createSupplierManualAction(input);
 }
-
-export const createSupplierAction = withPermission<[SupplierInput], MutationResult>(
-  "purchases.create",
-  async (ctx, input) => {
-    if (!isDatabaseMode()) return { ok: false, persisted: false, error: "Esta acción requiere un negocio activo." };
-    if (!ctx.businessId) return { ok: false, persisted: false, error: "No pudimos identificar el negocio activo." };
-
-    const validation = validateSupplier(input);
-    if (validation) return { ok: false, persisted: false, error: validation };
-
-    const db = await createSupabaseServerClient() as any;
-    if (!db) return { ok: false, persisted: false, error: "No pudimos conectar con tus datos." };
-
-    const res = await db
-      .from("suppliers")
-      .insert({
-        business_id: ctx.businessId,
-        name: input.name.trim(),
-        tax_id: input.taxId?.trim() || null,
-        category: input.category?.trim() || null,
-        phone: input.phone?.trim() || null,
-        email: input.email?.trim() || null,
-      })
-      .select("id")
-      .maybeSingle();
-
-    if (res.error || !res.data?.id) return { ok: false, persisted: false, error: "No pudimos registrar el proveedor." };
-
-    await logActivity({
-      businessId: ctx.businessId,
-      actorId: ctx.userId,
-      actorName: ctx.fullName,
-      actorRole: ctx.role,
-      action: "supplier.created",
-      targetType: "suppliers",
-      targetId: res.data.id,
-      summary: `Proveedor registrado · ${input.name.trim()}`,
-      data: { category: input.category?.trim() || null },
-    });
-
-    revalidatePath("/compras");
-    revalidatePath("/auditoria");
-    return { ok: true, persisted: true, id: res.data.id };
-  },
-);
 
 function validatePurchase(input: PurchaseInput): string | null {
   if (!input.branchId) return "Elegí una sucursal.";
@@ -290,6 +246,7 @@ export const createPurchaseAction = withPermission<[PurchaseInput], MutationResu
       .from("suppliers")
       .select("id,name")
       .eq("id", input.supplierId)
+      .eq("active", true)
       .eq("business_id", ctx.businessId)
       .maybeSingle();
     if (supplierRes.error || !supplierRes.data?.id) return { ok: false, persisted: false, error: "El proveedor seleccionado no está disponible." };

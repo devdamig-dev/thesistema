@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { SupplierForm } from "@/components/suppliers/supplier-form";
 import { FormEvent, useEffect, useMemo, useState, useTransition } from "react";
 import { ArrowDownRight, ArrowUpRight, FileSpreadsheet, Loader2, Plus, Truck } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
@@ -13,11 +15,9 @@ import { useToast } from "@/components/ui/toast";
 import { exportPurchasesCsvAction } from "@/app/actions/exports";
 import {
   createPurchaseAction,
-  createSupplierAction,
   getPurchasesPageDataAction,
   type PurchaseInput,
   type PurchasesPageData,
-  type SupplierInput,
 } from "@/app/actions/purchases-page";
 import { triggerCsvDownload } from "@/lib/csv-download";
 import { recentPurchases as demoRecentPurchases, topSuppliers as demoTopSuppliers } from "@/lib/mock-data";
@@ -35,6 +35,7 @@ export default function ComprasPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [databaseData, setDatabaseData] = useState<PurchasesPageData | null>(null);
   const [supplierDrawerOpen, setSupplierDrawerOpen] = useState(false);
+  const [supplierBusy, setSupplierBusy] = useState(false);
   const [purchaseDrawerOpen, setPurchaseDrawerOpen] = useState(false);
 
   async function loadPurchases() {
@@ -84,19 +85,6 @@ export default function ComprasPage() {
     });
   }
 
-  function saveSupplier(input: SupplierInput) {
-    startMutation(async () => {
-      const res = await createSupplierAction(input);
-      if (!res.ok) {
-        toast({ tone: "warn", title: "No pudimos registrar el proveedor", description: res.error });
-        return;
-      }
-      toast({ tone: "success", title: "Proveedor registrado", description: "Ya podés usarlo al cargar una compra." });
-      setSupplierDrawerOpen(false);
-      await loadPurchases();
-    });
-  }
-
   function savePurchase(input: PurchaseInput) {
     startMutation(async () => {
       const res = await createPurchaseAction(input);
@@ -124,9 +112,10 @@ export default function ComprasPage() {
               {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
               {exporting ? "Generando…" : "Exportar compras Excel"}
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => setSupplierDrawerOpen(true)} disabled={!IS_DATABASE || pending}>
+            <Button size="sm" variant="ghost" onClick={() => setSupplierDrawerOpen(true)} disabled={!IS_DATABASE || pending || !databaseData?.canManageSuppliers}>
               <Truck className="h-4 w-4" /> Nuevo proveedor
             </Button>
+            {IS_DATABASE && <Link href="/compras/proveedores" className="inline-flex items-center px-3 text-sm text-ink-muted hover:text-ink">Gestionar proveedores</Link>}
             <Button size="sm" variant="primary" onClick={() => setPurchaseDrawerOpen(true)} disabled={!IS_DATABASE || pending}>
               <Plus className="h-4 w-4" /> Registrar compra
             </Button>
@@ -235,7 +224,7 @@ export default function ComprasPage() {
                   <div className="rounded-xl border border-dashed border-line px-4 py-8 text-center">
                     <div className="text-sm text-ink-muted">Sin proveedores con movimientos todavía.</div>
                     {IS_DATABASE && (
-                      <Button size="sm" variant="ghost" className="mt-3" onClick={() => setSupplierDrawerOpen(true)}>
+                      <Button size="sm" variant="ghost" className="mt-3" onClick={() => setSupplierDrawerOpen(true)} disabled={!databaseData?.canManageSuppliers}>
                         <Truck className="h-4 w-4" /> Nuevo proveedor
                       </Button>
                     )}
@@ -262,12 +251,12 @@ export default function ComprasPage() {
 
       <Drawer
         open={supplierDrawerOpen}
-        onClose={() => !pending && setSupplierDrawerOpen(false)}
+        onClose={() => !supplierBusy && setSupplierDrawerOpen(false)}
         title="Nuevo proveedor"
         description="Guardá los datos básicos para asociarlo a futuras compras."
         width="max-w-lg"
       >
-        <SupplierForm pending={pending} onCancel={() => setSupplierDrawerOpen(false)} onSubmit={saveSupplier} />
+        {supplierDrawerOpen && databaseData?.canManageSuppliers && <SupplierForm draftScope={databaseData.supplierDraftScope} onBusyChange={setSupplierBusy} onCancel={() => setSupplierDrawerOpen(false)} onSaved={() => { setSupplierDrawerOpen(false); toast({ tone: "success", title: "Proveedor guardado" }); void loadPurchases(); }} />}
       </Drawer>
 
       <Drawer
@@ -280,6 +269,7 @@ export default function ComprasPage() {
         <PurchaseForm
           pending={pending}
           suppliers={databaseData?.suppliers ?? []}
+          canCreateSupplier={databaseData?.canManageSuppliers ?? false}
           branches={databaseData?.branches ?? []}
           onCancel={() => setPurchaseDrawerOpen(false)}
           onCreateSupplier={() => {
@@ -293,51 +283,12 @@ export default function ComprasPage() {
   );
 }
 
-function SupplierForm({ pending, onCancel, onSubmit }: { pending: boolean; onCancel: () => void; onSubmit: (input: SupplierInput) => void }) {
-  const [name, setName] = useState("");
-  const [category, setCategory] = useState("");
-  const [taxId, setTaxId] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [error, setError] = useState("");
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!name.trim()) {
-      setError("Ingresá el nombre del proveedor.");
-      return;
-    }
-    if (email.trim() && !/^\S+@\S+\.\S+$/.test(email.trim())) {
-      setError("Ingresá un email válido.");
-      return;
-    }
-    setError("");
-    onSubmit({ name, category, taxId, phone, email });
-  }
-
-  return (
-    <form className="space-y-4" onSubmit={submit}>
-      <Field label="Nombre *"><input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej. Frigorífico Sur" /></Field>
-      <Field label="Categoría"><input className={inputClass} value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Ej. Carnes" /></Field>
-      <Field label="CUIT"><input className={inputClass} value={taxId} onChange={(e) => setTaxId(e.target.value)} placeholder="30-12345678-9" /></Field>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Field label="Teléfono"><input className={inputClass} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="11 5555 5555" /></Field>
-        <Field label="Email"><input className={inputClass} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ventas@proveedor.com" /></Field>
-      </div>
-      {error && <p className="text-xs text-danger-400">{error}</p>}
-      <div className="flex justify-end gap-2 pt-2">
-        <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>Cancelar</Button>
-        <Button type="submit" variant="primary" disabled={pending}>{pending && <Loader2 className="h-4 w-4 animate-spin" />} Guardar proveedor</Button>
-      </div>
-    </form>
-  );
-}
-
-function PurchaseForm({ pending, suppliers, branches, onCancel, onCreateSupplier, onSubmit }: {
+function PurchaseForm({ pending, suppliers, branches, canCreateSupplier, onCancel, onCreateSupplier, onSubmit }: {
   pending: boolean;
   suppliers: Array<{ id: string; name: string; category: string | null }>;
   branches: Array<{ id: string; name: string }>;
   onCancel: () => void;
+  canCreateSupplier: boolean;
   onCreateSupplier: () => void;
   onSubmit: (input: PurchaseInput) => void;
 }) {
@@ -380,7 +331,7 @@ function PurchaseForm({ pending, suppliers, branches, onCancel, onCreateSupplier
         <div className="rounded-xl border border-dashed border-line p-5 text-sm text-ink-muted">{branches.length === 0 ? "No tenés una sucursal disponible para registrar compras." : "Para registrar una compra primero necesitás un proveedor."}</div>
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onCancel}>Cancelar</Button>
-          {branches.length > 0 && <Button variant="primary" onClick={onCreateSupplier}><Truck className="h-4 w-4" /> Nuevo proveedor</Button>}
+          {branches.length > 0 && canCreateSupplier && <Button variant="primary" onClick={onCreateSupplier}><Truck className="h-4 w-4" /> Nuevo proveedor</Button>}
         </div>
       </div>
     );
