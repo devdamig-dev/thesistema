@@ -198,6 +198,22 @@ end; $$;
 reset role;
 set local role service_role;
 select set_config('request.jwt.claim.sub','',true);
+-- Compare fresh and previously used call sites after a role switch. This must
+-- pass with BYPASSRLS without granting membership helpers to the backend role.
+do $$ declare v_direct numeric; v_nested jsonb; v_direct_error text; v_nested_error text; v_bypass boolean; begin
+  select rolbypassrls into v_bypass from pg_roles where rolname=current_user;
+  begin
+    v_direct := public.catalog_recipe_cost('00000000-0000-4000-8000-000000000053');
+  exception when others then v_direct_error := sqlerrm; end;
+  begin
+    v_nested := public.recalc_product_recipe_cost('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000053');
+  exception when others then v_nested_error := sqlerrm; end;
+  if v_direct_error is not null or v_nested_error is not null then
+    raise exception 'catalog role diagnostic: current_user=%, bypassrls=%, direct_error=%, nested_error=%',
+      current_user,v_bypass,coalesce(v_direct_error,'none'),coalesce(v_nested_error,'none');
+  end if;
+  perform pg_temp.catalog_assert(v_bypass and v_direct is null and v_nested->>'error'='recipe_incomplete','service role fresh and cached call sites preserve incomplete recipe');
+end; $$;
 select pg_temp.catalog_assert(public.recalc_product_recipe_cost('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000053')->>'error'='recipe_incomplete','trusted backend recalc allowed without inventing actor');
 select pg_temp.catalog_assert(public.recalc_product_recipe_cost('00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000053')->>'error'='product_not_found','service recalc still matches explicit business');
 select pg_temp.catalog_assert(public.save_ingredient_atomic('00000000-0000-4000-8000-000000000011',null,'{"name":"Forbidden","unit":"kg","unitCost":1,"active":true}')->>'error'='permission_denied','save still requires real actor');

@@ -74,7 +74,9 @@ Pruebas reproducibles:
   exec` al socket privado interno. No acepta contenedores ni bases preexistentes.
   No sustituye un fallo por PGlite o PostgreSQL 16; ambos gates son obligatorios.
 - `npm run test:ui:catalog`: Chromium con componentes reales y acciones fixture
-  aisladas. Requiere `npx playwright install --with-deps chromium`.
+  aisladas. Requiere un `npm run build` previo para reutilizar Inter emitido por
+  Next y `npx playwright install --with-deps chromium`. Sólo las capturas se
+  publican como artifact; fuentes y bundles fixture no se agregan al repo.
 
 El workflow Quality usa permisos de lectura, no persiste credenciales de checkout
 ni recibe secretos, y conserva capturas de los fixtures por siete días. Las pruebas
