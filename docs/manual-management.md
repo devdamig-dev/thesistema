@@ -63,6 +63,16 @@ Pruebas reproducibles:
 - `npm run typecheck`, `npm run lint`, `npm run build`.
 - `npm run test:db:catalog`: PostgreSQL/PGlite efímero, migraciones reales del repo,
   RLS, permisos y prueba transaccional con rollback. Sin conexión a Supabase real.
+- `npm run test:db:catalog:native`: mismo ensayo en PostgreSQL 17 nativo instalado,
+  con clúster temporal, socket privado y TCP deshabilitado. Usa `PG_BIN` o
+  `/usr/lib/postgresql/17/bin`; falla si faltan binarios, sin fallback a otra base.
+  No usa URLs, credenciales ni datos productivos.
+- `npm run test:db:catalog:docker`: CI exige PostgreSQL 17 real mediante la imagen
+  oficial `postgres:17`, resuelta a digest registrado en el log. Crea su propio
+  contenedor efímero con red deshabilitada, sin puertos publicados ni montajes del
+  host, y elimina el contenedor al terminar. SQL viaja sólo por stdin de `docker
+  exec` al socket privado interno. No acepta contenedores ni bases preexistentes.
+  No sustituye un fallo por PGlite o PostgreSQL 16; ambos gates son obligatorios.
 - `npm run test:ui:catalog`: Chromium con componentes reales y acciones fixture
   aisladas. Requiere `npx playwright install --with-deps chromium`.
 
@@ -71,6 +81,12 @@ ni recibe secretos, y conserva capturas de los fixtures por siete días. Las pru
 con handlers simulados no sustituyen Chromium; PGlite de una conexión no certifica
 contención entre múltiples sesiones PostgreSQL. El E2E autenticado contra Supabase
 requiere una base de prueba separada autorizada.
+
+Los mínimos guardados por el editor/RPC de catálogo requieren owner/admin. Se
+preserva la escritura operativa previa de `stock_items.min` mediante Data API,
+sujeta a `stock.adjust`, RLS y auditoría existentes; no se declara exclusividad
+owner/admin de ese campo a nivel DB. El ensayo nativo cubre migraciones y
+regresiones transaccionales, sin afirmar una prueba de carreras multisesión.
 
 ## Alcance siguiente, todavía independiente
 

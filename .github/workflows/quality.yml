@@ -30,6 +30,8 @@ jobs:
       - run: npm run build
       - run: npx --no-install playwright install --with-deps chromium
       - run: npm run test:ui:catalog
+      - name: Rehearse catalog on isolated native PostgreSQL 17
+        run: npm run test:db:catalog:docker
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

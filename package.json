@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "rm -rf .test-dist && tsc -p tests/tsconfig.json && node --test .test-dist/tests/*.test.js",
     "test:db:catalog": "node scripts/run-catalog-sql.mjs",
+    "test:db:catalog:native": "node scripts/run-catalog-sql.mjs --native",
+    "test:db:catalog:docker": "node scripts/run-catalog-sql.mjs --native --docker",
     "test:ui:catalog": "node scripts/run-catalog-ui.mjs"
   },
   "dependencies": {

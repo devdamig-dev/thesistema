@@ -1,6 +1,7 @@
 /**
  * Offline PostgreSQL catalog/RLS regression suite. No credentials, network, or
- * external database are used: PGlite lives only in memory and closes on exit.
+ * external database are used: PGlite lives in memory, or --native creates a
+ * private temporary PostgreSQL 17 cluster. Both are disposed on exit.
  * Supabase's managed auth/storage scaffolding is represented below; application
  * tables, grants, RLS, functions and triggers come from real migration files.
  * This is not a multi-session concurrency or full Supabase service emulator.
@@ -11,10 +12,12 @@ import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { nativeDatabase } from "./native-postgres.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const migrations = join(root, "supabase", "migrations");
-const db = new PGlite({ extensions: { pgcrypto, pg_trgm } });
+const native = process.argv.includes("--native");
+const db = native ? await nativeDatabase({ docker: process.argv.includes("--docker") }) : new PGlite({ extensions: { pgcrypto, pg_trgm } });
 let stage = "managed Supabase scaffolding";
 
 try {
@@ -57,7 +60,7 @@ try {
 
   stage = "supabase/tests/catalog.sql";
   await db.exec(await readFile(join(root, stage), "utf8"));
-  console.log(`PASS catalog SQL suite (${files.length} real migrations, isolated PostgreSQL, rolled-back fixtures)`);
+  console.log(`PASS catalog SQL suite (${files.length} real migrations, ${native ? "native PostgreSQL 17" : "PGlite"}, isolated database, rolled-back fixtures)`);
 } catch (error) {
   console.error(`FAIL ${stage}: ${error.message}`);
   if (error.detail) console.error(`Detail: ${error.detail}`);
