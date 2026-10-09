@@ -35,5 +35,6 @@ jobs:
         with:
           name: catalog-ui
           path: .test-artifacts/catalog-ui/*.png
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
