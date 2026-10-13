@@ -104,6 +104,44 @@ begin
  perform pg_temp.product_throws(format('select public.create_product_atomic(%L,%L::jsonb,%L)','00000000-0000-4000-8000-000000000012',base,'00000000-0000-4000-8000-000000000001'),'product_module_disabled');
  perform pg_temp.product_throws(format('select public.create_product_atomic(%L,%L::jsonb,%L)','00000000-0000-4000-8000-000000000011',base-'cost','00000000-0000-4000-8000-000000000001'),'invalid_product_fields');
 end; $$;
+-- Product + recipe creation is one transaction and derives cost from ingredients.
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',true);
+insert into public.ingredients(id,business_id,name,unit,avg_unit_cost,active) values
+ ('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000011','Carne','kg',10000,true),
+ ('00000000-0000-4000-8000-000000000062','00000000-0000-4000-8000-000000000011','Pan','unit',500,true);
+do $
+declare r jsonb; v_id uuid; before_count bigint;
+begin
+  r:=public.create_product_with_recipe_atomic(
+    '00000000-0000-4000-8000-000000000011',
+    '{"name":"Burger receta","category":"Comida","price":9000,"cost":0,"active":true}'::jsonb,
+    '[{"ingredientId":"00000000-0000-4000-8000-000000000061","quantity":180,"unit":"g"},{"ingredientId":"00000000-0000-4000-8000-000000000062","quantity":1,"unit":"unit"}]'::jsonb
+  );
+  v_id:=(r->>'id')::uuid;
+  perform pg_temp.product_assert((r->>'ok')::boolean and (r->>'cost')::numeric=2300,'recipe create returns calculated cost');
+  perform pg_temp.product_assert(exists(select 1 from public.products where id=v_id and cost=2300),'product stores recipe cost');
+  perform pg_temp.product_assert(exists(select 1 from public.recipes where product_id=v_id),'recipe created in same transaction');
+  perform pg_temp.product_assert((select count(*) from public.recipe_items ri join public.recipes rr on rr.id=ri.recipe_id where rr.product_id=v_id)=2,'all recipe items persist');
+
+  select count(*) into before_count from public.products where name='Rollback recipe';
+  begin
+    perform public.create_product_with_recipe_atomic(
+      '00000000-0000-4000-8000-000000000011',
+      '{"name":"Rollback recipe","category":"Comida","price":9000,"cost":0,"active":true}'::jsonb,
+      '[{"ingredientId":"00000000-0000-4000-8000-000000000099","quantity":1,"unit":"unit"}]'::jsonb
+    );
+    raise exception 'expected recipe failure';
+  exception when others then
+    if position('product_recipe_ingredient_not_found' in sqlerrm)=0 then raise; end if;
+  end;
+  perform pg_temp.product_assert((select count(*) from public.products where name='Rollback recipe')=before_count,'failed recipe rolls back product creation');
+end;
+$;
+select pg_temp.product_assert(not has_function_privilege('anon','public.create_product_with_recipe_atomic(uuid,jsonb,jsonb)','execute'),'anon cannot create product recipes');
+select pg_temp.product_assert(not has_function_privilege('service_role','public.create_product_with_recipe_atomic(uuid,jsonb,jsonb)','execute'),'service role cannot use manual product recipe RPC');
+
 -- A later manual edit is attributed to the editor, not the WhatsApp creator.
 reset role;
 set local role authenticated;
