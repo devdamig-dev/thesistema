@@ -422,6 +422,37 @@ set local role service_role;
 select set_config('request.jwt.claim.sub','',true);
 select pg_temp.catalog_assert(public.recalc_ingredient_cost('00000000-0000-4000-8000-000000000049')=1200,'service average excludes foreign-business purchases');
 reset role;
+-- New product can persist its initial recipe and calculated cost atomically.
+set local role authenticated;
+select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',true);
+insert into public.ingredients(id,business_id,name,unit,avg_unit_cost,active) values
+ ('00000000-0000-4000-8000-000000000081','00000000-0000-4000-8000-000000000011','Recipe beef','kg',10000,true),
+ ('00000000-0000-4000-8000-000000000082','00000000-0000-4000-8000-000000000011','Recipe bun','unit',500,true);
+do $product_recipe$ declare v_result jsonb; v_id uuid; begin
+  v_result := public.create_product_with_recipe_atomic(
+    '00000000-0000-4000-8000-000000000011',
+    '{"name":"Burger con receta","category":"Comida","price":1500,"cost":0,"active":true}'::jsonb,
+    '[{"ingredientId":"00000000-0000-4000-8000-000000000081","quantity":180,"unit":"g"},{"ingredientId":"00000000-0000-4000-8000-000000000082","quantity":1,"unit":"unit"}]'::jsonb
+  );
+  v_id := (v_result->>'id')::uuid;
+  perform pg_temp.catalog_assert((v_result->>'ok')::boolean,'product recipe creation succeeds');
+  perform pg_temp.catalog_assert((v_result->>'cost')::numeric=2300,'product recipe cost is derived from ingredients');
+  perform pg_temp.catalog_assert(exists(select 1 from public.products p where p.id=v_id and p.cost=2300),'calculated cost persists on product');
+  perform pg_temp.catalog_assert(exists(select 1 from public.recipes r where r.product_id=v_id),'recipe persists with product');
+  perform pg_temp.catalog_assert((select count(*) from public.recipe_items ri join public.recipes r on r.id=ri.recipe_id where r.product_id=v_id)=2,'all initial recipe items persist');
+end; $product_recipe$;
+select pg_temp.catalog_throws($q$
+  select public.create_product_with_recipe_atomic(
+    '00000000-0000-4000-8000-000000000011',
+    '{"name":"Rollback receta","category":"Comida","price":1500,"cost":0,"active":true}'::jsonb,
+    '[{"ingredientId":"00000000-0000-4000-8000-000000000099","quantity":1,"unit":"unit"}]'::jsonb
+  )
+$q$,'product_recipe_ingredient_not_found');
+select pg_temp.catalog_assert(not exists(select 1 from public.products where name='Rollback receta'),'invalid recipe rolls back product insert');
+select pg_temp.catalog_assert(not has_function_privilege('anon','public.create_product_with_recipe_atomic(uuid,jsonb,jsonb)','execute'),'anon cannot create product recipe');
+select pg_temp.catalog_assert(not has_function_privilege('service_role','public.create_product_with_recipe_atomic(uuid,jsonb,jsonb)','execute'),'service role cannot use manual recipe creation');
+reset role;
+
 -- Disabled catalog operators must not bypass the RPC through the Data API.
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000005',true);

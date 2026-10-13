@@ -36,7 +36,7 @@ function db() {
     async rpc(name: string, args: unknown) {
       state.rpcs.push({ name, args });
       if (state.rpcError) return { data: { ok: false, error: state.rpcError }, error: null };
-      return { data: name === "save_recipe_atomic" ? { ok: true, cost: 250 } : { ok: true, id: ingredientId }, error: null };
+      return { data: name === "save_recipe_atomic" ? { ok: true, cost: 250 } : name === "create_product_with_recipe_atomic" ? { ok: true, id: productId, recipe_id: recipeId, cost: 300 } : { ok: true, id: ingredientId }, error: null };
     },
   };
 }
@@ -112,6 +112,40 @@ test("product mutations reject invalid runtime payloads before persistence", asy
   const bad = [null, {}, { ...valid, name: 3 }, { ...valid, price: "100" }, { ...valid, cost: NaN }, { ...valid, active: "false" }, { ...valid, business_id: otherId }];
   for (const input of bad) { reset(); assert.equal((await products.createProductAction(input)).ok, false); assert.equal((await products.updateProductAction(productId,input)).ok, false); assert.equal(state.queries.length,0); }
 });
+test("new product recipe is validated and sent through one atomic RPC", async () => {
+  reset();
+  const input = {
+    name: "Pan", category: "Panadería", price: 1500, cost: 300, active: true,
+    recipeItems: [{ ingredientId, quantity: 250, unit: "g" }],
+  };
+  const result = await products.createProductAction(input);
+  assert.equal(result.ok, true);
+  assert.deepEqual(state.rpcs, [{
+    name: "create_product_with_recipe_atomic",
+    args: {
+      p_business_id: businessId,
+      p_input: { name: "Pan", category: "Panadería", price: 1500, cost: 300, active: true },
+      p_items: [{ ingredientId, quantity: 250, unit: "g" }],
+    },
+  }]);
+  assert.equal(state.queries.length, 0);
+});
+
+test("new product recipe rejects duplicate or invalid ingredients before RPC", async () => {
+  const base = { name: "Pan", category: "Panadería", price: 1500, cost: 300, active: true };
+  for (const recipeItems of [
+    [{ ingredientId: "bad", quantity: 1, unit: "g" }],
+    [{ ingredientId, quantity: 0, unit: "g" }],
+    [{ ingredientId, quantity: 1, unit: "g" }, { ingredientId, quantity: 2, unit: "g" }],
+    [{ ingredientId, quantity: 1, unit: "pack" }],
+  ]) {
+    reset();
+    assert.equal((await products.createProductAction({ ...base, recipeItems })).ok, false);
+    assert.equal(state.rpcs.length, 0);
+    assert.equal(state.queries.length, 0);
+  }
+});
+
 test("product mutation fails closed without authentication even with stale context", async () => {
   reset(); state.authenticated=false;
   assert.equal((await products.createProductAction({ name:"Pan",category:"Panadería",price:100,cost:20,active:true })).ok,false);
