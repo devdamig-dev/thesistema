@@ -56,7 +56,7 @@ try{
    await page.getByLabel(/Precio \(ARS\)/).fill('1500');
    await page.getByRole('button',{name:'Agregar insumo',exact:true}).click();
    await page.getByLabel('Cantidad',{exact:true}).fill('250');
-   await page.getByLabel('Unidad',{exact:true}).selectOption('g');
+   await page.locator('aside select').last().selectOption('g');
    if(await page.getByLabel(/Costo calculado/).inputValue()!=='300')throw Error('recipe cost not calculated');
    await page.getByText(/^80(?:,0)?%$/).last().waitFor();
    await page.getByRole('button',{name:'Crear producto',exact:true}).click();
