@@ -1,7 +1,7 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { FlaskConical, Loader2, Pencil, Plus } from "lucide-react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FlaskConical, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,11 +11,13 @@ import { KpiCard } from "@/components/ui/kpi-card";
 import { useToast } from "@/components/ui/toast";
 import { formatARS, formatPercent } from "@/lib/format";
 import { getCatalogDataAction, type CatalogData } from "@/app/actions/catalog";
-import { createProductAction, getProductsPageDataAction, updateProductAction, type ProductInput, type ProductRow } from "@/app/actions/products-page";
+import { createProductAction, getProductsPageDataAction, updateProductAction, type ProductCreateInput, type ProductRecipeItemInput, type ProductRow } from "@/app/actions/products-page";
 import { IngredientsPanel } from "./ingredients-panel";
 import { RecipeEditor } from "./recipe-editor";
+import { RECIPE_UNITS, RecipeCalculationError, calculateGrossMargin, calculateRecipeCost, normalizeUnit } from "@/lib/recipes/quantities";
 
 type FormState = { name: string; category: string; price: string; cost: string; active: boolean };
+type RecipeDraft = { key: number; ingredientId: string; quantity: string; unit: string };
 const EMPTY_FORM: FormState = { name: "", category: "", price: "", cost: "", active: true };
 const inputClass = "h-10 w-full rounded-lg border border-line bg-bg px-3 text-sm text-ink outline-none transition placeholder:text-ink-subtle focus:border-brand-500 disabled:opacity-60";
 
@@ -112,7 +114,7 @@ export default function DatabaseProductsPage() {
     setUncertainCreate(false);
   }
 
-  async function saveProduct(input: ProductInput) {
+  async function saveProduct(input: ProductCreateInput) {
     if (!canEdit || saving.current || uncertainCreate || !productEditor) return;
     const editing = productEditor.product;
     const version = editorVersion.current;
@@ -123,6 +125,7 @@ export default function DatabaseProductsPage() {
       const result = editing ? await updateProductAction(editing.id, input) : await createProductAction(input);
       if (version !== editorVersion.current) return;
       if (!result.ok) {
+        if (!editing && result.persisted === "unknown") setUncertainCreate(true);
         setSaveError("message" in result ? result.message : result.error);
         return;
       }
@@ -181,41 +184,151 @@ export default function DatabaseProductsPage() {
           </>}
         </div>
       )}
-      {productEditor && <Drawer open onClose={closeProduct} title={productEditor.product ? `Editar · ${productEditor.product.name}` : "Nuevo producto"} description="Usá valores reales del negocio. Podés modificar estos datos después." width="max-w-lg"><ProductForm key={productEditor.product?.id ?? "new"} product={productEditor.product} pending={pending} canEdit={canEdit && !uncertainCreate} saveError={saveError} onCancel={closeProduct} onSubmit={saveProduct} /></Drawer>}
+      {productEditor && <Drawer open onClose={closeProduct} title={productEditor.product ? `Editar · ${productEditor.product.name}` : "Nuevo producto"} description={productEditor.product ? "Usá valores reales del negocio. Podés modificar estos datos después." : "Cargá el producto y, si corresponde, su receta con los insumos que consume cada unidad."} width={productEditor.product ? "max-w-lg" : "max-w-2xl"}><ProductForm key={productEditor.product?.id ?? "new"} product={productEditor.product} ingredients={catalog?.ingredients ?? []} pending={pending} canEdit={canEdit && !uncertainCreate} saveError={saveError} onCancel={closeProduct} onSubmit={saveProduct} /></Drawer>}
       {recipeProduct && catalog && <RecipeEditor key={recipeProduct.id} product={recipeProduct} ingredients={catalog.ingredients} canEdit={canEdit} onClose={() => setRecipeProduct(null)} onSaved={loadProducts} />}
     </div>
   );
 }
 
-function ProductForm({ product, pending, canEdit, saveError, onCancel, onSubmit }: { product: ProductRow | null; pending: boolean; canEdit: boolean; saveError: string | null; onCancel: () => void; onSubmit: (input: ProductInput) => void }) {
+function ProductForm({ product, ingredients, pending, canEdit, saveError, onCancel, onSubmit }: { product: ProductRow | null; ingredients: CatalogData["ingredients"]; pending: boolean; canEdit: boolean; saveError: string | null; onCancel: () => void; onSubmit: (input: ProductCreateInput) => void }) {
   const [form, setForm] = useState<FormState>(() => product ? { name: product.name, category: product.category, price: String(product.price), cost: String(product.cost), active: product.active } : EMPTY_FORM);
+  const [recipeRows, setRecipeRows] = useState<RecipeDraft[]>([]);
   const [error, setError] = useState("");
+  const nextRecipeKey = useRef(0);
   const hasRecipe = Boolean(product?.recipeId && product.ingredientCount > 0);
+  const ingredientMap = useMemo(() => new Map(ingredients.map((item) => [item.id, item])), [ingredients]);
+  const activeIngredients = useMemo(() => ingredients.filter((item) => item.active), [ingredients]);
+
+  const recipePreview = useMemo(() => {
+    if (product || recipeRows.length === 0) return { cost: null as number | null, margin: null as number | null, error: null as string | null };
+    if (recipeRows.some((row) => !row.ingredientId || !row.quantity || !row.unit)) return { cost: null, margin: null, error: null };
+    try {
+      const cost = calculateRecipeCost(recipeRows.map((row) => {
+        const ingredient = ingredientMap.get(row.ingredientId);
+        return {
+          quantity: Number(row.quantity),
+          unit: row.unit,
+          ingredient: ingredient ? { unit: ingredient.unit, avg_unit_cost: ingredient.unitCost } : null,
+        };
+      }));
+      const price = Number(form.price.replace(",", "."));
+      return { cost, margin: Number.isFinite(price) && price >= 0 ? calculateGrossMargin(price, cost) : null, error: null };
+    } catch (cause) {
+      return { cost: null, margin: null, error: cause instanceof RecipeCalculationError ? cause.message : "No pudimos calcular el costo de la receta." };
+    }
+  }, [product, recipeRows, ingredientMap, form.price]);
+
+  function patchRecipeRow(key: number, patch: Partial<RecipeDraft>) {
+    setRecipeRows((current) => current.map((row) => row.key === key ? { ...row, ...patch } : row));
+  }
+
+  function addRecipeRow() {
+    const available = activeIngredients.find((item) => !recipeRows.some((row) => row.ingredientId === item.id));
+    setRecipeRows((current) => [...current, {
+      key: ++nextRecipeKey.current,
+      ingredientId: available?.id ?? "",
+      quantity: "",
+      unit: available?.unit ?? "",
+    }]);
+  }
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending || !canEdit) return;
     const price = Number(form.price.replace(",", "."));
-    const cost = Number(form.cost.replace(",", "."));
+    const manualCost = Number(form.cost.replace(",", "."));
     if (!form.name.trim()) return setError("Ingresá el nombre del producto.");
     if (!form.category.trim()) return setError("Ingresá una categoría.");
     if (!form.price.trim() || !Number.isFinite(price) || price < 0) return setError("Ingresá un precio válido.");
-    if (!form.cost.trim() || !Number.isFinite(cost) || cost < 0) return setError("Ingresá un costo válido.");
+
+    const recipeItems: ProductRecipeItemInput[] = [];
+    if (!product && recipeRows.length) {
+      const seen = new Set<string>();
+      for (const row of recipeRows) {
+        const quantity = Number(row.quantity.replace(",", "."));
+        const unit = normalizeUnit(row.unit);
+        const ingredient = ingredientMap.get(row.ingredientId);
+        if (!ingredient || !ingredient.active || !unit || !Number.isFinite(quantity) || quantity <= 0) return setError("Completá cada insumo con una cantidad y unidad válidas.");
+        if (seen.has(row.ingredientId)) return setError("Cada insumo puede aparecer una sola vez en la receta.");
+        seen.add(row.ingredientId);
+        recipeItems.push({ ingredientId: row.ingredientId, quantity, unit });
+      }
+      if (recipePreview.cost === null) return setError(recipePreview.error ?? "No pudimos calcular el costo de la receta. Revisá los insumos.");
+    } else if (!form.cost.trim() || !Number.isFinite(manualCost) || manualCost < 0) {
+      return setError("Ingresá un costo válido.");
+    }
+
     setError("");
-    onSubmit({ name: form.name.trim(), category: form.category.trim(), price, cost, active: form.active });
+    const cost = !product && recipeItems.length ? recipePreview.cost! : manualCost;
+    onSubmit({
+      name: form.name.trim(), category: form.category.trim(), price, cost, active: form.active,
+      ...(recipeItems.length ? { recipeItems } : {}),
+    });
   }
+
+  const inlineRecipe = !product && recipeRows.length > 0;
+  const shownCost = inlineRecipe ? (recipePreview.cost === null ? "" : String(recipePreview.cost)) : form.cost;
+
   return <form onSubmit={submit} className="space-y-5 p-6" aria-busy={pending}>
     <fieldset disabled={pending || !canEdit} className="min-w-0 space-y-5">
       <Field label="Nombre" required><input required className={inputClass} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} maxLength={200} /></Field>
       <Field label="Categoría" required><input required className={inputClass} value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} maxLength={100} /></Field>
-      <div className="grid grid-cols-2 gap-4"><Field label="Precio (ARS)" required><input required className={inputClass} type="number" min="0" step="0.01" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /></Field><Field label={hasRecipe ? "Costo actual (ARS)" : "Costo base (ARS)"} required><input required className={inputClass} type="number" min="0" step="0.01" readOnly={hasRecipe} value={form.cost} onChange={(event) => setForm({ ...form, cost: event.target.value })} /></Field></div>
-      <p className="text-xs text-ink-muted">{hasRecipe ? "Revisá los insumos y cantidades en Composición para recalcular el costo. Desde acá editás el precio y los datos del producto." : "El costo base se carga manualmente. Podés agregar una composición después para calcular el costo desde sus insumos."}</p>
+      <div className="grid grid-cols-2 gap-4">
+        <Field label="Precio (ARS)" required><input required className={inputClass} type="number" min="0" step="0.01" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /></Field>
+        <Field label={inlineRecipe ? "Costo calculado (ARS)" : hasRecipe ? "Costo actual (ARS)" : "Costo base (ARS)"} required>
+          <input required={!inlineRecipe} className={inputClass} type="number" min="0" step="0.01" readOnly={inlineRecipe || hasRecipe} value={shownCost} onChange={(event) => setForm({ ...form, cost: event.target.value })} />
+        </Field>
+      </div>
+
+      {!product && <div className="space-y-4 rounded-2xl border border-line bg-bg-subtle/40 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-ink">Receta e insumos</h3>
+            <p className="mt-1 text-xs text-ink-muted">Agregá lo que consume una unidad de este producto. El costo se calcula automáticamente desde el costo actual de cada insumo.</p>
+          </div>
+          <Button type="button" size="sm" variant="subtle" onClick={addRecipeRow} disabled={!activeIngredients.length || recipeRows.length >= activeIngredients.length}>
+            <Plus className="h-4 w-4" /> Agregar insumo
+          </Button>
+        </div>
+
+        {recipeRows.length === 0 ? <div className="rounded-xl border border-dashed border-line px-4 py-5 text-center text-xs text-ink-muted">
+          {activeIngredients.length ? "Sin receta cargada. Podés agregar insumos ahora o dejar un costo base manual." : "Todavía no hay insumos activos. Cargalos en la pestaña Insumos y después definí la receta."}
+        </div> : <div className="space-y-3">
+          {recipeRows.map((row, index) => {
+            const selected = ingredientMap.get(row.ingredientId);
+            return <div key={row.key} className="rounded-xl border border-line bg-bg p-3">
+              <div className="grid gap-3 sm:grid-cols-[1fr_120px_120px_auto] sm:items-end">
+                <label className="space-y-1.5"><span className="text-xs font-medium text-ink-muted">Insumo {index + 1}</span>
+                  <select className={inputClass} value={row.ingredientId} onChange={(event) => {
+                    const ingredient = ingredientMap.get(event.target.value);
+                    patchRecipeRow(row.key, { ingredientId: event.target.value, unit: ingredient?.unit ?? "" });
+                  }}>
+                    <option value="">Seleccionar insumo</option>
+                    {activeIngredients.map((ingredient) => <option key={ingredient.id} value={ingredient.id} disabled={recipeRows.some((other) => other.key !== row.key && other.ingredientId === ingredient.id)}>{ingredient.name}</option>)}
+                  </select>
+                </label>
+                <label className="space-y-1.5"><span className="text-xs font-medium text-ink-muted">Cantidad</span><input className={inputClass} type="number" min="0" step="any" inputMode="decimal" value={row.quantity} onChange={(event) => patchRecipeRow(row.key, { quantity: event.target.value })} /></label>
+                <label className="space-y-1.5"><span className="text-xs font-medium text-ink-muted">Unidad</span><select className={inputClass} value={row.unit} onChange={(event) => patchRecipeRow(row.key, { unit: event.target.value })}><option value="">Unidad</option>{RECIPE_UNITS.map((unit) => <option key={unit} value={unit}>{unit === "unit" ? "unidad" : unit}</option>)}</select></label>
+                <Button type="button" size="icon" variant="subtle" aria-label={`Quitar ${selected?.name ?? `insumo ${index + 1}`}`} onClick={() => setRecipeRows((current) => current.filter((item) => item.key !== row.key))}><Trash2 className="h-4 w-4" /></Button>
+              </div>
+            </div>;
+          })}
+        </div>}
+
+        {recipeRows.length > 0 && <div className="grid grid-cols-2 gap-3 rounded-xl border border-line bg-bg p-3" aria-live="polite">
+          <div><p className="text-xs text-ink-muted">Costo estimado</p><p className="mt-1 text-base font-semibold text-ink">{recipePreview.cost === null ? "Sin calcular" : formatARS(recipePreview.cost)}</p></div>
+          <div><p className="text-xs text-ink-muted">Margen bruto</p><p className="mt-1 text-base font-semibold text-ink">{recipePreview.margin === null ? "Sin calcular" : formatPercent(recipePreview.margin)}</p></div>
+          {recipePreview.error && <p className="col-span-2 text-xs text-warn-300">{recipePreview.error}</p>}
+        </div>}
+      </div>}
+
+      <p className="text-xs text-ink-muted">{hasRecipe ? "Revisá los insumos y cantidades en Composición para recalcular el costo. Desde acá editás el precio y los datos del producto." : inlineRecipe ? "El costo base deja de ser manual porque se calcula desde la receta que cargaste." : "Si el producto no lleva receta, cargá un costo base manual. Podés agregar una composición después."}</p>
       <label className="flex items-center justify-between gap-3 rounded-xl border border-line bg-bg-subtle/50 px-4 py-3"><div><div className="text-sm font-medium text-ink">Producto activo</div><div className="text-xs text-ink-muted">Los inactivos se conservan sin contarlos como oferta activa.</div></div><input type="checkbox" checked={form.active} onChange={(event) => setForm({ ...form, active: event.target.checked })} className="h-4 w-4" /></label>
     </fieldset>
     {(error || saveError) && <div role="alert" className="rounded-lg border border-danger-500/30 bg-danger-500/[0.06] px-3 py-2 text-xs text-danger-300">{error || saveError}</div>}
     <div className="flex justify-end gap-2 border-t border-line pt-4"><Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>Cancelar</Button><Button type="submit" variant="primary" disabled={pending || !canEdit}>{pending && <Loader2 className="h-4 w-4 animate-spin" />}{pending ? "Guardando…" : product ? "Guardar cambios" : "Crear producto"}</Button></div>
   </form>;
 }
-
 function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
   return <label className="block space-y-1.5"><span className="text-xs font-medium text-ink-muted">{label}{required ? " *" : ""}</span>{children}</label>;
 }
