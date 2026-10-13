@@ -425,7 +425,7 @@ reset role;
 -- New product can persist its initial recipe and calculated cost atomically.
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',true);
-do $ declare v_result jsonb; v_id uuid; begin
+do $product_recipe$ declare v_result jsonb; v_id uuid; begin
   v_result := public.create_product_with_recipe_atomic(
     '00000000-0000-4000-8000-000000000011',
     '{"name":"Burger con receta","category":"Comida","price":1500,"cost":0,"active":true}'::jsonb,
@@ -437,7 +437,7 @@ do $ declare v_result jsonb; v_id uuid; begin
   perform pg_temp.catalog_assert(exists(select 1 from public.products p where p.id=v_id and p.cost=244),'calculated cost persists on product');
   perform pg_temp.catalog_assert(exists(select 1 from public.recipes r where r.product_id=v_id),'recipe persists with product');
   perform pg_temp.catalog_assert((select count(*) from public.recipe_items ri join public.recipes r on r.id=ri.recipe_id where r.product_id=v_id)=2,'all initial recipe items persist');
-end; $;
+end; $product_recipe$;
 select pg_temp.catalog_throws($q$
   select public.create_product_with_recipe_atomic(
     '00000000-0000-4000-8000-000000000011',
