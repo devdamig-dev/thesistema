@@ -65,7 +65,7 @@ try{
    if(payload.cost!==300||payload.recipeItems?.length!==1||payload.recipeItems[0].ingredientId!=='ing'||payload.recipeItems[0].quantity!==250||payload.recipeItems[0].unit!=='g')throw Error('recipe payload invalid');
    await page.getByText('Producto con receta',{exact:true}).waitFor();
  });
- await page.setViewportSize({width:390,height:844});await page.getByRole('tab',{name:'Productos',exact:true}).click();await page.getByRole('button',{name:'Composición',exact:true}).click();await page.getByRole('button',{name:'Guardar composición'}).waitFor();await settleDrawer();await page.screenshot({path:out+'/composition-mobile.png',fullPage:false});
+ await page.setViewportSize({width:390,height:844});await page.getByRole('tab',{name:'Productos',exact:true}).click();await page.getByRole('button',{name:'Composición',exact:true}).first().click();await page.getByRole('button',{name:'Guardar composición'}).waitFor();await settleDrawer();await page.screenshot({path:out+'/composition-mobile.png',fullPage:false});
  await check('mobile editor has no page horizontal overflow',async()=>{if(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth))throw Error('mobile overflow');});
  verifyIsolation();
  if(errors.length)throw Error(errors.join('\n'));
