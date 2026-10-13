@@ -20,7 +20,9 @@ const db = {
   from() { throw new Error("Product creation must use the shared RPC, never direct inserts"); },
   async rpc(name: string, args: any) {
     state.calls.push({ name, args });
-    return state.response ?? { data: { ok: true, id: productId, source: args.p_actor_id ? "whatsapp" : "manual", actor_id: actorId }, error: null };
+    if (state.response) return state.response;
+    if (name === "create_product_with_recipe_atomic") return { data: { ok: true, id: productId, source: "manual", actor_id: actorId, recipe_id: "00000000-0000-4000-8000-000000000004", cost: 4321.5 }, error: null };
+    return { data: { ok: true, id: productId, source: args.p_actor_id ? "whatsapp" : "manual", actor_id: actorId }, error: null };
   },
 };
 const loader = Module as any; const original = loader._load;
@@ -62,6 +64,35 @@ test("manual and agent product creation use identical validated payload and shar
   state.calls = [];
   assert.deepEqual(await executeTool(db, actor, { name: "products.create", arguments: input }), { id: productId, source: "whatsapp" });
   assert.deepEqual(state.calls, [{ name: "create_product_atomic", args: { p_business_id: businessId, p_input: normalized, p_actor_id: actorId } }]);
+});
+
+test("manual creation can persist product and initial recipe through one atomic RPC", async () => {
+  reset();
+  const recipeItems = [
+    { ingredientId: "00000000-0000-4000-8000-000000000010", quantity: 180, unit: "g" },
+    { ingredientId: "00000000-0000-4000-8000-000000000011", quantity: 1, unit: "unit" },
+  ];
+  const result = await createProductAction({ ...input, recipeItems });
+  assert.equal(result.ok, true);
+  assert.deepEqual(state.calls, [{
+    name: "create_product_with_recipe_atomic",
+    args: { p_business_id: businessId, p_input: normalized, p_items: recipeItems },
+  }]);
+});
+
+test("manual recipe creation rejects duplicate or incomplete ingredients before touching the database", async () => {
+  for (const recipeItems of [
+    [{ ingredientId: "bad", quantity: 1, unit: "unit" }],
+    [{ ingredientId: "00000000-0000-4000-8000-000000000010", quantity: 0, unit: "g" }],
+    [
+      { ingredientId: "00000000-0000-4000-8000-000000000010", quantity: 1, unit: "g" },
+      { ingredientId: "00000000-0000-4000-8000-000000000010", quantity: 2, unit: "g" },
+    ],
+  ]) {
+    reset();
+    assert.equal((await createProductAction({ ...input, recipeItems } as any)).ok, false);
+    assert.equal(state.calls.length, 0);
+  }
 });
 
 test("both product transports reject missing/defaulted values and forged provenance", async () => {
