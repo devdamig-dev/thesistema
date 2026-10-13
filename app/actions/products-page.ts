@@ -156,7 +156,7 @@ export const createProductAction = withPermission<[ProductCreateInput], ProductM
     const db = await createSupabaseServerClient() as any;
     if (!db) return { ok: false, persisted: false, error: "No pudimos conectar con tus productos." };
 
-    let productId: string | null = null;
+    let productId: string;
     if (recipe.items.length) {
       let response: any;
       try {
