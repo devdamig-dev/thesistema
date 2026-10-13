@@ -6,6 +6,12 @@ export const DEBT_CATEGORIES = { supplier: "Proveedor", tax: "Impuesto", loan: "
 export type CreatePlanRequest = { requestId: string; branchId: string; creditor: string; creditorType: keyof typeof CREDITOR_TYPES; concept?: string; takenAt: string; category?: keyof typeof DEBT_CATEGORIES; reference?: string; notes?: string; expectedPaymentMethod?: string; planInput: DebtPlanInput; scheduleConfirmed: true };
 export type PaymentPlanRequest = { requestId: string; debtId: string; expectedVersion: number; amountCents: number; paidAt: string; paymentMethod: string; allocation: DebtAllocationChoice; reference?: string; notes?: string };
 export type VoidPlanRequest = { requestId: string; debtId: string; paymentId: string; expectedVersion: number; reason: string };
+export type CancelPlanRequest = { requestId: string; debtId: string; expectedVersion: number; reason: string; administrativeOnlyConfirmed: true };
+export function parseCancelPlanRequest(value: unknown): CancelPlanRequest {
+  const raw = record(value, ["requestId", "debtId", "expectedVersion", "reason", "administrativeOnlyConfirmed"]);
+  if (raw.administrativeOnlyConfirmed !== true) fail("administrativeOnlyConfirmed");
+  return { requestId: requestUuid(raw.requestId, "requestId"), debtId: requestUuid(raw.debtId, "debtId"), expectedVersion: version(raw.expectedVersion), reason: text(raw.reason, "reason", 1000), administrativeOnlyConfirmed: true };
+}
 export type PlanActionResult = { ok: true; persisted: true; debtId: string; paymentId?: string; version?: number } | { ok: false; persisted: false; error: string; code: string; uncertain?: boolean; definitiveRejected?: true };
 
 function fail(path: string): never { throw new DebtPlanError("invalid_request", path); }

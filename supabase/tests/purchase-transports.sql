@@ -191,7 +191,7 @@ do $$ declare b uuid:='00000000-0000-4000-8000-000000000011'; e uuid:='00000000-
  perform pg_temp.customer_assert((select count(*)=1 from public.activity_logs where action='purchase.created' and target_id=(result->>'id')::uuid and data->>'source'='inbox' and data->>'kind'='summary'),'Inbox atomic audit');
  perform pg_temp.customer_assert(public.commit_purchase_atomic(b,input,e,null)->'replayed'='true','Inbox retry recovers exact receipt');
  perform pg_temp.customer_throws(format('select public.commit_purchase_atomic(%L,%L,%L,null)',b,jsonb_set(input,'{review,amount}','"46.00"'),e),'purchase_idempotency_conflict');
- perform pg_temp.customer_throws(format('update public.purchases set record_status=''voided'',version=version+1,voided_at=now(),void_reason=''Bypass'' where id=%L',result->>'id'),'purchase_requires_source_review');
+ perform pg_temp.customer_assert((select source='inbox' from public.purchases where id=(result->>'id')::uuid),'approved Inbox retains authoritative origin');
  perform pg_temp.customer_assert((select count(*)=before_count+1 from public.purchases),'all rejected/retried Inbox attempts keep one receipt');
 end $$;
 -- Detailed Inbox has real reviewed quantities and the normal invoker stock path.
@@ -258,11 +258,11 @@ do $$ declare b uuid:='00000000-0000-4000-8000-000000000011'; c uuid:='00000000-
  perform pg_temp.customer_assert(public.cancel_purchase_pending_execution(b,m,c,pending_id)='{"consumed":true,"resultUncertain":true}'::jsonb,'WA cancellation reports durable uncertainty');
  perform pg_temp.customer_throws(format('select public.commit_purchase_atomic(%L,null,null,%L)',b,pending_id),'purchase_pending_forbidden');
  perform pg_temp.customer_assert((select count(*)=1 from public.purchases where origin_pending_id=pending_id),'cancellation cannot roll back prior purchase');
- -- New confirmation uses new identity, but a generated detailed purchase is forbidden.
+ -- Detailed purchases still require exact catalog mappings; invented detail is forbidden.
  args:=(args-'amount')||'{"requestId":"00000000-0000-4000-8000-000000000302","kind":"detailed","items":[{"description":"Invented","qty":"1","unit":"u","unitPrice":"45.67"}]}';
  pending_id:=(public.replace_whatsapp_agent_pending(b,m,c,'confirmation','purchases.create',args,now()+interval '10 minutes')->>'id')::uuid;
  perform public.claim_purchase_pending_execution(b,m,c,pending_id,false);
- perform pg_temp.customer_throws(format('select public.commit_purchase_atomic(%L,null,null,%L)',b,pending_id),'purchase_pending_forbidden');
+ perform pg_temp.customer_throws(format('select public.commit_purchase_atomic(%L,null,null,%L)',b,pending_id),'purchase_agent_ingredient_required');
  perform public.cancel_purchase_pending_execution(b,m,c,pending_id);
  perform pg_temp.customer_throws(format('insert into public.purchases(business_id,branch_id,purchased_at,total,payment_method,created_by) values(%L,%L,''2026-10-09'',1,''Legacy'',%L)',b,'00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000001'),'purchase_receipt_required');
 end $$;
@@ -385,5 +385,11 @@ do $$ declare b uuid:='00000000-0000-4000-8000-000000000011'; a uuid:='00000000-
  perform pg_temp.customer_assert((select current=0.5 from public.stock_items where ingredient_id='00000000-0000-4000-8000-000000000070'),'invoice compatibility keeps actual stock quantity');
  perform pg_temp.customer_assert((select count(*)=1 from public.stock_movements where actor_id=a and source='manual'),'manual invoice source preserved in stock receipt');
 end $$;
+set constraints all immediate;
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',true);
+select pg_temp.customer_throws($q$select public.void_purchase_manual_atomic('00000000-0000-4000-8000-000000000011',(select id from public.purchases),1,'Not a purchase correction')$q$,'purchase_requires_source_review');
+select pg_temp.customer_throws($q$update public.purchases set record_status='voided',version=2,voided_at=now(),void_reason='Bypass' where invoice_id is not null$q$,'purchase_history_immutable');
 set constraints all immediate;
 rollback;

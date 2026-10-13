@@ -6,6 +6,7 @@
  * This is not a multi-session concurrency or full Supabase service emulator.
  */
 import { PGlite } from "@electric-sql/pglite";
+import { runCatalogSnapshotConcurrency } from "./catalog-snapshot-concurrency.mjs";
 import { nativeDatabase } from "./native-postgres.mjs";
 import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
@@ -18,7 +19,7 @@ const migrations = join(root, "supabase", "migrations");
 const native = process.argv.includes("--native-docker") || process.argv.includes("--native");
 const db = native ? await nativeDatabase({ docker: process.argv.includes("--native-docker") }) : new PGlite({ extensions: { pgcrypto, pg_trgm } });
 const suite = process.argv.slice(2).find((arg) => !arg.startsWith("--")) ?? "catalog";
-if (!["catalog", "stock-ledger"].includes(suite)) throw new Error("Unknown offline SQL suite");
+if (!["catalog", "stock-ledger", "catalog-products", "replenishment", "catalog-snapshot"].includes(suite)) throw new Error("Unknown offline SQL suite");
 let stage = "managed Supabase scaffolding";
 
 try {
@@ -59,8 +60,12 @@ try {
     console.log(`Applied locally: ${file}`);
   }
 
+  const fixtureSql = suite === "catalog-snapshot"
+    ? "begin;" + await readFile(join(root,"supabase/tests/catalog-snapshot-fixtures.sql"),"utf8")
+    : "";
   stage = `supabase/tests/${suite}.sql`;
-  await db.exec(await readFile(join(root, stage), "utf8"));
+  await db.exec(fixtureSql + await readFile(join(root, stage), "utf8"));
+  if (suite === "catalog-snapshot" && native) await runCatalogSnapshotConcurrency(db);
   console.log(`PASS ${suite} SQL suite (${files.length} real migrations, isolated PostgreSQL, rolled-back fixtures)`);
 } catch (error) {
   console.error(`FAIL ${stage}: ${error.message}`);

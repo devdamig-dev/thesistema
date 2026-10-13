@@ -842,7 +842,7 @@ export const weeklyDecisions: Decision[] = [
 ];
 
 // ---------- DEUDAS ----------
-export type DebtStatus = "activa" | "vencida" | "saldada";
+export type DebtStatus = "activa" | "vencida" | "saldada" | "cancelada";
 
 /** Categorías de deuda — habilitan exportables y filtros contables. */
 export type DebtCategory =

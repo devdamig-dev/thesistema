@@ -15,6 +15,8 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isDatabaseMode } from "@/lib/env";
 import { createNotification, type NotificationPriority } from "@/lib/data/notifications";
 
+import { readProductCatalogSnapshot } from "../catalog/snapshot";
+
 type CheckSummary = { created: number; skipped: number };
 
 const DEDUP_WINDOW_HOURS = 24;
@@ -56,7 +58,7 @@ export async function checkDebtsForBusiness(businessId: string): Promise<CheckSu
     .from("debts")
     .select("id, creditor, pending_amount, due_date")
     .eq("business_id", businessId)
-    .neq("status", "settled")
+    .neq("status", "settled").neq("status", "cancelled")
     .lt("due_date", todayISO);
   const overdue = (overdueRes.data as any[]) ?? [];
 
@@ -86,7 +88,7 @@ export async function checkDebtsForBusiness(businessId: string): Promise<CheckSu
     .from("debts")
     .select("id, creditor, pending_amount, due_date")
     .eq("business_id", businessId)
-    .neq("status", "settled")
+    .neq("status", "settled").neq("status", "cancelled")
     .gte("due_date", todayISO)
     .lte("due_date", in3DaysISO);
   const soon = (soonRes.data as any[]) ?? [];
@@ -168,18 +170,11 @@ export async function checkCriticalMarginForBusiness(
   let created = 0;
   let skipped = 0;
 
-  const res = await db
-    .from("products")
-    .select("id, name, price, cost")
-    .eq("business_id", businessId)
-    .eq("active", true);
-  const products = (res.data as any[]) ?? [];
-
-  const critical = products.filter((p) => {
-    const price = Number(p.price);
-    const cost = Number(p.cost);
-    if (price <= 0) return false;
-    const margin = ((price - cost) / price) * 100;
+  const snapshot = await readProductCatalogSnapshot(db, businessId, false);
+  if (!snapshot.ok) return { created, skipped: 1 };
+  const critical = snapshot.data.filter((p) => {
+    if (!p.active || p.costRefreshPending || p.recipeNeedsReview || p.price <= 0) return false;
+    const margin = ((p.price - p.cost) / p.price) * 100;
     return margin < 35;
   });
 
@@ -226,7 +221,7 @@ export async function checkTaxDebtsForBusiness(businessId: string): Promise<Chec
     .from("debts")
     .select("id, creditor, pending_amount, due_date, category, organism, period")
     .eq("business_id", businessId)
-    .neq("status", "settled")
+    .neq("status", "settled").neq("status", "cancelled")
     .in("category", ["tax", "payroll"])
     .lte("due_date", in10DaysISO);
   const rows = (res.data as any[]) ?? [];

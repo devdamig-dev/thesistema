@@ -43,7 +43,12 @@ export async function processWhatsAppAgentMessage(input: IncomingAgentMessage) {
   return runAgent(input, {
     resolveActor: async () => actor,
     claimMessage: (message, scopedActor) => claimMessage(db, message, scopedActor, conversationId),
-    interpret: interpretHeuristically,
+    interpret: async (text, tools, pending) => {
+      const business = await db.from("businesses").select("timezone").eq("id", actor.businessId).maybeSingle();
+      const config = business.data as { timezone?: unknown } | null;
+      const timezone = !business.error && typeof config?.timezone === "string" ? config.timezone : undefined;
+      return interpretHeuristically(text, tools, pending, { timezone });
+    },
     getPending: (actor) => getPending(db, actor, conversationId),
     savePending: (operation) => savePending(db, operation, conversationId),
     consumePending: (id, actor, requireUnexpired) => consumePending(db, id, actor, requireUnexpired, conversationId),

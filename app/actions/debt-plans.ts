@@ -6,7 +6,7 @@ import { getCurrentUserContext } from "@/lib/data/auth";
 import { isDatabaseMode } from "@/lib/env";
 import { canSeeModule, hasPermission } from "@/lib/permissions";
 import { centsToDecimalMoney, generateDebtPlan } from "@/lib/debts/plans";
-import { debtErrorMessage, parseCreatePlanRequest, parseEditPlanRequest, parsePaymentPlanRequest, parseVoidPlanRequest, requestUuid, type PlanActionResult } from "@/app/deudas/plan-contract";
+import { debtErrorMessage, parseCancelPlanRequest, parseCreatePlanRequest, parseEditPlanRequest, parsePaymentPlanRequest, parseVoidPlanRequest, requestUuid, type PlanActionResult } from "@/app/deudas/plan-contract";
 
 function failure(code: string, error: string, uncertain = false, definitiveRejected = false): PlanActionResult { return { ok: false, persisted: false, code, error, ...(uncertain ? { uncertain: true } : {}), ...(definitiveRejected ? { definitiveRejected: true as const } : {}) }; }
 async function context(permission: "debts.view" | "debts.create" | "debts.pay", expectedSession: unknown) {
@@ -25,7 +25,7 @@ function blocked(error: unknown): PlanActionResult {
   return failure(messages[code] ? code : "invalid_request", messages[code] ?? debtErrorMessage(error));
 }
 function rpcFailure(code: string, definitiveRejected = false): PlanActionResult {
-  const messages: Record<string, string> = { version_conflict: "El saldo cambió mientras revisabas. Actualizá los datos y volvé a revisar la operación.", stale_version: "El saldo cambió mientras revisabas. Actualizá los datos y volvé a revisar la operación.", amount_exceeds_pending: "El pago supera el saldo pendiente.", amount_exceeds_installment_pending: "El pago supera el saldo de la cuota seleccionada.", permission_denied: "No tenés permiso para realizar esta operación.", installment_not_found: "La cuota no pertenece a esta deuda.", debt_not_found: "La deuda ya no está disponible.", payment_already_voided: "Ese pago ya está anulado.", payment_not_found: "No encontramos ese pago en esta deuda.", idempotency_conflict: "Este intento ya se usó con otros datos. Actualizá el historial antes de iniciar una nueva operación.", plan_required: "Esta deuda histórica todavía no tiene un plan registrado.", invalid_paid_at: "La fecha de pago no es válida.", allocation_rule_required: "Elegí una regla de imputación para el pago." };
+  const messages: Record<string, string> = { debt_cancelled: "El registro está cancelado administrativamente. Conserva su saldo e historial y no admite más cambios.", version_conflict: "El saldo cambió mientras revisabas. Actualizá los datos y volvé a revisar la operación.", stale_version: "El saldo cambió mientras revisabas. Actualizá los datos y volvé a revisar la operación.", amount_exceeds_pending: "El pago supera el saldo pendiente.", amount_exceeds_installment_pending: "El pago supera el saldo de la cuota seleccionada.", permission_denied: "No tenés permiso para realizar esta operación.", installment_not_found: "La cuota no pertenece a esta deuda.", debt_not_found: "La deuda ya no está disponible.", payment_already_voided: "Ese pago ya está anulado.", payment_not_found: "No encontramos ese pago en esta deuda.", idempotency_conflict: "Este intento ya se usó con otros datos. Actualizá el historial antes de iniciar una nueva operación.", plan_required: "Esta deuda histórica todavía no tiene un plan registrado.", invalid_paid_at: "La fecha de pago no es válida.", allocation_rule_required: "Elegí una regla de imputación para el pago." };
   return failure(messages[code] ? code : "rejected", messages[code] ?? "La base de datos rechazó la operación. Revisá los datos; no se guardaron cambios.", false, definitiveRejected);
 }
 async function debtScope(db: any, ctx: Awaited<ReturnType<typeof getCurrentUserContext>>, debtId: string) {
@@ -42,7 +42,7 @@ async function mutate(db: any, name: string, args: Record<string, unknown>): Pro
     const code = String(result.data.error ?? "rejected");
     // These rejections occur under the debt lock, AFTER the idempotency lookup.
     // Preflight/auth/not-found failures cannot disprove an earlier lost commit.
-    const definitive = ["stale_version", "amount_exceeds_pending", "amount_exceeds_installment_pending", "installment_not_found", "payment_already_voided", "invalid_paid_at"].includes(code);
+    const definitive = ["stale_version", "amount_exceeds_pending", "amount_exceeds_installment_pending", "installment_not_found", "payment_already_voided", "invalid_paid_at", "debt_cancelled"].includes(code);
     return rpcFailure(code, definitive);
   }
   if (typeof result.data.debt_id !== "string") return failure("response_unknown", "La respuesta está incompleta. Reintentá el mismo intento para comprobar qué se guardó.", true);
@@ -78,6 +78,17 @@ export async function voidDebtPlanPaymentAction(input: unknown, expectedSession:
     return await mutate(db, "void_debt_plan_payment", { p_debt_id: value.debtId, p_payment_id: value.paymentId, p_expected_version: value.expectedVersion, p_reason: value.reason, p_idempotency_key: value.requestId });
   } catch (error) { return blocked(error); }
 }
+/** Internal administrative record closure; never pays or forgives the debt. */
+export async function cancelDebtPlanRecordAction(input: unknown, expectedSession: unknown): Promise<PlanActionResult> {
+  try {
+    const { db, ctx } = await context("debts.create", expectedSession);
+    const value = parseCancelPlanRequest(input);
+    const debt = await debtScope(db, ctx, value.debtId);
+    if (!debt.plan_definition) return rpcFailure("plan_required");
+    return await mutate(db, "cancel_debt_plan_record", { p_debt_id: value.debtId, p_expected_version: value.expectedVersion, p_reason: value.reason, p_idempotency_key: value.requestId });
+  } catch (error) { return blocked(error); }
+}
+
 /** Legacy debts retain their existing audited RPC. They do not acquire a guessed currency or schedule. */
 export async function registerLegacyDebtPaymentAction(input: unknown, expectedSession: unknown): Promise<PlanActionResult> {
   try {
@@ -116,7 +127,7 @@ export async function getDebtOperationResultAction(input: unknown, expectedSessi
     const { db } = await context("debts.view", expectedSession);
     if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some((key) => !["operation", "requestId", "debtId"].includes(key))) return { ok: false, error: "La referencia del intento no es válida." };
     const value = input as Record<string, unknown>;
-    if (typeof value.operation !== "string" || !["create", "pay", "void", "edit_installment", "edit_notes"].includes(value.operation)) return { ok: false, error: "La operación no admite esta comprobación." };
+    if (typeof value.operation !== "string" || !["create", "pay", "void", "edit_installment", "edit_notes", "cancel"].includes(value.operation)) return { ok: false, error: "La operación no admite esta comprobación." };
     const id = requestUuid(value.requestId, "requestId");
     const debtId = value.operation === "create" ? null : requestUuid(value.debtId, "debtId");
     const result = await db.rpc("get_debt_operation_result", { p_operation: value.operation, p_idempotency_key: id, p_debt_id: debtId });

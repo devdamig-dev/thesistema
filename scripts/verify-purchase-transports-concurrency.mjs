@@ -78,5 +78,19 @@ export async function verifyPurchaseTransportsConcurrency(db) {
   const revoked = await pending(4);
   await race(`select business_id from public.business_modules where business_id='${b}' and module_key='purchases' for update`, `update public.business_modules set enabled=false where business_id='${b}' and module_key='purchases'`, commit(revoked), { firstRole: '', error: 'purchase_module_disabled' });
   assert((await db.exec(`select not exists(select 1 from public.purchases where origin_pending_id='${revoked}');`)).trim() === 't', 'module disabled during lock wait prevents purchase');
-  console.log('PASS native purchase transport races: WA replay/cancel ordering, Inbox replay/stock once, message change and module revocation after observed lock waits');
+  await db.exec(`update public.business_modules set enabled=true where business_id='${b}' and module_key='purchases';`);
+  const manager = '00000000-0000-4000-8000-000000000003';
+  const managerAuth = `set local role authenticated;select set_config('request.jwt.claim.sub','${manager}',true);`;
+  const managerRequest = '00000000-0000-4000-8000-000000000950';
+  const managerInput = { ...detailed, requestId: managerRequest };
+  const managerCreate = `select public.create_purchase_manual_atomic('${b}',${literal(managerInput)})`;
+  await race(`select id from public.business_members where business_id='${b}' and user_id='${manager}' for update`, `update public.business_members set role='viewer' where business_id='${b}' and user_id='${manager}'`, managerCreate, { firstRole: '', secondRole: managerAuth, error: 'purchase_permission_denied' });
+  assert((await db.exec(`select not exists(select 1 from public.purchases where manual_request_id='${managerRequest}');`)).trim() === 't', 'private receipt lock rechecks manager membership after revocation wait');
+  await db.exec(`update public.business_members set role='manager' where business_id='${b}' and user_id='${manager}';`);
+  await race(`select business_id from public.business_modules where business_id='${b}' and module_key='purchases' for update`, `update public.business_modules set enabled=false where business_id='${b}' and module_key='purchases'`, managerCreate, { firstRole: '', secondRole: managerAuth, error: 'purchase_module_disabled' });
+  assert((await db.exec(`select not exists(select 1 from public.purchases where manual_request_id='${managerRequest}');`)).trim() === 't', 'private receipt lock rechecks manager module after revocation wait');
+  await db.exec(`update public.business_modules set enabled=true where business_id='${b}' and module_key='purchases';`);
+  const managerResult = parse(await db.exec(`begin;${managerAuth}${managerCreate};commit;`));
+  assert(managerResult?.ok && managerResult.costRefreshPending === true, 'restored manager writes purchase with pending costs, without catalog UPDATE permission');
+  console.log('PASS native purchase transport races: WA replay/cancel ordering, Inbox replay/stock once, message change, module/membership revocation after observed lock waits, manager invoker purchase');
 }

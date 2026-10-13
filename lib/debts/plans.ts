@@ -17,7 +17,8 @@ export type DebtPeriodicity = "weekly" | "fortnightly" | "monthly" | "custom";
 export type DebtOrigin = "manual" | "whatsapp" | "purchase" | "invoice" | "api" | "system";
 export type DebtPermission = "debts.view" | "debts.create" | "debts.pay";
 export type InstallmentStatus = "pending" | "partial" | "paid" | "overdue";
-export type PlanDebtStatus = "pending" | "in_plan" | "partially_paid" | "paid" | "overdue";
+export type PlanDebtStatus = "pending" | "in_plan" | "partially_paid" | "paid" | "overdue" | "cancelled";
+export type DebtCancellation = { cancelledAt: string; actorId: string; reason: string };
 export type DebtScope = { debtId: string; businessId: string; branchId: string | null };
 export type DebtAccess = { actorId: string; businessId: string; branchIds: string[] | null; permissions: DebtPermission[] };
 export type DebtComponents = { capitalAmountCents?: number; interestAmountCents?: number; feesAmountCents?: number };
@@ -97,6 +98,8 @@ export type DebtPaymentRecord = DebtScope & {
   voided?: { voidedAt: string; actorId: string; reason: string };
 };
 export type DebtLedgerSnapshot = DebtScope & {
+  /** Administrative record cancellation, not debt forgiveness or a payment. */
+  cancelled?: DebtCancellation;
   currency: string;
   mode: DebtMode;
   totalFinancedCents: number;
@@ -422,7 +425,7 @@ function readPaymentRecord(value: unknown, path: string): DebtPaymentRecord {
 
 /** Validates the full snapshot; paid balances derive solely from non-voided allocations. */
 export function validateDebtLedger(value: unknown): DebtLedgerSnapshot {
-  const raw = object(value, [...scopeKeys, "currency", "mode", "totalFinancedCents", "version", "installments", "payments"], "ledger");
+  const raw = object(value, [...scopeKeys, "currency", "mode", "totalFinancedCents", "version", "installments", "payments", "cancelled"], "ledger");
   const scope = readScope(raw, "ledger");
   const ledger: DebtLedgerSnapshot = {
     ...scope, currency: currency(raw.currency, "ledger.currency"), mode: enumeration(raw.mode, ["single", "installments"], "ledger.mode"), totalFinancedCents: money(raw.totalFinancedCents, "ledger.totalFinancedCents", 1), version: integer(raw.version, "ledger.version", 0),
@@ -435,6 +438,10 @@ export function validateDebtLedger(value: unknown): DebtLedgerSnapshot {
     }),
     payments: list(raw.payments, "ledger.payments", MAX_DEBT_LEDGER_PAYMENTS).map((value, i) => readPaymentRecord(value, `ledger.payments[${i}]`)),
   };
+  if (own(raw, "cancelled")) {
+    const cancelled = object(raw.cancelled, ["cancelledAt", "actorId", "reason"], "ledger.cancelled");
+    ledger.cancelled = { cancelledAt: civilDate(cancelled.cancelledAt, "ledger.cancelled.cancelledAt"), actorId: identifier(cancelled.actorId, "ledger.cancelled.actorId"), reason: text(cancelled.reason, "ledger.cancelled.reason", 1000) };
+  }
   if (!ledger.installments.length || (ledger.mode === "single" && ledger.installments.length !== 1)) fail("installment_count_mismatch", "ledger.installments");
   if (ledger.mode === "installments" && ledger.installments.some((part) => part.dueDate === null)) fail("installment_date_required", "ledger.installments");
   if (new Set(ledger.installments.map((part) => part.id)).size !== ledger.installments.length) fail("duplicate_installment", "ledger.installments");
@@ -464,6 +471,7 @@ function paidByInstallment(ledger: DebtLedgerSnapshot): Map<string, number> {
 }
 function checkOperation(raw: Record<string, unknown>, ledger: DebtLedgerSnapshot, access: DebtAccess): void {
   checkAccess(ledger, access, "debts.pay");
+  if (ledger.cancelled) fail("debt_cancelled", "ledger.cancelled");
   sameScope(readScope(raw, "operation"), ledger, "operation");
   if (currency(raw.currency, "operation.currency") !== ledger.currency) fail("currency_mismatch", "operation.currency");
   if (integer(raw.expectedVersion, "operation.expectedVersion", 0) !== ledger.version) fail("stale_version", "operation.expectedVersion");
@@ -520,6 +528,20 @@ export function voidDebtPayment(snapshot: unknown, value: unknown, accessValue: 
   return { ...ledger, version: ledger.version + 1, payments: ledger.payments.map((record) => record.id === id ? { ...record, voided } : record) };
 }
 
+/** Administrative closure preserves every amount, allocation and payment.
+ * The original unpaid balance remains historical; no money is paid or forgiven. */
+export function cancelDebtRecord(snapshot: unknown, value: unknown, accessValue: unknown): DebtLedgerSnapshot {
+  const ledger = validateDebtLedger(snapshot);
+  const access = parseAccess(accessValue);
+  checkAccess(ledger, access, "debts.create");
+  const raw = object(value, [...scopeKeys, "expectedVersion", "cancelledAt", "reason"], "cancellation");
+  sameScope(readScope(raw, "cancellation"), ledger, "cancellation");
+  if (integer(raw.expectedVersion, "cancellation.expectedVersion", 0) !== ledger.version) fail("stale_version", "cancellation.expectedVersion");
+  if (ledger.cancelled) fail("debt_cancelled", "ledger.cancelled");
+  if (ledger.version === Number.MAX_SAFE_INTEGER) fail("version_overflow", "ledger.version");
+  return { ...ledger, version: ledger.version + 1, cancelled: { cancelledAt: civilDate(raw.cancelledAt, "cancellation.cancelledAt"), actorId: access.actorId, reason: text(raw.reason, "cancellation.reason", 1000) } };
+}
+
 function project(ledger: DebtLedgerSnapshot, asOfDate: string): DebtProjection {
   const paid = paidByInstallment(ledger);
   const start = dateAt(asOfDate).getTime();
@@ -535,10 +557,11 @@ function project(ledger: DebtLedgerSnapshot, asOfDate: string): DebtProjection {
   const paidAmountCents = sum([...paid.values()], "projection.paidAmountCents");
   const overdueAmountCents = amount((part) => part.dueDate !== null && part.dueDate < asOfDate);
   const pendingAmountCents = ledger.totalFinancedCents - paidAmountCents;
+  const activeAmount = (value: number) => ledger.cancelled ? 0 : value;
   return {
-    debtId: ledger.debtId, businessId: ledger.businessId, branchId: ledger.branchId, currency: ledger.currency, totalFinancedCents: ledger.totalFinancedCents, paidAmountCents, pendingAmountCents, overdueAmountCents, unscheduledAmountCents: amount((part) => part.dueDate === null), dueTodayCents: amount((part) => part.dueDate === asOfDate), next7DaysCents: upcoming(7), next30DaysCents: upcoming(30), next60DaysCents: upcoming(60), dueThisMonthCents: amount((part) => part.dueDate !== null && part.dueDate.slice(0, 7) === asOfDate.slice(0, 7)), paidInstallmentCount: installments.filter((part) => part.status === "paid").length, installmentCount: installments.length,
-    status: pendingAmountCents === 0 ? "paid" : overdueAmountCents > 0 ? "overdue" : paidAmountCents > 0 ? "partially_paid" : ledger.mode === "installments" ? "in_plan" : "pending",
-    nextDueDate: owing.map((part) => part.dueDate).filter((date): date is string => date !== null).sort()[0] ?? null,
+    debtId: ledger.debtId, businessId: ledger.businessId, branchId: ledger.branchId, currency: ledger.currency, totalFinancedCents: ledger.totalFinancedCents, paidAmountCents, pendingAmountCents, overdueAmountCents: activeAmount(overdueAmountCents), unscheduledAmountCents: activeAmount(amount((part) => part.dueDate === null)), dueTodayCents: activeAmount(amount((part) => part.dueDate === asOfDate)), next7DaysCents: activeAmount(upcoming(7)), next30DaysCents: activeAmount(upcoming(30)), next60DaysCents: activeAmount(upcoming(60)), dueThisMonthCents: activeAmount(amount((part) => part.dueDate !== null && part.dueDate.slice(0, 7) === asOfDate.slice(0, 7))), paidInstallmentCount: installments.filter((part) => part.status === "paid").length, installmentCount: installments.length,
+    status: ledger.cancelled ? "cancelled" : pendingAmountCents === 0 ? "paid" : overdueAmountCents > 0 ? "overdue" : paidAmountCents > 0 ? "partially_paid" : ledger.mode === "installments" ? "in_plan" : "pending",
+    nextDueDate: ledger.cancelled ? null : owing.map((part) => part.dueDate).filter((date): date is string => date !== null).sort()[0] ?? null,
     installments,
   };
 }
@@ -574,7 +597,7 @@ export function projectDebtPortfolio(snapshots: unknown, optionsValue: unknown, 
     if (ids.has(ledger.debtId)) fail("duplicate_debt", "ledgers");
     ids.add(ledger.debtId);
   }
-  const debts = ledgers.filter((ledger) => ledger.currency === selectedCurrency && (branchId === undefined || ledger.branchId === branchId) && (access.branchIds === null || ledger.branchId !== null && access.branchIds.includes(ledger.branchId))).map((ledger) => project(ledger, asOfDate));
+  const debts = ledgers.filter((ledger) => !ledger.cancelled && ledger.currency === selectedCurrency && (branchId === undefined || ledger.branchId === branchId) && (access.branchIds === null || ledger.branchId !== null && access.branchIds.includes(ledger.branchId))).map((ledger) => project(ledger, asOfDate));
   const aggregate = (key: "pendingAmountCents" | "paidAmountCents" | "overdueAmountCents" | "unscheduledAmountCents" | "dueTodayCents" | "next7DaysCents" | "next30DaysCents" | "next60DaysCents" | "dueThisMonthCents") => sum(debts.map((debt) => debt[key]), `portfolio.${key}`);
   return { currency: selectedCurrency, asOfDate, debtCount: debts.length, pendingAmountCents: aggregate("pendingAmountCents"), paidAmountCents: aggregate("paidAmountCents"), overdueAmountCents: aggregate("overdueAmountCents"), unscheduledAmountCents: aggregate("unscheduledAmountCents"), dueTodayCents: aggregate("dueTodayCents"), next7DaysCents: aggregate("next7DaysCents"), next30DaysCents: aggregate("next30DaysCents"), next60DaysCents: aggregate("next60DaysCents"), dueThisMonthCents: aggregate("dueThisMonthCents"), debts };
 }

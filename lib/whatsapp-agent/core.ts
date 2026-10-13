@@ -1,3 +1,4 @@
+import { formatReplenishmentReport } from "../replenishment/agent";
 import { isPurchaseWrite, purchaseConfirmationText } from "../purchases/agent";
 import { isSaleWrite, saleConfirmationText } from "../sales/agent";
 import { debtConfirmationText, isDebtPlanWrite } from "./debt-contract";
@@ -33,6 +34,7 @@ const labels: Record<string, string> = {
   operation: "tipo de movimiento",
   reason: "motivo",
   unit: "unidad",
+  name: "nombre del producto", category: "categoría", price: "precio de venta", cost: "costo explícito del producto", active: "estado del producto (activo o inactivo)",
 };
 
 const money = (value: unknown) =>
@@ -64,6 +66,7 @@ function formatResult(toolName: string, result: unknown): string {
     for (const line of lines) { if (length + line.length > 3000) break; shown.push(line); length += line.length + 1; }
     return `Vencimientos entre ${data.from} y ${data.to}:\n${shown.join("\n")}${shown.length < lines.length ? `\nSe muestran ${shown.length} de ${lines.length} vencimientos. Acotá las fechas o consultá Deudas para ver el detalle completo.` : ""}`;
   }
+  if (isPurchaseWrite(toolName) && data?.kind === "detailed") return `Compra detallada ${data?.id} guardada y auditada, con las cantidades confirmadas en stock.${data?.costRefreshPending ? " Costos pendientes de revisión por owner/admin en Compras." : ""}`;
   if (isPurchaseWrite(toolName)) return `Compra resumida ${data?.id} guardada y auditada. Sin renglones de detalle ni movimiento de stock.`;
   if (isSaleWrite(toolName)) return `Venta ${data?.id} ${toolName === "sales.void" ? "anulada" : "guardada"} y auditada. No se modificó stock físico.`;
   if (isDebtPlanWrite(toolName)) return `Operación registrada y auditada en la deuda ${data?.debt_id}.`;
@@ -90,6 +93,7 @@ function formatResult(toolName: string, result: unknown): string {
     const preview = rows.slice(0, 5).map((row: any) => `${row.creditor}: ${row.currency ?? "moneda no informada"} ${Number(row.pending_amount).toLocaleString("es-AR")}`).join("; ");
     return `Hay ${rows.length} deuda(s) activas. ${preview}${rows.length > 5 ? ". Se muestran las primeras 5; consultá una deuda para ver su cronograma." : ""}`;
   }
+  if (toolName === "stock.getReplenishment") return formatReplenishmentReport(data);
   if (toolName === "stock.getLowStock") {
     const rows = Array.isArray(data) ? data : [];
     if (!rows.length) return "No hay insumos por debajo del mínimo.";
@@ -244,7 +248,7 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
       arguments: call.arguments,
       error: `invalid_arguments:${validation.issues.map((issue) => issue.key).join(",")}`,
     });
-    if (unexpected) return { status: "rejected", text: "La operación incluye datos no permitidos y no fue ejecutada.", tool: tool.name };
+    if (unexpected) return { status: "rejected", text: tool.name === "products.create" && validation.issues.some(issue => ["recipe", "ingredients", "items", "composition"].includes(issue.key)) ? "La composición se edita desde Productos. No creé el producto ni descarté sus ingredientes; cargalo allí para guardar la receta completa." : "La operación incluye datos no permitidos y no fue ejecutada.", tool: tool.name };
     const issue = validation.issues[0];
     await deps.savePending({
       actor,
@@ -278,7 +282,7 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
     });
     return {
       status: "needs_input",
-      text: `Me falta ${labels[missing[0]] ?? missing[0]}. ¿Me lo indicás?`,
+      text: `Me falta ${isPurchaseWrite(tool.name) && missing[0] === "items" ? "renglones en una lista JSON: ingredientId o ingredient exacto, qty, unit y unitPrice explícitos" : labels[missing[0]] ?? missing[0]}. ¿Me lo indicás?`,
       tool: tool.name,
     };
   }
@@ -289,14 +293,14 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
       call = await deps.prepare(actor, call);
     } catch (error) {
       const code = error instanceof Error ? error.message : "purchase_prepare_failed";
-      const fields: Record<string, string> = { purchase_branch_ambiguous: "branchId", purchase_branch_not_found: "branchId", purchase_branch_not_allowed: "branchId", purchase_supplier_ambiguous: "supplierId", purchase_supplier_not_found: "supplier" };
+      const fields: Record<string, string> = { purchase_branch_ambiguous: "branchId", purchase_branch_not_found: "branchId", purchase_branch_not_allowed: "branchId", purchase_supplier_ambiguous: "supplierId", purchase_supplier_not_found: "supplier", purchase_ingredient_ambiguous: "items", purchase_ingredient_not_found: "items", purchase_ingredient_unit: "items" };
       const key = fields[code];
       await safeAudit(deps, { actor, input, tool: tool.name, arguments: call.arguments, error: code });
       if (key) {
         await deps.savePending({ actor, toolCall: call, kind: "clarification", clarificationKey: key, expiresAt: new Date(deps.now().getTime() + 15 * 60_000).toISOString() });
-        return { status: "needs_input", tool: tool.name, text: `No pude identificar un proveedor y una sucursal únicos y autorizados. Indicá ${labels[key] ?? key}; todavía no se guardó la compra.` };
+        return { status: "needs_input", tool: tool.name, text: `No pude identificar datos únicos, compatibles y autorizados. Indicá ${key === "items" ? "la lista JSON completa con ID exacto de cada insumo, qty, unit y unitPrice" : labels[key] ?? key}; todavía no se guardó la compra.` };
       }
-      return { status: "failed", tool: tool.name, text: "No pude preparar una compra completa y autorizada. Revisá los datos en Compras; todavía no se guardó este intento." };
+      return { status: "failed", tool: tool.name, text: code === "purchase_preview_requires_ui" ? "El detalle completo supera el espacio de un mensaje. Revisalo y confirmalo desde Compras; todavía no se guardó este intento." : "No pude preparar una compra completa y autorizada. Revisá los datos en Compras; todavía no se guardó este intento." };
     }
   }
   if (isSaleWrite(tool.name) && !confirmed) {
@@ -370,15 +374,15 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
     }
   }
 
-  // A completed stock clarification is a one-shot command too. Different
-  // WhatsApp reply IDs can race on the same pending unit/quantity clarification.
-  if (tool.name === "stock.addMovement" && pending?.kind === "clarification") {
+  // Completed stock/product clarifications are one-shot commands. Distinct
+  // WhatsApp reply IDs can race on the same pending clarification.
+  if (["stock.addMovement", "products.create"].includes(tool.name) && pending?.kind === "clarification") {
     try {
       const consumed = await deps.consumePending(pending.id, actor, true);
-      if (!consumed) return { status: "rejected", text: "Ese pedido de stock venció o ya fue atendido. No se ejecutó nuevamente.", tool: tool.name };
+      if (!consumed) return { status: "rejected", text: "Ese pedido venció o ya fue atendido. No se ejecutó nuevamente.", tool: tool.name };
       pending = null;
     } catch {
-      return { status: "failed", text: "No pude confirmar el pedido de stock de forma segura. No se ejecutó.", tool: tool.name };
+      return { status: "failed", text: "No pude confirmar el pedido de forma segura. No se ejecutó.", tool: tool.name };
     }
   }
 
@@ -441,7 +445,11 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
     if (["allocation_rule_required", "debt_missing_fields", "debt_not_unambiguous", "stale_version", "amount_exceeds_pending", "amount_exceeds_installment_pending"].includes(message)) return { status: "needs_input", tool: tool.name, text: message === "allocation_rule_required" ? "Esta deuda tiene un plan. Indicá cuota o imputación a las cuotas más antiguas, importe, fecha y método de pago para revisar el detalle antes de confirmar." : message === "stale_version" ? "El saldo cambió desde la confirmación. Consultá la deuda y prepará un nuevo detalle antes de pagar." : "La deuda, importe o datos del pago requieren revisión. No se registró este intento." };
     return {
       status: "failed",
-      text: tool.name === "stock.addMovement"
+      text: tool.name === "products.create"
+        ? message === "product_write_rejected" || message === "product_write_forbidden"
+          ? "No se guardó el producto. Revisá categoría, precio, costo, estado y permisos. Las composiciones se editan desde Productos."
+          : "No pude confirmar el alta del producto. Revisá Productos antes de repetirla para evitar duplicados."
+        : tool.name === "stock.addMovement"
         ? "No pude confirmar el resultado del movimiento de stock. Revisá el historial antes de repetirlo para evitar duplicarlo."
         : message === "purchase_branch_ambiguous"
         ? "Tenés más de una sucursal asignada. No registré la compra porque falta definir en cuál corresponde."

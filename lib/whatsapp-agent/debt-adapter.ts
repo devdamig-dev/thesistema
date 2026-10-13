@@ -63,7 +63,12 @@ export async function readDebtView(db: Db, actor: AgentActor, debt: DebtRow, asO
   const [installments, payments, allocations] = await Promise.all([allRows(db, "debt_installments", actor, debt), allRows(db, "debt_payments", actor, debt), allRows(db, "debt_payment_allocations", actor, debt)]);
   return mapDebtView(debt, installments, payments, allocations, [], asOfDate, { actorId: actor.userId, businessId: actor.businessId, branchIds: actor.branchIds, permissions: ["debts.view"] });
 }
-const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
+async function today(db: Db, actor: AgentActor): Promise<string> {
+  const business = await db.from("businesses").select("timezone").eq("id", actor.businessId).maybeSingle();
+  if (business.error || typeof business.data?.timezone !== "string") throw new Error("debt_timezone_unavailable");
+  try { return new Date().toLocaleDateString("en-CA", { timeZone: business.data.timezone }); }
+  catch { throw new Error("debt_timezone_unavailable"); }
+}
 
 /** Resolves once before preview. The exact debt, installment, version and operation ID persist in pending arguments. */
 export async function prepareDebtTool(db: Db, actor: AgentActor, input: ToolCall): Promise<ToolCall> {
@@ -82,7 +87,7 @@ export async function prepareDebtTool(db: Db, actor: AgentActor, input: ToolCall
     const debt = await resolveDebt(db, actor, a);
     if (!debt.plan_definition) throw new Error("plan_required");
     a.debtId = debt.id; a.creditor = debt.creditor; a.branchId = debt.branch_id; a.currency = debt.currency; a.expectedVersion = debt.plan_version;
-    const view = await readDebtView(db, actor, debt, today());
+    const view = await readDebtView(db, actor, debt, await today(db, actor));
     if (a.allocationRule === "selected_installment" || call.name === "debts.editPlan" && a.kind === "installment") {
       const choices = view.projection!.installments.filter(part => a.installmentId ? part.id === a.installmentId && (a.installmentNumber === undefined || part.installmentNumber === a.installmentNumber) : part.installmentNumber === a.installmentNumber);
       if (choices.length !== 1) throw new Error("installment_not_found");
@@ -100,18 +105,18 @@ async function mutate(db: Db, name: string, args: Record<string, unknown>): Prom
 /** Executes only an already confirmed prepared call. Origin and actor come from the verified transport. */
 export async function executeDebtTool(db: Db, actor: AgentActor, input: ToolCall, origin: DebtOrigin = "whatsapp"): Promise<unknown> {
   const call = checked(actor, input); const a = call.arguments;
-  if (call.name === "debts.getPlan") return readDebtView(db, actor, await resolveDebt(db, actor, a), today());
+  if (call.name === "debts.getPlan") return readDebtView(db, actor, await resolveDebt(db, actor, a), await today(db, actor));
   if (call.name === "debts.listDue") {
     let query = scopeQuery(db.from("debts").select("*").eq("business_id", actor.businessId), actor);
     if (a.branchId) { await resolveDebtBranch(db, actor, String(a.branchId)); query = query.eq("branch_id", a.branchId); }
     if (a.currency) query = query.eq("currency", a.currency);
-    const res = await query.neq("status", "settled").limit(101);
+    const res = await query.neq("status", "settled").neq("status", "cancelled").limit(101);
     if (res.error || !Array.isArray(res.data)) throw new Error("debt_read_failed");
     if (res.data.length > 100) throw new Error("debt_read_limit");
-    const views: DebtView[] = [];
-    for (const debt of res.data) views.push(await readDebtView(db, actor, debt, today()));
+    const views: DebtView[] = []; const asOfDate = await today(db, actor);
+    for (const debt of res.data) { if (debt.status !== "cancelled") views.push(await readDebtView(db, actor, debt, asOfDate)); }
     // No multi-currency grand total and no guessed currency for historical debt.
-    return { from: a.from, to: a.to, debts: views.map(view => ({ debtId: view.id, creditor: view.creditor, currency: view.currency,
+    return { from: a.from, to: a.to, debts: views.filter(view => view.status !== "cancelled").map(view => ({ debtId: view.id, creditor: view.creditor, currency: view.currency,
       installments: view.projection?.installments.filter(part => part.pendingAmountCents > 0 && part.dueDate !== null && part.dueDate >= String(a.from) && part.dueDate <= String(a.to)) ?? [],
       legacyDue: !view.plan && view.dueDate && view.dueDate >= String(a.from) && view.dueDate <= String(a.to) ? { dueDate: view.dueDate, pendingAmountCents: view.pendingCents } : null,
     })).filter(view => view.installments.length || view.legacyDue) };

@@ -222,3 +222,56 @@ test("Supabase network error envelopes remain uncertain instead of claiming data
   const h = harness(); await h.request(); h.f.db.rpc = async () => ({ data: null, error: { message: "TypeError: fetch failed", code: "" } });
   const result = await h.send("Sí"); assert.equal(result.status, "failed"); assert.match(result.text, /Respondé Sí/); assert.equal(h.pending()?.resultUncertain, true);
 });
+
+test("detailed purchase resolves exact ingredients and previews every physical fact before confirmation", async () => {
+ const f=fixture(); f.rows.ingredients=[{id:id(70),business_id:actor.businessId,name:"Harina",unit:"kg",active:true}];
+ const h=harness(f); const args={...call().arguments,kind:"detailed",amount:undefined,items:[{ingredient:"Harina",qty:"500",unit:"g",unitPrice:"1.25"}],receiptReference:"Ticket A-123"};
+ const reply=await h.send(`compra: ${JSON.stringify(args)}`);
+ assert.equal(reply.status,"needs_confirmation"); assert.match(reply.text,/500 g × 1.25/); assert.match(reply.text,/625.00/); assert.match(reply.text,/Ticket A-123/); assert.equal(f.calls.length,0);
+ assert.deepEqual(h.pending()?.toolCall.arguments.items,[{ingredientId:id(70),description:"Harina",qty:"500",unit:"g",unitPrice:"1.25"}]);
+ f.db.rpc=async(name:string,args:any)=>{f.calls.push({name,args});return {data:{ok:true,id:id(10),replayed:false,kind:"detailed",source:"whatsapp",costRefreshPending:true},error:null};};
+ const result=await h.send("Sí"); assert.equal(result.status,"completed"); assert.match(result.text,/cantidades confirmadas en stock/); assert.match(result.text,/Costos pendientes/); assert.equal(f.calls.length,1);
+});
+
+test("detailed purchase asks for every missing physical fact and never invents qty one", async () => {
+ for(const extra of [{qty:undefined},{qty:1},{qty:"0"},{unit:undefined},{unitPrice:undefined},{ingredient:undefined},{qty:"1e3"},{unitPrice:"1.001"}]){
+  const h=harness();const args={...call().arguments,kind:"detailed",amount:undefined,items:[{ingredient:"Harina",qty:"2",unit:"kg",unitPrice:"10",...extra}]};
+  const reply=await h.send(`compra: ${JSON.stringify(args)}`);assert.equal(reply.status,"needs_input",JSON.stringify(extra));assert.equal(h.f.calls.length,0);assert.equal(h.pending()?.clarificationKey,"items");
+ }
+ const f=fixture();f.rows.ingredients=[{id:id(70),business_id:actor.businessId,name:"Harina",unit:"kg",active:true}];const h=harness(f);
+ await h.send(`compra: ${JSON.stringify({...call().arguments,kind:"detailed",amount:undefined})}`);
+ const reply=await h.send("Harina; 2,5; kg; 100,50");assert.equal(reply.status,"needs_confirmation");assert.match(reply.text,/2.5 kg × 100.50/);
+});
+
+test("ambiguous or incompatible purchase ingredients require explicit list correction", async()=>{
+ const f=fixture(); f.rows.ingredients=[{id:id(70),business_id:actor.businessId,name:"Harina",unit:"kg",active:true},{id:id(71),business_id:actor.businessId,name:"Harina",unit:"kg",active:true}];const h=harness(f);
+ const args={...call().arguments,kind:"detailed",amount:undefined,items:[{ingredient:"Harina",qty:"2",unit:"kg",unitPrice:"10"}]};
+ assert.equal((await h.send(`compra: ${JSON.stringify(args)}`)).status,"needs_input");assert.equal(h.pending()?.clarificationKey,"items");
+ assert.equal((await h.send(JSON.stringify([{ingredientId:id(71),qty:"2",unit:"l",unitPrice:"10"}]))).status,"needs_input");
+ assert.equal((await h.send(JSON.stringify([{ingredientId:id(71),qty:"2",unit:"kg",unitPrice:"10"}]))).status,"needs_confirmation");assert.equal(f.calls.length,0);
+ const foreign=fixture();foreign.rows.ingredients=[{id:id(70),business_id:id(99),name:"Harina",unit:"kg",active:true}];await assert.rejects(()=>preparePurchaseTool(foreign.db,actor,{name:"purchases.create",arguments:JSON.parse(JSON.stringify(args))}),/purchase_ingredient_not_found/);
+});
+
+test("detailed overflow and forged nested fields fail before durable confirmation",()=>{
+ for(const line of [{ingredient:"Harina",qty:"999999999999",unit:"kg",unitPrice:"9999999999.99"},{ingredient:"Harina",qty:"2",unit:"kg",unitPrice:"10",source:"manual"}])assert.ok(validatePurchaseCall({name:"purchases.create",arguments:{...call().arguments,amount:undefined,kind:"detailed",items:[line]}}).issues.length);
+});
+
+
+test("natural detailed request asks for data instead of producing a forbidden amount field", async () => {
+ const h=harness(); const reply=await h.send("Registrá una compra detallada");
+ assert.equal(reply.status,"needs_input"); assert.equal(h.pending()?.toolCall.arguments.kind,"detailed");
+ assert.equal(Object.hasOwn(h.pending()!.toolCall.arguments,"amount"),false); assert.equal(h.f.calls.length,0);
+});
+
+test("oversized detailed confirmation cannot be silently truncated by WhatsApp", async () => {
+ const f=fixture(); f.rows.ingredients=[{id:id(70),business_id:actor.businessId,name:"Harina",unit:"kg",active:true}];
+ const h=harness(f); const args={...call().arguments,kind:"detailed",amount:undefined,items:Array.from({length:50},()=>({ingredient:"Harina",description:"Detalle confirmado que debe aparecer íntegro",qty:"2",unit:"kg",unitPrice:"10"}))};
+ const reply=await h.send(`compra: ${JSON.stringify(args)}`);
+ assert.equal(reply.status,"failed"); assert.match(reply.text,/supera el espacio/); assert.equal(h.pending(),null); assert.equal(f.calls.length,0);
+});
+
+test("reference is bounded plain text and numeric facts reject accessor objects", () => {
+ for(const receiptReference of ["x".repeat(201),"Ticket\n123",{file:"receipt.pdf"}])assert.ok(validatePurchaseCall({...call(),arguments:{...call().arguments,receiptReference}}).issues.length);
+ const line={ingredient:"Harina",unit:"kg",unitPrice:"1",get qty(){throw new Error("must not evaluate getter");}};
+ const args={kind:"detailed",items:[line]};assert.ok(validatePurchaseCall({name:"purchases.create",arguments:args}).issues.length);
+});

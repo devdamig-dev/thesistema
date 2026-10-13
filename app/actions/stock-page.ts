@@ -339,3 +339,21 @@ export const adjustStockManualAction = withPermission<[ManualStockInput], Manual
     return { ok: true, persisted: true, newCurrent, delta };
   },
 );
+
+/** UI and WhatsApp share the same read model, filters and consistency guard. */
+export async function getStockReplenishmentAction(input: import("@/lib/replenishment/types").ReplenishmentInput): Promise<
+  { ok: true; data: import("@/lib/replenishment/types").ReplenishmentReport } | { ok: false; error: string }
+> {
+  if (!isDatabaseMode()) return { ok: false, error: "La reposición real requiere un negocio activo." };
+  const ctx = await getCurrentUserContext();
+  if (!ctx.isAuthenticated || !ctx.userId || !ctx.businessId) return { ok: false, error: "No se pudo verificar tu sesión." };
+  const db = await createSupabaseServerClient();
+  if (!db) return { ok: false, error: "No pudimos conectar con tus datos." };
+  try {
+    const { readReplenishment } = await import("../../lib/replenishment/read");
+    const data = await readReplenishment(db as any, { businessId: ctx.businessId, userId: ctx.userId, role: ctx.role, enabledModules: ctx.enabledModules ?? [], branchIds: ctx.assignedBranchIds }, input);
+    return { ok: true, data };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "No se pudo consultar la reposición. Intentá nuevamente." };
+  }
+}

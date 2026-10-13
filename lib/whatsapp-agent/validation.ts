@@ -1,3 +1,4 @@
+import { validateProductFields } from "../catalog/products";
 import { isPurchaseWrite, validatePurchaseCall } from "../purchases/agent";
 import { isSaleWrite, validateSaleCall } from "../sales/agent";
 import { normalizeUnit } from "../recipes/quantities";
@@ -18,10 +19,10 @@ const schemas: Record<string, ToolSchema> = {
   "debts.list": {},
   "debts.create": { creditor: "string", amount: "positiveNumber", concept: "string", category: "debtCategory", dueDate: "date", branchId: "string" },
   "debts.registerPayment": { creditor: "string", amount: "positiveNumber", paymentMethod: "paymentMethod", paidAt: "date" },
+  "stock.getReplenishment": { branchId: "string", from: "date", to: "date" },
   "stock.getLowStock": {},
   "stock.addMovement": { ingredient: "string", quantity: "nonNegativeNumber", operation: "stockOperation", branchId: "string", reason: "stockReason", unit: "stockUnit" },
   "products.list": {},
-  "products.create": { name: "string", price: "positiveNumber", category: "string", cost: "nonNegativeNumber" },
   "invoices.listPending": {},
 };
 
@@ -88,6 +89,10 @@ function validatePeriod(argumentsValue: Record<string, unknown>, from: string, t
 }
 
 export function validateToolCall(call: ToolCall): ToolValidation {
+  if (call.name === "products.create") {
+    const result = validateProductFields(call.arguments, true);
+    return { call: { name: call.name, arguments: result.input }, issues: result.issues };
+  }
   if (isSaleWrite(call.name)) return validateSaleCall(call);
   if (isPurchaseWrite(call.name)) return validatePurchaseCall(call);
   if (isDebtPlanTool(call.name)) return validateDebtToolCall(canonicalDebtCall(call));
@@ -109,6 +114,11 @@ export function validateToolCall(call: ToolCall): ToolValidation {
     else if (result.value !== undefined) cleaned[key] = result.value;
   }
 
+  if (call.name === "stock.getReplenishment") {
+    if (cleaned.branchId !== undefined && !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(String(cleaned.branchId))) issues.push({ key: "branchId", message: "debe ser un ID de sucursal válido" });
+    validatePeriod(cleaned, "from", "to", issues);
+    if (typeof cleaned.from === "string" && typeof cleaned.to === "string" && (Date.parse(cleaned.to) - Date.parse(cleaned.from)) / 86400000 >= 366) issues.push({ key: "to", message: "el período admite hasta 366 días inclusive" });
+  }
   if (call.name === "stock.addMovement" && cleaned.quantity === 0 && cleaned.operation !== "set") {
     issues.push({ key: "quantity", message: "debe ser mayor a cero para entradas, salidas y mermas" });
   }

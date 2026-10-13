@@ -63,6 +63,9 @@ try {
   stage = "supabase/tests/expenses.sql";
   await db.exec(await readFile(join(root, stage), "utf8"));
 
+  stage = "supabase/tests/expense-operating-fields.sql";
+  await db.exec(await readFile(join(root, stage), "utf8"));
+
   if (native) await verifyExpensesConcurrency(db);
   console.log(`PASS expenses SQL suite (${files.length} real migrations, isolated PostgreSQL, rolled-back fixtures)`);
 } catch (error) {

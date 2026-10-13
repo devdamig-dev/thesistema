@@ -10,7 +10,7 @@ import { createSupplierManualAction } from "./suppliers-page";
 import type { SupplierCreateInput } from "../../lib/suppliers/domain";
 
 export type PurchasesPageRow = {
-  id: string; version: number; status: string; source: string | null;
+  id: string; version: number; status: string; source: string | null; correctionOrigin?: string | null; receiptReference?: string | null; costRefreshPending?: boolean; invoiceSource?: string | null;
   fecha: string;
   proveedor: string;
   insumo: string;
@@ -39,6 +39,8 @@ export type BranchOption = { id: string; name: string };
 
 export type PurchasesPageData = {
   supplierDraftScope: string;
+  costRefreshPending?: boolean;
+  canRefreshCosts?: boolean;
   canManageSuppliers: boolean;
   recentPurchases: PurchasesPageRow[];
   topSuppliers: SupplierSummaryRow[];
@@ -54,6 +56,9 @@ export type SupplierInput = SupplierCreateInput;
 
 export type PurchaseInput = {
   requestId: string;
+  kind?: "summary" | "detailed";
+  amount?: string;
+  receiptReference?: string;
   replacesPurchaseId?: string;
   expectedVersion?: number;
   correctionReason?: string;
@@ -70,7 +75,7 @@ export type PurchaseInput = {
 };
 
 type MutationResult =
-  | { ok: true; persisted: true; id: string }
+  | { ok: true; persisted: true; id: string; costRefreshPending?: boolean }
   | { ok: false; persisted: false | null; error: string };
 
 async function readCompletePurchaseRows(query:any) {
@@ -113,16 +118,16 @@ export async function getPurchasesPageDataAction(): Promise<
       : branchesQuery.in("id", ["00000000-0000-0000-0000-000000000000"]);
   }
 
-  const [recentRes, monthRes, suppliersRes, branchesRes, ingredientsRes] = await Promise.all([
+  const [recentRes, monthRes, suppliersRes, branchesRes, ingredientsRes, pendingCostsRes] = await Promise.all([
     supabase
       .from("purchases")
-      .select("id, branch_id, supplier_id, purchased_at, total, version,record_status,source,branches(name)")
+      .select("id, branch_id, supplier_id, purchased_at, total, version,record_status,source,correction_origin,receipt_reference,cost_refresh_pending,invoices(source),branches(name)")
       .eq("business_id", ctx.businessId)
       .order("purchased_at", { ascending: false })
       .limit(50),
     readCompletePurchaseRows(supabase
       .from("purchases")
-      .select("id, branch_id, supplier_id, purchased_at, total, version,record_status,source,branches(name)",{count:"exact"})
+      .select("id, branch_id, supplier_id, purchased_at, total, version,record_status,source,correction_origin,receipt_reference,cost_refresh_pending,invoices(source),branches(name)",{count:"exact"})
       .eq("business_id", ctx.businessId)
       .eq("record_status", "active")
       .gte("purchased_at", monthStart)
@@ -134,8 +139,10 @@ export async function getPurchasesPageDataAction(): Promise<
       .order("name"),
     branchesQuery,
     supabase.from("ingredients").select("id,name,unit", { count: "exact" }).eq("business_id", ctx.businessId).eq("active", true).order("name").limit(1000),
+    supabase.from("purchases").select("id").eq("business_id",ctx.businessId).eq("cost_refresh_pending",true).limit(1),
   ]);
 
+  if (pendingCostsRes.error) return { ok: false, error: "No pudimos verificar si los costos están actualizados." };
   if (ingredientsRes.error || (ingredientsRes.count ?? 0) > (ingredientsRes.data?.length ?? 0)) return { ok: false, error: "No pudimos cargar el catálogo completo de insumos." };
   if (recentRes.error) return { ok: false, error: "No pudimos cargar las compras recientes." };
   if (monthRes.error) return { ok: false, error: "No pudimos cargar las compras del mes." };
@@ -143,7 +150,7 @@ export async function getPurchasesPageDataAction(): Promise<
   if (branchesRes.error) return { ok: false, error: "No pudimos cargar las sucursales disponibles." };
 
   type PurchaseDbRow = {
-    version: number; record_status: string; source: string | null;
+    version: number; record_status: string; source: string | null; correction_origin: string | null; receipt_reference: string | null; cost_refresh_pending: boolean; invoices: {source: string} | {source:string}[] | null;
     id: string;
     branch_id: string;
     supplier_id: string | null;
@@ -188,7 +195,7 @@ export async function getPurchasesPageDataAction(): Promise<
     const qty = Number(item?.qty ?? 0);
     const branch = Array.isArray(purchase.branches) ? purchase.branches[0] : purchase.branches;
     return {
-      id: purchase.id, version: purchase.version, status: purchase.record_status, source: purchase.source,
+      id: purchase.id, version: purchase.version, status: purchase.record_status, source: purchase.source, correctionOrigin: purchase.correction_origin, receiptReference: purchase.receipt_reference, costRefreshPending: purchase.cost_refresh_pending, invoiceSource: (Array.isArray(purchase.invoices) ? purchase.invoices[0] : purchase.invoices)?.source ?? null,
       fecha: new Intl.DateTimeFormat("es-AR", {
         day: "2-digit",
         month: "2-digit",
@@ -227,6 +234,8 @@ export async function getPurchasesPageDataAction(): Promise<
   return {
     ok: true,
     data: {
+      costRefreshPending: !!pendingCostsRes.data?.length,
+      canRefreshCosts: ["owner","admin"].includes(ctx.role),
       ingredients: ingredientsRes.data ?? [],
       recentPurchases,
       topSuppliers,
@@ -247,10 +256,13 @@ export async function createSupplierAction(input: SupplierInput) {
 }
 
 function validatePurchase(input: PurchaseInput): string | null {
+  if (input.receiptReference !== undefined && (typeof input.receiptReference !== "string" || input.receiptReference.trim().length > 200 || /[\x00-\x1f\x7f]/.test(input.receiptReference))) return "Revisá la referencia del comprobante (hasta 200 caracteres).";
+  if (input.kind && !["summary", "detailed"].includes(input.kind)) return "Elegí el tipo de compra.";
   if (!input.branchId) return "Elegí una sucursal.";
   if (!input.supplierId) return "Elegí un proveedor.";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.purchasedAt)) return "Ingresá una fecha válida.";
   if (!input.paymentMethod.trim()) return "Elegí un medio de pago.";
+  if (input.kind === "summary") return typeof input.amount === "string" && /^(0|[1-9]\d{0,9})(?:\.\d{1,2})?$/.test(input.amount) && Number(input.amount) > 0 ? null : "Ingresá un importe total explícito mayor a cero.";
   if (input.items && (!Array.isArray(input.items) || input.items.length < 1 || input.items.length > 100)) return "Agregá entre 1 y 100 líneas.";
   for (const line of input.items ?? [input]) {
   if (!line.description.trim()) return "Ingresá el insumo o concepto comprado.";
@@ -299,9 +311,12 @@ export const createPurchaseAction = withPermission<[PurchaseInput], MutationResu
       const payload = {
         requestId: input.requestId, branchId: input.branchId, supplierId: input.supplierId,
         purchasedAt: input.purchasedAt, paymentMethod: input.paymentMethod.trim(),
+        // Older saved attempts omitted kind. Preserve their exact receipt payload.
+        ...(input.kind !== undefined ? { kind: input.kind } : {}),
+        ...(input.receiptReference?.trim() ? {receiptReference:input.receiptReference.trim()} : {}),
         ...(input.replacesPurchaseId ? {replacesPurchaseId:input.replacesPurchaseId,correctionReason:input.correctionReason?.trim()} : {}),
-        items: (input.items ?? [input]).map(line => ({ ingredientId: line.ingredientId ?? null, description: line.description.trim(),
-          qty: String(line.qty), unit: line.unit.trim(), unitPrice: String(line.unitPrice) })),
+        ...(input.kind === "summary" ? { amount:input.amount } : {items: (input.items ?? [input]).map(line => ({ ingredientId: line.ingredientId ?? null, description: line.description.trim(),
+          qty: String(line.qty), unit: line.unit.trim(), unitPrice: String(line.unitPrice) }))}),
       };
       response = input.replacesPurchaseId ? await db.rpc("replace_purchase_manual_atomic", {p_business_id:ctx.businessId,p_original_id:input.replacesPurchaseId,p_expected_version:input.expectedVersion,p_reason:input.correctionReason?.trim(),p_input:payload})
         : await db.rpc("create_purchase_manual_atomic", {p_business_id:ctx.businessId,p_input:payload});
@@ -309,13 +324,14 @@ export const createPurchaseAction = withPermission<[PurchaseInput], MutationResu
       return { ok: false, persisted: null, error: "No se confirmó el resultado. Conservá este intento y revisá Compras antes de volver a cargarlo." };
     }
     if (response.error || !response.data?.ok || !response.data?.id) {
-      const rejected = typeof response.error?.code === "string" && /^(22|23|42|P0001)/.test(response.error.code);
+      const rejected = response.error?.code !== "23505" && response.error?.message !== "purchase_idempotency_conflict"
+        && typeof response.error?.code === "string" && /^(22|23|42|P0001)/.test(response.error.code);
       return { ok: false, persisted: rejected ? false : null, error: "No se confirmó la compra. Revisá datos y Compras; reutilizá el mismo intento para evitar duplicados." };
     }
     try {
-      for (const path of ["/compras", "/gastos", "/balances", "/stock", "/auditoria"]) revalidatePath(path);
+      for (const path of ["/compras", "/gastos", "/balances", "/stock", "/auditoria", "/productos"]) revalidatePath(path);
     } catch { /* The database transaction is already confirmed. */ }
-    return { ok: true, persisted: true, id: response.data.id };
+    return { ok: true, persisted: true, id: response.data.id, costRefreshPending: response.data.costRefreshPending === true };
   },
 );
 
@@ -326,7 +342,7 @@ export const voidPurchaseAction = withPermission<[{ id: string; expectedVersion:
   try {
     const result=await db.rpc("void_purchase_manual_atomic",{p_business_id:ctx.businessId,p_id:input.id,p_expected_version:input.expectedVersion,p_reason:input.reason.trim()});
     if(result.error||!result.data?.ok)return {ok:false,persisted:null,error:"No se confirmó la anulación. Revisá si la compra cambió o si sus insumos ya se consumieron. Reintentá el mismo motivo para verificar."};
-    try {for(const path of ["/compras","/stock","/gastos","/balances","/auditoria"])revalidatePath(path);}catch{}
+    try {for(const path of ["/compras","/stock","/gastos","/balances","/auditoria","/productos"])revalidatePath(path);}catch{}
     return {ok:true,persisted:true,id:result.data.id};
   }catch{return {ok:false,persisted:null,error:"Conexión interrumpida. Revisá el estado antes de crear otra operación."};}
 });
@@ -334,11 +350,23 @@ export const voidPurchaseAction = withPermission<[{ id: string; expectedVersion:
 export const getPurchaseCorrectionAction = withPermission<[string], {ok:true;input:PurchaseInput}|{ok:false;error:string}>("purchases.create",async(ctx,id)=>{
  const db=await createSupabaseServerClient() as any;
  if(!isDatabaseMode()||!db||!ctx.businessId)return {ok:false,error:"No se pudo conectar al negocio."};
- const result=await db.from("purchases").select("id,branch_id,supplier_id,purchased_at,payment_method,version,record_status,source").eq("id",id).eq("business_id",ctx.businessId).maybeSingle();
+ const result=await db.from("purchases").select("id,branch_id,supplier_id,purchased_at,payment_method,version,record_status,source,invoice_id,purchase_kind,total,receipt_reference").eq("id",id).eq("business_id",ctx.businessId).maybeSingle();
  const p=result.data;
- if(result.error||!p||p.source!=="manual"||p.record_status!=="active"||ctx.assignedBranchIds!==null&&!ctx.assignedBranchIds.includes(p.branch_id))return {ok:false,error:"La compra no está disponible para corregir."};
+ if(result.error||!p||!["manual","inbox","whatsapp"].includes(p.source)||p.invoice_id||p.record_status!=="active"||ctx.assignedBranchIds!==null&&!ctx.assignedBranchIds.includes(p.branch_id))return {ok:false,error:"La compra no está disponible para corregir."};
  const lines=await db.from("purchase_items").select("ingredient_id,description,qty,unit,unit_price",{count:"exact"}).eq("purchase_id",p.id).order("id").limit(100);
- if(lines.error||!lines.data?.length||lines.count!==lines.data.length)return {ok:false,error:"No se pudo leer el detalle completo."};
+ if(lines.error||(p.purchase_kind!=="summary"&&!lines.data?.length)||lines.count!==lines.data.length)return {ok:false,error:"No se pudo leer el detalle completo."};
  const items=lines.data.map((l:any)=>({ingredientId:l.ingredient_id,description:l.description,qty:Number(l.qty),unit:l.unit,unitPrice:Number(l.unit_price)}));
- return {ok:true,input:{requestId:"",replacesPurchaseId:p.id,expectedVersion:p.version,correctionReason:"",branchId:p.branch_id,supplierId:p.supplier_id,purchasedAt:p.purchased_at,paymentMethod:p.payment_method,...items[0],items}};
+ return {ok:true,input:{requestId:"",replacesPurchaseId:p.id,expectedVersion:p.version,correctionReason:"",branchId:p.branch_id,supplierId:p.supplier_id,purchasedAt:p.purchased_at,paymentMethod:p.payment_method,kind:p.purchase_kind,amount:p.purchase_kind==="summary"?String(p.total):undefined,receiptReference:p.receipt_reference??undefined,description:"",qty:0,unit:"",unitPrice:0,...items[0],items}};
+});
+
+export const refreshPurchaseCostsAction = withPermission<[], {ok:true;refreshed:number;pending:number}|{ok:false;error:string}>("products.edit_price",async(ctx)=>{
+ if(!isDatabaseMode()||!ctx.businessId||!["owner","admin"].includes(ctx.role))return {ok:false,error:"Un propietario o administrador debe actualizar los costos."};
+ const db=await createSupabaseServerClient() as any;
+ if(!db)return {ok:false,error:"No se pudo conectar al negocio."};
+ try {
+  const result=await db.rpc("refresh_purchase_costs_atomic",{p_business_id:ctx.businessId});
+  if(result.error||result.data?.ok!==true||!Number.isSafeInteger(result.data?.refreshed)||!Number.isSafeInteger(result.data?.pending))return {ok:false,error:"No se confirmó la actualización de costos. Podés reintentar sin duplicar compras."};
+  for(const path of ["/compras","/productos","/stock","/auditoria"])try{revalidatePath(path);}catch{}
+  return {ok:true,refreshed:result.data.refreshed,pending:result.data.pending};
+ }catch{return {ok:false,error:"No se confirmó la actualización de costos. Podés reintentar."};}
 });

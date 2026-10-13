@@ -58,7 +58,7 @@ try {
     console.log(`Applied locally: ${file}`);
   }
 
-  const suites = ["supabase/tests/purchase-transports.sql", ...process.argv.slice(2).filter(arg => arg.endsWith(".sql"))];
+  const suites = ["supabase/tests/purchase-transports.sql", "supabase/tests/purchase-spec-parity.sql", ...process.argv.slice(2).filter(arg => arg.endsWith(".sql"))];
   for (const suite of suites) {
     stage = suite;
     await db.exec(await readFile(isAbsolute(suite) ? suite : join(root, suite), "utf8"));

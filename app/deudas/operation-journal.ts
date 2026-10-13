@@ -4,11 +4,13 @@
  * uncertain operation identities remain until an explicit, verified clear.
  */
 import {
+  parseCancelPlanRequest,
   parseCreatePlanRequest,
   parseEditPlanRequest,
   parsePaymentPlanRequest,
   parseVoidPlanRequest,
   requestUuid,
+  type CancelPlanRequest,
   type CreatePlanRequest,
   type EditPlanRequest,
   type PaymentPlanRequest,
@@ -19,7 +21,8 @@ type DebtOperationPayload =
   | { kind: "create"; request: CreatePlanRequest }
   | { kind: "pay" | "legacy"; request: PaymentPlanRequest }
   | { kind: "void"; request: VoidPlanRequest }
-  | { kind: "edit"; request: EditPlanRequest };
+  | { kind: "edit"; request: EditPlanRequest }
+  | { kind: "cancel"; request: CancelPlanRequest };
 
 /** recordedAt is absent only on a new, not-yet-retained operation. Epoch milliseconds. */
 export type PendingDebtOperation = DebtOperationPayload & { recordedAt?: number };
@@ -62,6 +65,9 @@ function parseOperation(value: unknown): PendingDebtOperation {
   } else if (raw.kind === "void") {
     const request = parseVoidPlanRequest(raw.request);
     operation = { kind: raw.kind, request: { ...request, requestId: uuid(request.requestId), debtId: uuid(request.debtId), paymentId: uuid(request.paymentId) } };
+  } else if (raw.kind === "cancel") {
+    const request = parseCancelPlanRequest(raw.request);
+    operation = { kind: raw.kind, request: { ...request, requestId: uuid(request.requestId), debtId: uuid(request.debtId) } };
   } else if (raw.kind === "edit") {
     const request = parseEditPlanRequest(raw.request);
     operation = { kind: raw.kind, request: { ...request, requestId: uuid(request.requestId), debtId: uuid(request.debtId), ...(request.kind === "installment" ? { installmentId: uuid(request.installmentId) } : {}) } };
@@ -85,7 +91,7 @@ export function operationReference(operation: PendingDebtOperation): DebtOperati
 }
 function parseReference(value: unknown): DebtOperationReference {
   const raw = record(value, ["kind", "requestId", "debtId", "targetId"]);
-  if (!["create", "pay", "legacy", "void", "edit"].includes(raw.kind as string)) throw new Error("invalid_journal");
+  if (!["create", "pay", "legacy", "void", "edit", "cancel"].includes(raw.kind as string)) throw new Error("invalid_journal");
   const reference: DebtOperationReference = { kind: raw.kind as DebtOperationReference["kind"], requestId: uuid(raw.requestId), debtId: raw.debtId === null ? null : uuid(raw.debtId), targetId: raw.targetId === null ? null : uuid(raw.targetId) };
   if ((reference.kind === "create" && (reference.debtId !== null || reference.targetId !== null)) || (reference.kind !== "create" && reference.debtId === null) || (reference.kind === "void" && reference.targetId === null)) throw new Error("invalid_journal");
   return reference;

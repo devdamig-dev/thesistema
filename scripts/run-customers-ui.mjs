@@ -3,7 +3,7 @@ import { assert, clickTwice, editorReady, fixturePath, noOverflow, releaseWrites
 const actions = fixturePath('customers-actions.mjs');
 await runUiHarness({
   name: 'customers',
-  actionModules: { '@/app/actions/customers-page': actions, '@/app/actions/customers': actions },
+  actionModules: { '@/app/actions/customers-page': actions, '@/app/actions/customers': actions, '@/app/actions/customer-history': actions },
   entry: `import React from 'react';import {createRoot} from 'react-dom/client';import {CustomersClient} from '${root}/app/clientes/customers-client.tsx';import {initialCustomers} from '${actions}';createRoot(document.getElementById('root')).render(<CustomersClient databaseMode={true} initial={initialCustomers()}/>);`,
   async run({ page, origin, check, screenshot }) {
     for (const viewport of viewports) {
@@ -15,6 +15,50 @@ await runUiHarness({
       await page.getByRole('heading', { name: 'Clientes del negocio' }).waitFor();
       await check(`${prefix}: directorio sin overflow`, () => noOverflow(page));
       await screenshot(`${prefix}-directory`);
+      await check(`${prefix}: related sales history shows factual linked records`, async () => {
+        await page.getByRole('button', { name: 'Historial de ventas de Cliente QA Ficticio Inicial', exact: true }).click();
+        const dialog = await editorReady(page, 'dialog[open]');
+        await dialog.getByText('2 × Producto QA vinculado', { exact: true }).waitFor();
+        await dialog.getByText('25.000,25 · Activa', { exact: true }).waitFor();
+        await noOverflow(page); await screenshot(`${prefix}-related-sales`);
+        await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+      });
+
+      await check(`${prefix}: closed history cannot overwrite a newer empty customer view`, async () => {
+        await page.evaluate(() => { window.qa.holdWrites = true; });
+        await page.getByRole('button', { name: 'Historial de ventas de Cliente QA Ficticio Inicial', exact: true }).click();
+        let dialog = await editorReady(page, 'dialog[open]');
+        await dialog.getByText('Cargando historial…', { exact: true }).waitFor();
+        await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click();
+        await dialog.waitFor({ state: 'hidden' });
+        await page.evaluate(() => { window.qa.holdWrites = false; });
+        await page.getByLabel('Estado', { exact: true }).selectOption('all');
+        await page.getByRole('button', { name: 'Historial de ventas de Cliente QA Ficticio Archivado', exact: true }).click();
+        dialog = await editorReady(page, 'dialog[open]');
+        await dialog.getByText('No hay ventas vinculadas a este cliente en las sucursales permitidas.', { exact: true }).waitFor();
+        await releaseWrites(page);
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.equal(await dialog.getByText('2 × Producto QA vinculado', { exact: true }).count(), 0);
+        await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click();
+        await dialog.waitFor({ state: 'hidden' });
+        await page.getByLabel('Estado', { exact: true }).selectOption('active');
+      });
+      await check(`${prefix}: history read failures are explicit and reopening retries`, async () => {
+        await page.evaluate(() => { window.qa.failHistory = true; });
+        await page.getByRole('button', { name: 'Historial de ventas de Cliente QA Ficticio Inicial', exact: true }).click();
+        let dialog = await editorReady(page, 'dialog[open]');
+        await dialog.getByRole('alert').filter({ hasText: 'historial no disponible' }).waitFor();
+        await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click();
+        await dialog.waitFor({ state: 'hidden' });
+        await page.evaluate(() => { window.qa.failHistory = false; });
+        await page.getByRole('button', { name: 'Historial de ventas de Cliente QA Ficticio Inicial', exact: true }).click();
+        dialog = await editorReady(page, 'dialog[open]');
+        await dialog.getByText('2 × Producto QA vinculado', { exact: true }).waitFor();
+        await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click();
+        await dialog.waitFor({ state: 'hidden' });
+        assert.equal(await page.evaluate(() => window.qa.saveCalls), 0);
+      });
+
 
       await check(`${prefix}: cancelar descarta el borrador y reabrir parte vacío`, async () => {
         await page.getByRole('button', { name: 'Nuevo cliente', exact: true }).click();

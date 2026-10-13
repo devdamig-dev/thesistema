@@ -47,7 +47,7 @@ export function clarifyDebtCall(text: string, pending: PendingOperation, tools: 
   if (key === "creditor" && uuid.test(value)) { argumentsValue.debtId = value; delete argumentsValue.creditor; }
   return tools.some(tool => tool.name === pending.toolCall.name) ? { name: pending.toolCall.name, arguments: argumentsValue } : null;
 }
-export function interpretDebtCall(text: string, tools: ToolDefinition[], now = new Date()): ToolCall | null {
+export function interpretDebtCall(text: string, tools: ToolDefinition[], now = new Date(), timezone?: string): ToolCall | null {
   const n = normalize(text); const allowed = (name: string) => tools.some(tool => tool.name === name);
   const call = (name: string, args: Record<string, unknown>) => allowed(name) ? { name, arguments: compact(args) } : null;
   const branchId = text.match(/sucursal\s+([0-9a-f-]{36})/i)?.[1];
@@ -56,9 +56,14 @@ export function interpretDebtCall(text: string, tools: ToolDefinition[], now = n
   if (!creationIntent && !/(cambia|edita|modifica|registra.*pago)/.test(n) && /(venc|tengo que pagar)/.test(n) && /(deuda|cuota|mes|semana)/.test(n)) {
     const dates = text.match(/\d{4}-\d{2}-\d{2}/g) ?? [];
     let from = dates[0]; let to = dates[1];
-    const local = now.toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" }); const day = new Date(`${local}T00:00:00Z`);
+    // Relative periods require the verified business timezone. Missing/invalid
+    // configuration asks for explicit dates instead of inventing a civil date.
+    let local: string | undefined;
+    if (timezone) { try { local = now.toLocaleDateString("en-CA", { timeZone: timezone }); } catch { /* explicit dates remain usable */ } }
+    if (!local && /este mes|semana que viene|proxima semana/.test(n)) return call("debts.listDue", { branchId });
+    const day = new Date(`${local ?? from}T00:00:00Z`);
     const iso = (d: Date) => d.toISOString().slice(0, 10);
-    if (/este mes/.test(n)) { from = `${local.slice(0, 7)}-01`; to = iso(new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth() + 1, 0))); }
+    if (/este mes/.test(n)) { from = `${local!.slice(0, 7)}-01`; to = iso(new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth() + 1, 0))); }
     if (/semana que viene|proxima semana/.test(n)) { day.setUTCDate(day.getUTCDate() + 8 - (day.getUTCDay() || 7)); from = iso(day); day.setUTCDate(day.getUTCDate() + 6); to = iso(day); }
     return call("debts.listDue", { from, to, branchId });
   }

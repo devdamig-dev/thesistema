@@ -144,5 +144,23 @@ async function verifyConcurrentSessions(db) {
     `select public.register_debt_plan_payment('${id}',1,debt_test.payment(4000),gen_random_uuid())`);
   assert(parsed(a.stdout)?.ok && parsed(b.stdout)?.error === "stale_version", "void/payment race respects parent CAS");
   await db.exec(`select debt_test.assert_true((select pending_amount=100 and plan_version=2 from public.debts where id='${id}'),'void race reopened consistent balance');`);
-  console.log("PASS native multi-session concurrency: CAS, concurrent retries, direct-write overpay, void/payment race (observed lock waits)");
+  id = await newDebt();
+  [a, b] = await race(id,
+    `select public.cancel_debt_plan_record('${id}',0,'Administrative race',gen_random_uuid())`,
+    `select public.register_debt_plan_payment('${id}',0,debt_test.payment(1000),gen_random_uuid())`);
+  assert(parsed(a.stdout)?.ok && parsed(b.stdout)?.error === "stale_version", "cancellation/payment race preserves parent CAS");
+  await db.exec(`select debt_test.assert_true((select status='cancelled' and pending_amount=100 and plan_version=1 from public.debts where id='${id}') and not exists(select 1 from public.debt_payments where debt_id='${id}'),'cancel first records no payment');`);
+  id = await newDebt();
+  [a, b] = await race(id,
+    `select public.register_debt_plan_payment('${id}',0,debt_test.payment(1000),gen_random_uuid())`,
+    `select public.cancel_debt_plan_record('${id}',0,'Administrative race',gen_random_uuid())`);
+  assert(parsed(a.stdout)?.ok && parsed(b.stdout)?.error === "stale_version", "payment/cancellation race requires review of new balance");
+  await db.exec(`select debt_test.assert_true((select cancelled_at is null and pending_amount=90 and plan_version=1 from public.debts where id='${id}'),'pay first never silently cancels');`);
+  id = await newDebt();
+  const cancelRequest = '00000000-0000-4000-8000-000000000092';
+  const sameCancel = `select public.cancel_debt_plan_record('${id}',0,'Same administrative request','${cancelRequest}')`;
+  [a, b] = await race(id, sameCancel, sameCancel);
+  assert(parsed(a.stdout)?.ok && parsed(b.stdout)?.idempotent, "concurrent cancellation retry has one immutable receipt");
+  await db.exec(`select debt_test.assert_true((select count(*)=1 from public.activity_logs where target_id='${id}' and action='debt.cancelled'),'one cancellation audit under retries');`);
+  console.log("PASS native multi-session concurrency: CAS, concurrent retries, direct-write overpay, void/payment race, administrative cancellation/payment races and retry (observed lock waits)");
 }

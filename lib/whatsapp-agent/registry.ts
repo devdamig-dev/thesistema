@@ -10,7 +10,7 @@ export const WHATSAPP_TOOLS: readonly ToolDefinition[] = [
   { name: "sales.getPeriod", description: "Consultar ventas por período", module: "sales", permission: "sales.view", risk: "READ", required: ["from", "to"] },
   { name: "sales.comparePeriods", description: "Comparar ventas entre períodos", module: "sales", permission: "sales.view", risk: "READ", required: ["from", "to", "previousFrom", "previousTo"] },
   { name: "purchases.list", description: "Consultar compras", module: "purchases", permission: "purchases.view", risk: "READ", required: [] },
-  { name: "purchases.create", description: "Registrar compra resumida con fecha e importe explícitos, sin movimiento de stock", module: "purchases", permission: "purchases.create", risk: "SENSITIVE", required: [] },
+  { name: "purchases.create", description: "Registrar compra resumida o detallada con insumos, cantidades, unidades y precios explícitos", module: "purchases", permission: "purchases.create", risk: "SENSITIVE", required: [] },
   { name: "debts.createPlan", description: "Crear una obligación de pago único o un plan con cronograma confirmado", module: "debts", permission: "debts.create", risk: "WRITE", required: [] },
   { name: "debts.getPlan", description: "Consultar saldo, cuotas e historial de una deuda identificada sin ambigüedad", module: "debts", permission: "debts.view", risk: "READ", required: [] },
   { name: "debts.listDue", description: "Consultar cuotas y vencimientos dentro de fechas explícitas", module: "debts", permission: "debts.view", risk: "READ", required: ["from", "to"] },
@@ -20,10 +20,11 @@ export const WHATSAPP_TOOLS: readonly ToolDefinition[] = [
   { name: "debts.list", description: "Consultar deudas", module: "debts", permission: "debts.view", risk: "READ", required: [] },
   { name: "debts.create", description: "Crear obligación (alias compatible; requiere contrato completo de plan)", module: "debts", permission: "debts.create", risk: "WRITE", required: [] },
   { name: "debts.registerPayment", description: "Registrar pago de deuda", module: "debts", permission: "debts.pay", risk: "SENSITIVE", required: ["creditor", "amount", "paymentMethod", "paidAt"] },
+  { name: "stock.getReplenishment", description: "Consultar reposición con stock actual, mínimo, consumo físico y teórico separados, productos y compras del período", module: "stock", permission: "stock.view", risk: "READ", required: ["branchId", "from", "to"] },
   { name: "stock.getLowStock", description: "Consultar stock bajo", module: "stock", permission: "stock.view", risk: "READ", required: [] },
   { name: "stock.addMovement", description: "Registrar movimiento de stock", module: "stock", permission: "stock.adjust", risk: "WRITE", required: ["ingredient", "quantity", "operation", "reason", "unit"] },
   { name: "products.list", description: "Consultar productos", module: "products", permission: "products.view", risk: "READ", required: [] },
-  { name: "products.create", description: "Crear producto", module: "products", permission: "products.edit_price", risk: "WRITE", required: ["name", "price"] },
+  { name: "products.create", description: "Crear producto con categoría, precio, costo y estado explícitos (composición desde Productos)", module: "products", permission: "products.edit_price", risk: "WRITE", required: ["name", "price", "category", "cost", "active"] },
   { name: "invoices.listPending", description: "Consultar facturas pendientes", module: "invoices_ocr", permission: "invoices.view", risk: "READ", required: [] },
 ] as const;
 

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { AlertTriangle, Boxes, History, Loader2, Plus, RefreshCw, Sparkles } from "lucide-react";
+import { ReplenishmentPanel } from "@/components/stock/replenishment-panel";
 import { SectionHeader } from "@/components/ui/section-header";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -285,7 +286,7 @@ export default function StockPage() {
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <KpiCard label="Insumos críticos" value={String(criticos)} tone="danger" hint="En o por debajo del mínimo" />
             <KpiCard label="En alerta" value={String(alertas)} tone="default" />
-            <KpiCard label="Cobertura promedio" value={IS_DATABASE ? "—" : "4 días"} delta={IS_DATABASE ? undefined : -1.2} hint={IS_DATABASE ? "Se calcula con historial de consumo" : undefined} />
+            <KpiCard label="Cobertura promedio" value={IS_DATABASE ? "—" : "4 días"} delta={IS_DATABASE ? undefined : -1.2} hint={IS_DATABASE ? "Historial completo sin verificar" : undefined} />
             <KpiCard label="Última actualización" value={IS_DATABASE ? formatLastUpdated(databaseData?.lastUpdatedAt ?? null) : "hace 9 min"} hint={IS_DATABASE ? "Última actualización de existencias" : "Foto enviada por Lucía"} />
           </div>
 
@@ -350,6 +351,8 @@ export default function StockPage() {
           </Card>
         </>
       )}
+
+      {IS_DATABASE && databaseData && <ReplenishmentPanel branches={databaseData.branches} revision={historyQuery.revision} />}
 
       {IS_DATABASE && (
         <Card>
