@@ -34,7 +34,7 @@ export type InvoiceExtraction = {
   payment_method?: string;
   items: InvoiceExtractedItem[];
   confidence: number;
-  source: "claude" | "heuristic" | "failed";
+  source: "openai" | "heuristic" | "failed";
   error?: string;
 };
 
