@@ -229,5 +229,6 @@ export async function extractInvoiceFromText(text: string): Promise<InvoiceExtra
     };
   }
 
-  // La inferencia remota se ejecuta únicamente mediante el AI Gateway.\n\n  return heuristicInvoiceExtract(text);
+  // La inferencia remota se ejecuta únicamente mediante el AI Gateway.
+  return heuristicInvoiceExtract(text);
 }
