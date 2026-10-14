@@ -119,3 +119,53 @@ test("gateway reserves credits, records real provider usage and finalizes the le
     else process.env.OPENAI_API_KEY = previousKey;
   }
 });
+
+
+test("reused request ids never trigger a second provider call", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-key";
+  rpcCalls.length = 0;
+  let fetchCalls = 0;
+  const duplicateDb = {
+    async rpc(name: string, args: Record<string, unknown>) {
+      rpcCalls.push({ name, args });
+      if (name === "reserve_ai_usage") {
+        return { data: { ok: true, allowed: true, usage_id: "11111111-1111-4111-8111-111111111111", existing: true, status: "completed" }, error: null };
+      }
+      return { data: { ok: true }, error: null };
+    },
+  };
+
+  loader._load = function(name: string, ...args: any[]) {
+    if (name === "@/lib/supabase/admin") return { createSupabaseAdminClient: () => duplicateDb };
+    return originalLoad.call(this, name, ...args);
+  };
+  delete require.cache[require.resolve("../lib/ai/gateway")];
+  const { runManagedAi: runDuplicate } = require("../lib/ai/gateway");
+  loader._load = originalLoad;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error("provider must not be called");
+  };
+
+  try {
+    const result = await runDuplicate({
+      businessId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      actorId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      taskType: "tool_interpretation",
+      source: "whatsapp",
+      instructions: "Return structured JSON.",
+      input: "ventas de hoy",
+      schemaName: "test",
+      schema: { type: "object", additionalProperties: false, properties: { ok: { type: "boolean" } }, required: ["ok"] },
+    });
+    assert.deepEqual(result, { ok: false, code: "duplicate_request" });
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+  }
+});
