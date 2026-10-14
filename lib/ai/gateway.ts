@@ -95,7 +95,8 @@ export type GatewayFailure = {
     | "quota_exceeded"
     | "metering_unavailable"
     | "provider_error"
-    | "invalid_provider_response"\n    | "duplicate_request";
+    | "invalid_provider_response"
+    | "duplicate_request";
 };
 
 type OpenAiResponse = {
