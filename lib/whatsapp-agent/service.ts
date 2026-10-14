@@ -5,6 +5,7 @@ import { prepareDebtTool } from "./debt-adapter";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { runAgent } from "./core";
 import { interpretHeuristically } from "./interpreter";
+import { interpretWithManagedAi } from "@/lib/ai/whatsapp-interpreter";
 import { claimPurchasePending, cancelPurchasePending, claimSalePending, cancelSalePending, claimDebtPending, cancelDebtPending, audit, claimMessage, consumePending, executeTool, getPending, resolveActor, savePending, resolveAuthorizedConversation, type AuthorizedConversation } from "./supabase-adapter";
 import type { AgentActor, IncomingAgentMessage } from "./types";
 
@@ -43,7 +44,17 @@ export async function processWhatsAppAgentMessage(input: IncomingAgentMessage) {
   return runAgent(input, {
     resolveActor: async () => actor,
     claimMessage: (message, scopedActor) => claimMessage(db, message, scopedActor, conversationId),
-    interpret: interpretHeuristically,
+    interpret: async (text, tools, pending) => {
+      const heuristic = await interpretHeuristically(text, tools, pending);
+      if (heuristic) return heuristic;
+      return interpretWithManagedAi({
+        businessId: actor.businessId,
+        actorId: actor.userId,
+        text,
+        tools,
+        pending,
+      });
+    },
     getPending: (actor) => getPending(db, actor, conversationId),
     savePending: (operation) => savePending(db, operation, conversationId),
     consumePending: (id, actor, requireUnexpired) => consumePending(db, id, actor, requireUnexpired, conversationId),
