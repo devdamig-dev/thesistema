@@ -5,12 +5,10 @@
  * necesitamos para crear la fila en `invoices` + N filas en
  * `invoice_items`.
  *
- * Misma estrategia que `lib/ai/extract.ts`: intenta Claude si hay
- * API key, cae a un parser heurístico robusto. Para la demo y para
- * tests sin LLM, el heurístico cubre los formatos típicos AR.
+ * Este parser legacy no llama proveedores externos por su cuenta. Toda
+ * inferencia remota debe pasar por el AI Gateway con contexto de negocio,
+ * reserva de créditos y metering durable.
  */
-
-import { claudeExtract } from "./claude";
 
 export type InvoiceExtractedItem = {
   description: string;
