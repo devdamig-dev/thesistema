@@ -5,7 +5,7 @@ import { prepareDebtTool } from "./debt-adapter";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { runAgent } from "./core";
 import { interpretHeuristically } from "./interpreter";
-import { interpretWithManagedAi } from "@/lib/ai/whatsapp-interpreter";
+import { interpretWithManagedAi } from "../ai/whatsapp-interpreter";
 import { claimPurchasePending, cancelPurchasePending, claimSalePending, cancelSalePending, claimDebtPending, cancelDebtPending, audit, claimMessage, consumePending, executeTool, getPending, resolveActor, savePending, resolveAuthorizedConversation, type AuthorizedConversation } from "./supabase-adapter";
 import type { AgentActor, IncomingAgentMessage } from "./types";
 
