@@ -93,7 +93,7 @@ test("gateway reserves credits, records real provider usage and finalizes the le
   };
 
   try {
-    const result = await runManagedAi<{ ok: boolean }>({
+    const result = await runManagedAi({
       businessId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       actorId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
