@@ -20,7 +20,7 @@ on conflict (business_id) do nothing;
 create or replace function public.ensure_ai_business_plan()
 returns trigger
 language plpgsql
-security invoker
+security definer
 set search_path = ''
 as $$
 begin
@@ -35,6 +35,8 @@ drop trigger if exists ensure_ai_business_plan_after_business on public.business
 create trigger ensure_ai_business_plan_after_business
 after insert on public.businesses
 for each row execute function public.ensure_ai_business_plan();
+
+revoke all on function public.ensure_ai_business_plan() from public, anon, authenticated;
 
 create table if not exists public.ai_usage_events (
   id uuid primary key default gen_random_uuid(),
@@ -141,7 +143,8 @@ begin
       'allowed',v_existing.status in ('reserved','completed'),
       'usage_id',v_existing.id,
       'status',v_existing.status,
-      'credits',v_existing.credits
+      'credits',v_existing.credits,
+      'existing',true
     );
   end if;
 
@@ -180,7 +183,7 @@ begin
   ) returning id into v_id;
 
   return jsonb_build_object(
-    'ok',true,'allowed',true,'usage_id',v_id,'status','reserved',
+    'ok',true,'allowed',true,'usage_id',v_id,'status','reserved','existing',false,
     'used_credits',v_used,'monthly_credits',v_plan.monthly_credits
   );
 end;
