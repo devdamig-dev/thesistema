@@ -43,12 +43,14 @@ export function AiSettingsClient({
   connection,
   capabilities = [],
   unavailable = false,
+  usage = null,
 }: {
   mode: "demo" | "database";
   roleLabel?: string;
   connection: WhatsAppConnectionState;
   capabilities?: WhatsAppCapability[];
   unavailable?: boolean;
+  usage?: AiUsageOverview | null;
 }) {
   if (unavailable) {
     return (
