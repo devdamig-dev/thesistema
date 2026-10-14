@@ -95,7 +95,7 @@ export type GatewayFailure = {
     | "quota_exceeded"
     | "metering_unavailable"
     | "provider_error"
-    | "invalid_provider_response";
+    | "invalid_provider_response"\n    | "duplicate_request";
 };
 
 type OpenAiResponse = {
@@ -185,6 +185,8 @@ export async function runManagedAi<T>(request: GatewayInput<T>): Promise<Gateway
     allowed?: boolean;
     usage_id?: string;
     error?: string;
+    status?: string;
+    existing?: boolean;
   } | null;
 
   if (reservation.error || !reserved?.ok || !reserved.usage_id) {
@@ -193,6 +195,9 @@ export async function runManagedAi<T>(request: GatewayInput<T>): Promise<Gateway
   if (!reserved.allowed) {
     return { ok: false, code: reserved.error === "quota_exceeded" ? "quota_exceeded" : "metering_unavailable" };
   }
+  // A repeated business/request key must not silently call the provider twice.
+  // Reserved rows require reconciliation; completed rows already consumed provider cost.
+  if (reserved.existing) return { ok: false, code: "duplicate_request" };
 
   const usageId = reserved.usage_id;
   let providerResponse: Response;
