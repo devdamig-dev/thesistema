@@ -231,35 +231,5 @@ export async function extractInvoiceFromText(text: string): Promise<InvoiceExtra
     };
   }
 
-  // Si hay API key de Anthropic, le pedimos un JSON formateado.
-  if (process.env.ANTHROPIC_API_KEY) {
-    try {
-      const claudeResult = await claudeExtract(
-        `Texto OCR de la factura:\n${text}\n\nDevolvé un JSON con: supplier, tax_id, invoice_type (A|B|C), invoice_number, invoice_date (YYYY-MM-DD), subtotal, tax, total, payment_method, items: [{description, qty, unit, unit_price, total}].`,
-        "OCR Pipeline",
-      );
-      if (claudeResult && claudeResult.movement_type !== "unknown") {
-        const fields = claudeResult.detected_fields as any;
-        return {
-          supplier: fields.supplier,
-          tax_id: fields.tax_id,
-          invoice_type: fields.invoice_type,
-          invoice_number: fields.invoice_number,
-          invoice_date: fields.invoice_date,
-          subtotal: fields.subtotal,
-          tax: fields.tax,
-          total: fields.total,
-          payment_method: fields.payment_method,
-          items: Array.isArray(fields.items) ? fields.items : [],
-          currency: "ARS",
-          confidence: claudeResult.confidence,
-          source: "claude",
-        };
-      }
-    } catch {
-      // Fall through al heurístico.
-    }
-  }
-
-  return heuristicInvoiceExtract(text);
+  // La inferencia remota se ejecuta únicamente mediante el AI Gateway.\n\n  return heuristicInvoiceExtract(text);
 }
