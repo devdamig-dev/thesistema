@@ -5,12 +5,10 @@
  * necesitamos para crear la fila en `invoices` + N filas en
  * `invoice_items`.
  *
- * Misma estrategia que `lib/ai/extract.ts`: intenta Claude si hay
- * API key, cae a un parser heurístico robusto. Para la demo y para
- * tests sin LLM, el heurístico cubre los formatos típicos AR.
+ * Este parser legacy no llama proveedores externos por su cuenta. Toda
+ * inferencia remota debe pasar por el AI Gateway con contexto de negocio,
+ * reserva de créditos y metering durable.
  */
-
-import { claudeExtract } from "./claude";
 
 export type InvoiceExtractedItem = {
   description: string;
@@ -34,7 +32,7 @@ export type InvoiceExtraction = {
   payment_method?: string;
   items: InvoiceExtractedItem[];
   confidence: number;
-  source: "claude" | "heuristic" | "failed";
+  source: "openai" | "heuristic" | "failed";
   error?: string;
 };
 
@@ -231,35 +229,6 @@ export async function extractInvoiceFromText(text: string): Promise<InvoiceExtra
     };
   }
 
-  // Si hay API key de Anthropic, le pedimos un JSON formateado.
-  if (process.env.ANTHROPIC_API_KEY) {
-    try {
-      const claudeResult = await claudeExtract(
-        `Texto OCR de la factura:\n${text}\n\nDevolvé un JSON con: supplier, tax_id, invoice_type (A|B|C), invoice_number, invoice_date (YYYY-MM-DD), subtotal, tax, total, payment_method, items: [{description, qty, unit, unit_price, total}].`,
-        "OCR Pipeline",
-      );
-      if (claudeResult && claudeResult.movement_type !== "unknown") {
-        const fields = claudeResult.detected_fields as any;
-        return {
-          supplier: fields.supplier,
-          tax_id: fields.tax_id,
-          invoice_type: fields.invoice_type,
-          invoice_number: fields.invoice_number,
-          invoice_date: fields.invoice_date,
-          subtotal: fields.subtotal,
-          tax: fields.tax,
-          total: fields.total,
-          payment_method: fields.payment_method,
-          items: Array.isArray(fields.items) ? fields.items : [],
-          currency: "ARS",
-          confidence: claudeResult.confidence,
-          source: "claude",
-        };
-      }
-    } catch {
-      // Fall through al heurístico.
-    }
-  }
-
+  // La inferencia remota se ejecuta únicamente mediante el AI Gateway.
   return heuristicInvoiceExtract(text);
 }

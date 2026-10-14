@@ -147,6 +147,6 @@ export interface ExtractionResult {
    *   - "heuristic"  → fallback regex (sin API key o Claude falló).
    *   - "failed"     → ni el heurístico pudo entender (necesita revisión).
    */
-  source: "claude" | "heuristic" | "failed";
+  source: "openai" | "heuristic" | "failed";
   error?: string;
 }

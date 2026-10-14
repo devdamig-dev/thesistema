@@ -1,14 +1,11 @@
 /**
- * Orquestador de extracción.
+ * Orquestador legacy de extracción.
  *
- * Estrategia:
- *   1. Intenta Claude si hay API key.
- *   2. Si Claude no responde o falla, cae al heurístico.
- *   3. Si todo falla, devuelve `failed` con confidence 0 para que el
- *      flujo persista el mensaje y lo marque como needs_review.
+ * Este entrypoint no llama proveedores externos por su cuenta. Las llamadas
+ * LLM deben pasar por `runManagedAi`, que exige tenant, reserva de créditos
+ * y metering durable antes de invocar al proveedor.
  */
 
-import { claudeExtract } from "./claude";
 import { heuristicExtract } from "./heuristic";
 import type { ExtractionResult } from "./types";
 
@@ -16,6 +13,7 @@ export async function extractFromMessage(
   messageBody: string,
   sender?: string,
 ): Promise<ExtractionResult> {
+  void sender;
   if (!messageBody || messageBody.trim().length === 0) {
     return {
       movement_type: "unknown",
@@ -29,9 +27,6 @@ export async function extractFromMessage(
       error: "empty_message",
     };
   }
-
-  const fromClaude = await claudeExtract(messageBody, sender);
-  if (fromClaude) return fromClaude;
 
   try {
     return heuristicExtract(messageBody);

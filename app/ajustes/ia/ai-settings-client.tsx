@@ -1,12 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { AlertTriangle, Bot, Check, CircleSlash2, LockKeyhole, MessageSquareText, Sparkles } from "lucide-react";
+import { AlertTriangle, Bot, Check, CircleSlash2, Coins, Cpu, Gauge, LockKeyhole, MessageSquareText, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { SettingsCard } from "@/components/ajustes/setting-row";
 import type { WhatsAppCapability } from "@/lib/whatsapp-agent/registry";
 
 export type WhatsAppConnectionState = "connected" | "disconnected" | "unknown" | "demo";
+
+export type AiUsageOverview = {
+  planCode: string;
+  monthlyCredits: number;
+  usedCredits: number;
+  remainingCredits: number;
+  requestCount: number;
+  costUsdMicros: number;
+  hardLimit: boolean;
+  overageEnabled: boolean;
+  provider: string;
+  routingPolicy: string;
+  byModel: Record<string, number>;
+};
 
 const MODULE_LABELS: Record<string, string> = {
   sales: "Ventas",
@@ -29,12 +43,14 @@ export function AiSettingsClient({
   connection,
   capabilities = [],
   unavailable = false,
+  usage = null,
 }: {
   mode: "demo" | "database";
   roleLabel?: string;
   connection: WhatsAppConnectionState;
   capabilities?: WhatsAppCapability[];
   unavailable?: boolean;
+  usage?: AiUsageOverview | null;
 }) {
   if (unavailable) {
     return (
@@ -123,18 +139,46 @@ export function AiSettingsClient({
       </SettingsCard>
 
       <SettingsCard
-        title="Configuración de IA"
-        description={mode === "database" ? "Preferencias que todavía no tienen persistencia real." : "Vista demostrativa de la futura configuración."}
+        title="Motor de IA administrado"
+        description="GastroPilot elige el modelo según la tarea, mide el consumo por negocio y aplica el límite mensual antes de llamar al proveedor."
       >
-        <div className="flex items-start gap-3 rounded-xl border border-line bg-bg-subtle/40 p-4">
-          <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-ai-400" />
-          <div>
-            <p className="text-sm font-semibold text-ink">Sin controles ficticios</p>
-            <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-              Planes, créditos, tono y automatizaciones aparecerán cuando exista un modelo persistido. Esta pantalla no simula guardados ni activaciones.
-            </p>
+        {mode === "database" && usage ? (
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <Summary label="Plan IA" value={usage.planCode === "pilot" ? "Pilot" : usage.planCode} detail={usage.hardLimit ? "Límite mensual activo" : "Sin corte automático"} />
+              <Summary label="Créditos usados" value={`${usage.usedCredits.toLocaleString("es-AR")} / ${usage.monthlyCredits.toLocaleString("es-AR")}`} detail={`${usage.remainingCredits.toLocaleString("es-AR")} disponibles`} />
+              <Summary label="Operaciones IA" value={usage.requestCount.toLocaleString("es-AR")} detail="Mes calendario actual" />
+              <Summary label="Costo interno" value={formatUsdMicros(usage.costUsdMicros)} detail="Visible sólo para control del producto" />
+            </div>
+            <div className="grid gap-3 lg:grid-cols-3">
+              <EngineItem icon={Cpu} title="Proveedor administrado" detail={usage.provider === "openai" ? "OpenAI · credencial de GastroPilot" : usage.provider} />
+              <EngineItem icon={Gauge} title="Routing automático" detail="Luna para operación · Terra para análisis · Sol para casos complejos" />
+              <EngineItem icon={Coins} title="Modelo comercial" detail="El cliente consume créditos GastroPilot; no necesita cargar una API key." />
+            </div>
+            {Object.keys(usage.byModel).length > 0 && (
+              <div className="rounded-xl border border-line bg-bg-subtle/40 p-4">
+                <div className="text-xs font-semibold text-ink">Consumo por modelo</div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {Object.entries(usage.byModel).map(([model, credits]) => (
+                    <Badge key={model} tone="ai">{model} · {credits.toLocaleString("es-AR")} créditos</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
-        </div>
+        ) : (
+          <div className="flex items-start gap-3 rounded-xl border border-line bg-bg-subtle/40 p-4">
+            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-ai-400" />
+            <div>
+              <p className="text-sm font-semibold text-ink">{mode === "demo" ? "Vista demostrativa" : "Consumo todavía no disponible"}</p>
+              <p className="mt-1 text-xs leading-relaxed text-ink-muted">
+                {mode === "demo"
+                  ? "La demo no consume modelos externos ni créditos reales."
+                  : "No mostramos números estimados: el panel aparecerá cuando podamos leer el ledger real del negocio."}
+              </p>
+            </div>
+          </div>
+        )}
       </SettingsCard>
     </div>
   );
@@ -148,4 +192,22 @@ function Summary({ label, value, detail }: { label: string; value: string; detai
       <div className="mt-0.5 text-[11px] text-ink-muted">{detail}</div>
     </div>
   );
+}
+
+
+function EngineItem({ icon: Icon, title, detail }: { icon: typeof Cpu; title: string; detail: string }) {
+  return (
+    <div className="flex items-start gap-3 rounded-xl border border-line bg-bg-subtle/40 p-4">
+      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-ai-400" />
+      <div>
+        <div className="text-sm font-semibold text-ink">{title}</div>
+        <div className="mt-1 text-xs leading-relaxed text-ink-muted">{detail}</div>
+      </div>
+    </div>
+  );
+}
+
+function formatUsdMicros(value: number) {
+  const usd = value / 1_000_000;
+  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "USD", minimumFractionDigits: usd < 0.01 ? 4 : 2, maximumFractionDigits: 4 }).format(usd);
 }
