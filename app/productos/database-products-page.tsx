@@ -12,6 +12,8 @@ import { useToast } from "@/components/ui/toast";
 import { formatARS, formatPercent } from "@/lib/format";
 import { getCatalogDataAction, type CatalogData } from "@/app/actions/catalog";
 import { createProductAction, getProductsPageDataAction, updateProductAction, type ProductCreateInput, type ProductRecipeItemInput, type ProductRow } from "@/app/actions/products-page";
+import { InlineIngredient } from "./inline-ingredient";
+import type { IngredientRow } from "@/app/actions/catalog";
 import { IngredientsPanel } from "./ingredients-panel";
 import { RecipeEditor } from "./recipe-editor";
 import { RECIPE_UNITS, RecipeCalculationError, calculateGrossMargin, calculateRecipeCost, normalizeUnit } from "@/lib/recipes/quantities";
@@ -111,6 +113,7 @@ export default function DatabaseProductsPage() {
     setProductEditor(null);
     setSaveError(null);
     if (uncertainCreate) void loadProducts();
+    void loadCatalog();
     setUncertainCreate(false);
   }
 
@@ -132,6 +135,7 @@ export default function DatabaseProductsPage() {
       toast({ tone: "success", title: editing ? "Producto actualizado" : "Producto registrado", description: "Los cambios quedaron guardados en tu negocio." });
       setProductEditor(null);
       void loadProducts();
+      void loadCatalog();
     } catch {
       if (version === editorVersion.current) {
         if (!editing) setUncertainCreate(true);
@@ -184,20 +188,24 @@ export default function DatabaseProductsPage() {
           </>}
         </div>
       )}
-      {productEditor && <Drawer open onClose={closeProduct} title={productEditor.product ? `Editar · ${productEditor.product.name}` : "Nuevo producto"} description={productEditor.product ? "Usá valores reales del negocio. Podés modificar estos datos después." : "Cargá el producto y, si corresponde, su receta con los insumos que consume cada unidad."} width={productEditor.product ? "max-w-lg" : "max-w-2xl"}><ProductForm key={productEditor.product?.id ?? "new"} product={productEditor.product} ingredients={catalog?.ingredients ?? []} pending={pending} canEdit={canEdit && !uncertainCreate} saveError={saveError} onCancel={closeProduct} onSubmit={saveProduct} /></Drawer>}
+      {productEditor && <Drawer open onClose={closeProduct} title={productEditor.product ? `Editar · ${productEditor.product.name}` : "Nuevo producto"} description={productEditor.product ? "Usá valores reales del negocio. Podés modificar estos datos después." : "Cargá el producto y, si corresponde, su receta con los insumos que consume cada unidad."} width={productEditor.product ? "max-w-lg" : "max-w-2xl"}><ProductForm key={productEditor.product?.id ?? "new"} product={productEditor.product} ingredients={catalog?.ingredients ?? []} pending={pending} canEdit={canEdit && !uncertainCreate} saveError={saveError} onCancel={closeProduct} onIngredientBusyChange={(value) => { saving.current = value; setPending(value); }} onSubmit={saveProduct} /></Drawer>}
       {recipeProduct && catalog && <RecipeEditor key={recipeProduct.id} product={recipeProduct} ingredients={catalog.ingredients} canEdit={canEdit} onClose={() => setRecipeProduct(null)} onSaved={loadProducts} />}
     </div>
   );
 }
 
-function ProductForm({ product, ingredients, pending, canEdit, saveError, onCancel, onSubmit }: { product: ProductRow | null; ingredients: CatalogData["ingredients"]; pending: boolean; canEdit: boolean; saveError: string | null; onCancel: () => void; onSubmit: (input: ProductCreateInput) => void }) {
+function ProductForm({ product, ingredients, pending, canEdit, saveError, onCancel, onSubmit, onIngredientBusyChange }: { product: ProductRow | null; ingredients: CatalogData["ingredients"]; pending: boolean; canEdit: boolean; saveError: string | null; onCancel: () => void; onSubmit: (input: ProductCreateInput) => void; onIngredientBusyChange: (busy: boolean) => void }) {
   const [form, setForm] = useState<FormState>(() => product ? { name: product.name, category: product.category, price: String(product.price), cost: String(product.cost), active: product.active } : EMPTY_FORM);
+  const [extraIngredients, setExtraIngredients] = useState<IngredientRow[]>([]);
+  const [inlineIngredient, setInlineIngredient] = useState(false);
+  const [costMode, setCostMode] = useState<"auto" | "manual">(product ? "manual" : "auto");
+  const allIngredients = useMemo(() => [...ingredients, ...extraIngredients.filter(row => !ingredients.some(original => original.id === row.id))], [ingredients, extraIngredients]);
   const [recipeRows, setRecipeRows] = useState<RecipeDraft[]>([]);
   const [error, setError] = useState("");
   const nextRecipeKey = useRef(0);
   const hasRecipe = Boolean(product?.recipeId && product.ingredientCount > 0);
-  const ingredientMap = useMemo(() => new Map(ingredients.map((item) => [item.id, item])), [ingredients]);
-  const activeIngredients = useMemo(() => ingredients.filter((item) => item.active), [ingredients]);
+  const ingredientMap = useMemo(() => new Map(allIngredients.map((item) => [item.id, item])), [allIngredients]);
+  const activeIngredients = useMemo(() => allIngredients.filter((item) => item.active), [allIngredients]);
 
   const recipePreview = useMemo(() => {
     if (product || recipeRows.length === 0) return { cost: null as number | null, margin: null as number | null, error: null as string | null };
@@ -234,7 +242,8 @@ function ProductForm({ product, ingredients, pending, canEdit, saveError, onCanc
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending || !canEdit) return;
+    if (pending || !canEdit || inlineIngredient) return;
+    if (!product && costMode === "auto" && !recipeRows.length) return setError("Agregá los insumos y sus cantidades para calcular el costo. No hace falta ingresar un costo base.");
     const price = Number(form.price.replace(",", "."));
     const manualCost = Number(form.cost.replace(",", "."));
     if (!form.name.trim()) return setError("Ingresá el nombre del producto.");
@@ -267,6 +276,7 @@ function ProductForm({ product, ingredients, pending, canEdit, saveError, onCanc
   }
 
   const inlineRecipe = !product && recipeRows.length > 0;
+  const autoCost = !product && costMode === "auto";
   const shownCost = inlineRecipe ? (recipePreview.cost === null ? "" : String(recipePreview.cost)) : form.cost;
 
   return <form onSubmit={submit} className="space-y-5 p-6" aria-busy={pending}>
@@ -275,24 +285,33 @@ function ProductForm({ product, ingredients, pending, canEdit, saveError, onCanc
       <Field label="Categoría" required><input required className={inputClass} value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} maxLength={100} /></Field>
       <div className="grid grid-cols-2 gap-4">
         <Field label="Precio (ARS)" required><input required className={inputClass} type="number" min="0" step="0.01" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /></Field>
+        {autoCost ? <div className="space-y-1.5"><span className="text-xs font-medium text-ink-muted">Costo calculado (ARS)</span><output aria-label="Costo calculado (ARS)" aria-live="polite" className="block rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink">{recipePreview.cost === null ? "Faltan insumos y cantidades" : formatARS(recipePreview.cost)}</output></div> :
         <Field label={inlineRecipe ? "Costo calculado (ARS)" : hasRecipe ? "Costo actual (ARS)" : "Costo base (ARS)"} required>
           <input required={!inlineRecipe} className={inputClass} type="number" min="0" step="0.01" readOnly={inlineRecipe || hasRecipe} value={shownCost} onChange={(event) => setForm({ ...form, cost: event.target.value })} />
-        </Field>
+        </Field>}
+
       </div>
 
+      {!product && <label className="block space-y-1.5 text-xs text-ink-muted">Cómo obtener el costo<select aria-label="Cómo obtener el costo" className={inputClass} value={costMode} onChange={event => { setCostMode(event.target.value as typeof costMode); setError(""); }}><option value="auto">Calcular con receta e insumos</option><option value="manual">Ya conozco el costo (carga manual)</option></select></label>}
       {!product && <div className="space-y-4 rounded-2xl border border-line bg-bg-subtle/40 p-4">
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold text-ink">Receta e insumos</h3>
             <p className="mt-1 text-xs text-ink-muted">Agregá lo que consume una unidad de este producto. El costo se calcula automáticamente desde el costo actual de cada insumo.</p>
           </div>
-          <Button type="button" size="sm" variant="subtle" onClick={addRecipeRow} disabled={!activeIngredients.length || recipeRows.length >= activeIngredients.length}>
+          <Button type="button" size="sm" variant="subtle" onClick={() => { setCostMode("auto"); if (!activeIngredients.length) setInlineIngredient(true); else addRecipeRow(); }} disabled={inlineIngredient || (activeIngredients.length > 0 && recipeRows.length >= activeIngredients.length)}>
             <Plus className="h-4 w-4" /> Agregar insumo
           </Button>
         </div>
 
+        <Button type="button" size="sm" variant="ghost" disabled={inlineIngredient} onClick={() => { setCostMode("auto"); setInlineIngredient(true); }}>Crear insumo sin salir</Button>
+        {inlineIngredient && <InlineIngredient onBusyChange={onIngredientBusyChange} onClose={() => setInlineIngredient(false)} onCreated={(row) => {
+          setExtraIngredients(current => [...current.filter(item => item.id !== row.id), row]);
+          setRecipeRows(current => [...current, { key: ++nextRecipeKey.current, ingredientId: row.id, quantity: "", unit: row.unit }]);
+          setInlineIngredient(false); setCostMode("auto"); setError("");
+        }} />}
         {recipeRows.length === 0 ? <div className="rounded-xl border border-dashed border-line px-4 py-5 text-center text-xs text-ink-muted">
-          {activeIngredients.length ? "Sin receta cargada. Podés agregar insumos ahora o dejar un costo base manual." : "Todavía no hay insumos activos. Cargalos en la pestaña Insumos y después definí la receta."}
+          {activeIngredients.length ? "Elegí los insumos de una unidad de producto. El sistema suma sus costos." : "Creá el primer insumo acá mismo con el importe y cantidad del envase. Conservamos los datos del producto."}
         </div> : <div className="space-y-3">
           {recipeRows.map((row, index) => {
             const selected = ingredientMap.get(row.ingredientId);
@@ -322,11 +341,11 @@ function ProductForm({ product, ingredients, pending, canEdit, saveError, onCanc
         </div>}
       </div>}
 
-      <p className="text-xs text-ink-muted">{hasRecipe ? "Revisá los insumos y cantidades en Composición para recalcular el costo. Desde acá editás el precio y los datos del producto." : inlineRecipe ? "El costo base deja de ser manual porque se calcula desde la receta que cargaste." : "Si el producto no lleva receta, cargá un costo base manual. Podés agregar una composición después."}</p>
+      <p className="text-xs text-ink-muted">{hasRecipe ? "Revisá los insumos y cantidades en Composición para recalcular el costo. Desde acá editás el precio y los datos del producto." : inlineRecipe ? "El costo base deja de ser manual porque se calcula desde la receta que cargaste." : "El costo se calcula con la cantidad usada de cada insumo. Sin esos datos no se muestra un costo cero ni un margen inventado."}</p>
       <label className="flex items-center justify-between gap-3 rounded-xl border border-line bg-bg-subtle/50 px-4 py-3"><div><div className="text-sm font-medium text-ink">Producto activo</div><div className="text-xs text-ink-muted">Los inactivos se conservan sin contarlos como oferta activa.</div></div><input type="checkbox" checked={form.active} onChange={(event) => setForm({ ...form, active: event.target.checked })} className="h-4 w-4" /></label>
     </fieldset>
     {(error || saveError) && <div role="alert" className="rounded-lg border border-danger-500/30 bg-danger-500/[0.06] px-3 py-2 text-xs text-danger-300">{error || saveError}</div>}
-    <div className="flex justify-end gap-2 border-t border-line pt-4"><Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>Cancelar</Button><Button type="submit" variant="primary" disabled={pending || !canEdit}>{pending && <Loader2 className="h-4 w-4 animate-spin" />}{pending ? "Guardando…" : product ? "Guardar cambios" : "Crear producto"}</Button></div>
+    <div className="flex justify-end gap-2 border-t border-line pt-4"><Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>Cancelar</Button><Button type="submit" variant="primary" disabled={pending || !canEdit || inlineIngredient}>{pending && <Loader2 className="h-4 w-4 animate-spin" />}{pending ? "Guardando…" : product ? "Guardar cambios" : "Crear producto"}</Button></div>
   </form>;
 }
 function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {

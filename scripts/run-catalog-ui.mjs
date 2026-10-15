@@ -17,10 +17,11 @@ execFileSync(process.execPath,[path.join(root,'node_modules/tailwindcss/lib/cli.
 const catalog=`
 const state=window.qa={canEdit:true,delay:0,holdRecipe:false,releaseRecipe:null,recipeCalls:0,ingredientCalls:0,conflict:false,productCalls:0,lastProduct:null,createdProducts:[]};
 const ingredients=[{id:'ing',name:'Harina',unit:'kg',unitCost:1200,active:true,supplierId:null,stock:[{branchId:'branch',branchName:'Central',current:20,minimum:5}]}];
+state.emptyIngredients=()=>ingredients.splice(0);state.restoreFlour=()=>ingredients.unshift({id:'ing',name:'Harina',unit:'kg',unitCost:1200,active:true,supplierId:null,stock:[]});
 export const getCatalogDataAction=async()=>({ok:true,data:{ingredients,suppliers:[],branches:[{id:'branch',name:'Central'}],canEdit:state.canEdit}});
 export const getRecipeAction=async(productId)=>({ok:true,data:{productId,recipeId:'rec',updatedAt:'2026-10-09T00:00:00Z',items:[{ingredientId:'ing',quantity:250,unit:'g',name:'Harina'}]}});
 export const saveRecipeAction=async(productId,input)=>{state.recipeCalls++;state.lastRecipe=input;if(state.holdRecipe)await new Promise(r=>{state.releaseRecipe=r});await new Promise(r=>setTimeout(r,state.delay));return state.conflict?{ok:false,error:'La información cambió mientras editabas. Volvé a cargarla antes de guardar.'}:{ok:true,persisted:true,cost:300};};
-export const saveIngredientAction=async(id,input)=>{state.ingredientCalls++;state.lastIngredient=input;await new Promise(r=>setTimeout(r,state.delay));return {ok:true,persisted:true,id:id||'new'};};
+export const saveIngredientAction=async(id,input)=>{state.ingredientCalls++;state.lastIngredient=input;await new Promise(r=>setTimeout(r,state.delay));if(!id)ingredients.push({id:'new-'+state.ingredientCalls,...input,stock:[]});return {ok:true,persisted:true,id:id||'new-'+state.ingredientCalls};};
 `;
 const products=`export const getProductsPageDataAction=async()=>({ok:true,data:[{id:'prod',name:'Pan casero',category:'Panadería',price:1500,cost:300,active:true,recipeId:'rec',ingredientCount:1},...window.qa.createdProducts]});export const createProductAction=async(input)=>{window.qa.productCalls++;window.qa.lastProduct=input;const row={...input,id:'created-'+window.qa.productCalls,recipeId:input.recipeItems?.length?'recipe-created':null,ingredientCount:input.recipeItems?.length??0};window.qa.createdProducts.push(row);return {ok:true,persisted:true,productId:row.id};};export const updateProductAction=async()=>({ok:true,persisted:true,productId:'prod'});`;
 const bundle=await build({metafile:true,stdin:{contents:`import React from 'react';import {createRoot} from 'react-dom/client';import Page from '${root}/app/productos/database-products-page.tsx';import {ToastProvider} from '${root}/components/ui/toast.tsx';createRoot(document.getElementById('root')).render(<ToastProvider><Page/></ToastProvider>);`,loader:'tsx',resolveDir:root},outfile:out+'/app.js',bundle:true,platform:'browser',jsx:'automatic',nodePaths:[root+'/node_modules'],tsconfig:root+'/tsconfig.json',plugins:[{name:'test-actions',setup(b){b.onResolve({filter:/^@\/app\/actions\/(catalog|products-page)$/},args=>({path:args.path,namespace:'qa'}));b.onResolve({filter:/^next\/link$/},()=>({path:'next/link',namespace:'qa'}));b.onLoad({filter:/.*/,namespace:'qa'},args=>({contents:args.path.endsWith('/catalog')?catalog:args.path.endsWith('/products-page')?products:`import React from 'react';export default function Link({children,...props}){return React.createElement('a',props,children)}`,loader:'jsx',resolveDir:root}));}}]});
@@ -47,6 +48,30 @@ try{
  await check('conflict retains draft and offers explicit reload',async()=>{await page.evaluate(()=>{window.qa.delay=0;window.qa.conflict=true});await page.getByRole('button',{name:'Composición',exact:true}).click();await page.getByRole('button',{name:'Guardar composición'}).click();await page.getByRole('button',{name:'Descartar cambios y recargar'}).waitFor();await page.getByRole('button',{name:'Descartar cambios y recargar'}).click();await page.getByRole('button',{name:'Guardar composición'}).waitFor();await page.getByRole('button',{name:'Cancelar',exact:true}).click();await page.locator('aside').waitFor({state:'detached'});});
  await check('ingredient editor sets minimum without changing current stock',async()=>{await page.getByRole('tab',{name:'Insumos',exact:true}).click();await page.getByRole('button',{name:'Editar',exact:true}).click();await page.getByLabel('Stock mínimo en Central').fill('8');await page.getByRole('button',{name:'Guardar insumo',exact:true}).click();await page.locator('aside').waitFor({state:'detached'});const s=await page.evaluate(()=>window.qa.lastIngredient);if(s.minimums[0].minimum!==8||'current'in s)throw Error('stock payload invalid');});
  await check('new ingredient has no invented base cost',async()=>{await page.getByRole('button',{name:'Nuevo insumo',exact:true}).click();if(await page.getByLabel(/Costo por unidad/).inputValue()!=='')throw Error('cost not empty');await page.getByRole('button',{name:'Cancelar',exact:true}).click();});
+ await check('inline ingredient calculates pack cost and preserves the product draft',async()=>{
+   await page.evaluate(()=>window.qa.emptyIngredients());
+   await page.getByRole('tab',{name:'Productos',exact:true}).click();
+   await page.getByRole('button',{name:'Nuevo producto',exact:true}).click();
+   const drawer=page.locator('aside');
+   await drawer.getByLabel('Nombre',{exact:false}).fill('Hamburguesa de prueba');
+   await drawer.getByLabel('Categoría',{exact:false}).fill('Hamburguesas');
+   await drawer.getByLabel(/Precio \(ARS\)/).fill('20000');
+   if(await drawer.getByLabel('Cómo obtener el costo').inputValue()!=='auto')throw Error('not automatic by default');
+   if(await drawer.getByLabel('Costo base (ARS) *',{exact:true}).count())throw Error('base cost required');
+   await drawer.getByRole('button',{name:'Agregar insumo',exact:true}).click();
+   await drawer.getByLabel('Nombre del insumo',{exact:true}).fill('Pan pack');
+   await drawer.getByLabel('Cantidad que contiene',{exact:true}).fill('24');
+   await drawer.getByLabel('Importe total del envase (ARS)',{exact:true}).fill('12000');
+   await drawer.getByRole('button',{name:'Guardar y usar en receta',exact:true}).click();
+   await drawer.getByLabel('Cantidad',{exact:true}).fill('1');
+   if(!(await drawer.getByLabel('Costo calculado (ARS)',{exact:true}).textContent()).includes('500'))throw Error('pack cost not used');
+   if(await drawer.getByLabel('Nombre *',{exact:true}).inputValue()!=='Hamburguesa de prueba')throw Error('product draft lost');
+   await drawer.getByRole('button',{name:'Crear producto',exact:true}).click();
+   await drawer.waitFor({state:'detached'});
+   const payload=await page.evaluate(()=>window.qa.lastProduct);
+   if(payload.cost!==500||payload.recipeItems.length!==1)throw Error('invalid derived product cost');
+   await page.evaluate(()=>window.qa.restoreFlour());
+ });
  await check('new product drawer includes recipe and sends ingredients with calculated cost',async()=>{
    await page.getByRole('tab',{name:'Productos',exact:true}).click();
    await page.getByRole('button',{name:'Nuevo producto',exact:true}).click();
@@ -57,7 +82,7 @@ try{
    await page.getByRole('button',{name:'Agregar insumo',exact:true}).click();
    await page.getByLabel('Cantidad',{exact:true}).fill('250');
    await page.locator('aside select').last().selectOption('g');
-   if(await page.getByLabel(/Costo calculado/).inputValue()!=='300')throw Error('recipe cost not calculated');
+   if(!(await page.getByLabel('Costo calculado (ARS)',{exact:true}).textContent()).includes('300'))throw Error('recipe cost not calculated');
    await page.getByText(/^80(?:,0)?%$/).last().waitFor();
    await page.getByRole('button',{name:'Crear producto',exact:true}).click();
    await page.locator('aside').waitFor({state:'detached'});
