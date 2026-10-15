@@ -18,7 +18,7 @@ const migrations = join(root, "supabase", "migrations");
 const native = process.argv.includes("--native-docker") || process.argv.includes("--native");
 const db = native ? await nativeDatabase({ docker: process.argv.includes("--native-docker") }) : new PGlite({ extensions: { pgcrypto, pg_trgm } });
 const suite = process.argv.slice(2).find((arg) => !arg.startsWith("--")) ?? "catalog";
-if (!["catalog", "stock-ledger"].includes(suite)) throw new Error("Unknown offline SQL suite");
+if (!["catalog", "stock-ledger", "invitation-history"].includes(suite)) throw new Error("Unknown offline SQL suite");
 let stage = "managed Supabase scaffolding";
 
 try {
