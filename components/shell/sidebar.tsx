@@ -48,6 +48,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: "/", label: "Dashboard", icon: LayoutDashboard, module: "dashboard" },
       { href: "/inbox", label: "Inbox IA", icon: Inbox, badge: "3", accent: "ai", module: "inbox_ai" },
+      { href: "/asistente", label: "Asistente IA", icon: Sparkles, accent: "ai", systemAlwaysVisible: true },
       { href: "/reportes", label: "Reportes IA", icon: Sparkles, accent: "ai", module: "reports_ai" },
       { href: "/marketing", label: "Marketing IA", icon: Megaphone, badge: "Nuevo", accent: "ai", module: "marketing_ai" },
     ],
