@@ -240,19 +240,24 @@ export async function revokeInvitationAction(invitationId: string): Promise<Resu
     refresh();
     return { ok: true, persisted: false };
   }
-
   const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "connection_unavailable" };
-  const rpc = await (supabase as any).rpc("revoke_user_invitation", {
-    p_business_id: ctx.businessId,
-    p_invitation_id: invitationId,
-  });
-  if (rpc.error) {
-    console.error("[team] revoke invitation failed", rpc.error.message);
+  const db = supabase as any;
+
+  const { data, error } = await db
+    .from("user_invitations")
+    .update({ status: "revoked" })
+    .eq("id", invitationId)
+    .eq("business_id", ctx.businessId)
+    .eq("status", "pending")
+    .select("id,email")
+    .maybeSingle();
+
+  if (error) {
+    console.error("[team] revoke invitation failed", error.message);
     return { ok: false, persisted: false, error: "revoke_failed" };
   }
-  const result = rpc.data as { ok: true; invitation_id: string; email: string } | { ok: false; error: string } | null;
-  if (!result?.ok) return { ok: false, persisted: false, error: result?.error ?? "revoke_failed" };
+  if (!data) return { ok: false, persisted: false, error: "not_found" };
 
   await logActivity({
     businessId: ctx.businessId!,
@@ -260,10 +265,10 @@ export async function revokeInvitationAction(invitationId: string): Promise<Resu
     actorRole: ctx.role,
     action: "team.invitation.revoked",
     targetType: "user_invitations",
-    targetId: result.invitation_id,
-    summary: `Invitación revocada para ${result.email}.`,
+    targetId: data.id,
+    summary: `Invitación revocada para ${data.email ?? "usuario invitado"}.`,
   });
 
   refresh();
-  return { ok: true, persisted: true, id: result.invitation_id };
+  return { ok: true, persisted: true, id: data.id };
 }
