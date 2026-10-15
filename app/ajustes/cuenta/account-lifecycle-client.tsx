@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, Building2, UserRoundX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/ajustes/setting-row";
@@ -10,6 +11,7 @@ import { useToast } from "@/components/ui/toast";
 
 export default function AccountLifecycleClient({businessName,isOwner,email}:{businessName:string|null;isOwner:boolean;email:string|null}) {
   const {toast}=useToast();
+  const router=useRouter();
   const [businessConfirm,setBusinessConfirm]=useState("");
   const [accountConfirm,setAccountConfirm]=useState("");
   const [pending,startTransition]=useTransition();
@@ -21,7 +23,8 @@ export default function AccountLifecycleClient({businessName,isOwner,email}:{bus
       const result=await deleteCurrentBusinessAction(businessConfirm);
       if(result.ok){
         toast({tone:"success",title:"Negocio eliminado",description:"Tu cuenta sigue activa. Ahora podés aceptar una invitación a otro negocio."});
-        window.location.href="/onboarding?business_deleted=1";
+        router.push("/onboarding?business_deleted=1");
+        router.refresh();
       } else {
         const messages:Record<string,string>={
           owner_required:"Sólo el owner puede eliminar el negocio.",
@@ -41,7 +44,8 @@ export default function AccountLifecycleClient({businessName,isOwner,email}:{bus
     startTransition(async()=>{
       const result=await deleteMyAccountAction(accountConfirm);
       if(result.ok){
-        window.location.href="/login?account_deleted=1";
+        router.push("/login?account_deleted=1");
+        router.refresh();
       } else {
         const messages:Record<string,string>={
           sole_owner_business:"Primero eliminá ese negocio o agregá otro owner. No podemos dejar un negocio sin propietario.",
