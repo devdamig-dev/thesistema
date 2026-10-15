@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isDatabaseMode } from "@/lib/env";
 import type { Role } from "@/lib/permissions";
 import { logActivity } from "@/lib/data/activity";
@@ -240,19 +241,30 @@ export async function revokeInvitationAction(invitationId: string): Promise<Resu
     refresh();
     return { ok: true, persisted: false };
   }
-  const supabase = await createSupabaseServerClient();
-  if (!supabase) return { ok: false, persisted: false, error: "connection_unavailable" };
-  const db = supabase as any;
-  const { data, error } = await db
-    .from("user_invitations")
-    .update({ status: "revoked" })
-    .eq("id", invitationId)
-    .eq("business_id", ctx.businessId)
-    .eq("status", "pending")
-    .select("id")
-    .maybeSingle();
-  if (error) return { ok: false, persisted: false, error: error.message };
-  if (!data) return { ok: false, persisted: false, error: "not_found" };
+
+  const admin = createSupabaseAdminClient() as any;
+  const rpc = await admin.rpc("revoke_user_invitation", {
+    p_business_id: ctx.businessId,
+    p_invitation_id: invitationId,
+    p_actor_id: ctx.userId,
+  });
+  if (rpc.error) {
+    console.error("[team] revoke invitation failed", rpc.error.message);
+    return { ok: false, persisted: false, error: "revoke_failed" };
+  }
+  const result = rpc.data as { ok: true; invitation_id: string; email: string } | { ok: false; error: string } | null;
+  if (!result?.ok) return { ok: false, persisted: false, error: result?.error ?? "revoke_failed" };
+
+  await logActivity({
+    businessId: ctx.businessId!,
+    actorId: ctx.userId,
+    actorRole: ctx.role,
+    action: "team.invitation.revoked",
+    targetType: "user_invitations",
+    targetId: result.invitation_id,
+    summary: `Invitación revocada para ${result.email}.`,
+  });
+
   refresh();
-  return { ok: true, persisted: true };
+  return { ok: true, persisted: true, id: result.invitation_id };
 }
