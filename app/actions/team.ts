@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { createSupabaseAdminClient } from "../../lib/supabase/admin";
 import { isDatabaseMode } from "@/lib/env";
 import type { Role } from "@/lib/permissions";
 import { logActivity } from "@/lib/data/activity";
@@ -242,11 +241,11 @@ export async function revokeInvitationAction(invitationId: string): Promise<Resu
     return { ok: true, persisted: false };
   }
 
-  const admin = createSupabaseAdminClient() as any;
-  const rpc = await admin.rpc("revoke_user_invitation", {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { ok: false, persisted: false, error: "connection_unavailable" };
+  const rpc = await (supabase as any).rpc("revoke_user_invitation", {
     p_business_id: ctx.businessId,
     p_invitation_id: invitationId,
-    p_actor_id: ctx.userId,
   });
   if (rpc.error) {
     console.error("[team] revoke invitation failed", rpc.error.message);
