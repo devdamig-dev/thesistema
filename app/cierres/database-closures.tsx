@@ -1,5 +1,6 @@
 "use client";
 import { cloneElement, isValidElement, useCallback, useEffect, useRef, useState, type FormEvent, type ReactElement, type ReactNode } from "react";
+import { ClosureTotalsEditor } from "./closure-totals-editor";
 import { Plus, RefreshCw } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ type Draft = Omit<SaveClosure, "requestId" | "businessId" | "userId">;
 export default function DatabaseClosures() {
   const [workspace, setWorkspace] = useState<ClosureWorkspace | null>(null);
   const [loading, setLoading] = useState(true); const [loadError, setLoadError] = useState("");
+  const [calculationNote, setCalculationNote] = useState("");
   const [draft, setDraft] = useState<Draft | null>(null); const [archive, setArchive] = useState<ClosureRecord | null>(null); const [reason, setReason] = useState("");
   const [detail, setDetail] = useState<ClosureRecord | null>(null); const [history, setHistory] = useState<ClosureHistory[]>([]); const [historyError, setHistoryError] = useState(""); const [historyLoading, setHistoryLoading] = useState(false);
   const [busy, setBusy] = useState(false); const lock = useRef(false);
@@ -46,6 +48,7 @@ export default function DatabaseClosures() {
   const canStart = !!workspace?.canManage && !loading && !busy && !pending && !storageError;
   function close() { if (lock.current) return; setDraft(null); setArchive(null); setOperationError(""); }
   function edit(row?: ClosureRecord) {
+    setCalculationNote("");
     if (!workspace || !canStart || row?.archived_at) return;
     setArchive(null); setOperationError(""); setNotice("");
     setDraft(row ? { id: row.id, expectedVersion: row.version, branchId: row.branch_id, closureDate: row.closure_date, grossTotal: String(row.gross_total), netTotal: String(row.net_total), note: row.manual_note ?? "", reason: "" } : { id: null, expectedVersion: null, branchId: workspace.branches.length === 1 ? workspace.branches[0].id : "", closureDate: "", grossTotal: "", netTotal: "", note: "", reason: null });
@@ -67,7 +70,7 @@ export default function DatabaseClosures() {
   }
   function save(event: FormEvent) {
     event.preventDefault(); if (!workspace || !draft || lock.current || pendingRef.current) return;
-    try { void execute(parseClosureOperation("save", { ...draft, requestId: crypto.randomUUID(), businessId: workspace.businessId, userId: workspace.userId })); }
+    try { void execute(parseClosureOperation("save", { ...draft, note: [draft.note, calculationNote].filter(Boolean).join("\n\n"), requestId: crypto.randomUUID(), businessId: workspace.businessId, userId: workspace.userId })); }
     catch (error) { setOperationError(error instanceof Error ? error.message : "Datos inválidos."); }
   }
   const filtered = (workspace?.closures ?? []).filter(row => (!branch || row.branch_id === branch) && (status === "all" || (status === "archived") === !!row.archived_at));
@@ -88,7 +91,7 @@ export default function DatabaseClosures() {
       {draft && workspace && <form className="space-y-4 p-5" onSubmit={save} aria-busy={busy}><fieldset disabled={busy || !!pending || !!storageError || !workspace.canManage} className="space-y-4">
         <Field label="Sucursal"><select className={fieldClass} value={draft.branchId ?? ""} required={!draft.id} disabled={!!draft.id} onChange={e => setDraft({ ...draft, branchId: e.target.value })}><option value="">{draft.id ? "Sucursal histórica no informada" : "Elegir sucursal"}</option>{workspace.branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
         <Field label="Fecha del cierre"><input className={fieldClass} type="date" required value={draft.closureDate} onChange={e => setDraft({ ...draft, closureDate: e.target.value })} /></Field>
-        <div className="grid grid-cols-2 gap-3"><Field label="Total bruto"><input className={fieldClass} inputMode="decimal" required value={draft.grossTotal} onChange={e => setDraft({ ...draft, grossTotal: e.target.value.replace(",", ".") })} /></Field><Field label="Total neto"><input className={fieldClass} inputMode="decimal" required value={draft.netTotal} onChange={e => setDraft({ ...draft, netTotal: e.target.value.replace(",", ".") })} /></Field></div>
+        <ClosureTotalsEditor key={draft.id ?? "new"} gross={draft.grossTotal} net={draft.netTotal} editing={Boolean(draft.id)} onChange={(grossTotal, netTotal, note) => { setDraft(current => current ? { ...current, grossTotal, netTotal } : current); setCalculationNote(note); }} />
         <Field label="Notas del cierre"><textarea className={fieldClass} rows={4} maxLength={4000} value={draft.note} onChange={e => setDraft({ ...draft, note: e.target.value })} /></Field>
         {draft.id && <Field label="Motivo de corrección"><textarea className={fieldClass} rows={3} required maxLength={1000} value={draft.reason ?? ""} onChange={e => setDraft({ ...draft, reason: e.target.value })} /></Field>}
         <p className="text-xs text-ink-muted">Moneda no informada. Registrar este resumen no imputa ni duplica operaciones contables.</p>
