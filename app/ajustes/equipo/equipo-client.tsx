@@ -189,7 +189,12 @@ export default function EquipoClient({
         toast({ tone: "neutral", title: "Invitación revocada" });
         router.refresh();
       } else {
-        toast({ tone: "warn", title: "Error", description: res.error });
+        const messages: Record<string, string> = {
+          revoke_failed: "No pudimos revocar la invitación. Reintentá.",
+          not_found: "La invitación ya no está pendiente o pertenece a otro negocio.",
+          forbidden: "No tenés permisos para revocar invitaciones.",
+        };
+        toast({ tone: "warn", title: "No pudimos revocar", description: messages[res.error] ?? res.error });
       }
     });
   }

@@ -7,6 +7,7 @@ import {
   MessageSquareText,
   Sparkles,
   Users,
+  UserRoundCog,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { business, env } from "@/lib/data";
@@ -49,6 +50,13 @@ const CARDS = [
     title: "Equipo y permisos",
     detail: "Usuarios, roles, accesos del contador y notificaciones.",
     chip: "6 usuarios",
+  },
+  {
+    href: "/ajustes/cuenta",
+    icon: UserRoundCog,
+    title: "Cuenta y acceso",
+    detail: "Eliminar un negocio duplicado, gestionar tu cuenta y cambiar de pertenencia sin perder el usuario.",
+    chip: "Seguridad",
   },
 ];
 
