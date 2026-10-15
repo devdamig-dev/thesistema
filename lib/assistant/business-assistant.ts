@@ -203,10 +203,10 @@ async function purchaseSuggestion(db: any, businessId: string, branchIds: string
   ]);
   if(recipeItemsRes.error||ingredientsRes.error||stockRes.error) throw new Error("inventory_read_failed");
 
-  const ingredientMap=new Map((ingredientsRes.data??[]).map((i:any)=>[i.id,i]));
-  const recipeProduct=new Map(recipes.map((r:any)=>[r.id,r.product_id]));
+  const ingredientMap=new Map<string, any>((ingredientsRes.data??[]).map((i:any)=>[String(i.id),i] as [string,any]));
+  const recipeProduct=new Map<string, string>(recipes.map((r:any)=>[String(r.id),String(r.product_id)] as [string,string]));
   const weeklyNeed=new Map<string,number>();
-  for(const item of recipeItemsRes.data??[]){
+  for(const item of (recipeItemsRes.data??[]) as any[]){
     const ingredient=ingredientMap.get(item.ingredient_id);
     const productId=recipeProduct.get(item.recipe_id);
     const sold=productId ? productQty.get(productId)??0 : 0;
@@ -218,7 +218,7 @@ async function purchaseSuggestion(db: any, businessId: string, branchIds: string
   }
 
   const stockByIngredient=new Map<string,{current:number;min:number}>();
-  for(const row of stockRes.data??[]){
+  for(const row of (stockRes.data??[]) as any[]){
     const current=stockByIngredient.get(row.ingredient_id)??{current:0,min:0};
     current.current+=Number(row.current??0); current.min+=Number(row.min??0);
     stockByIngredient.set(row.ingredient_id,current);
