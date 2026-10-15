@@ -75,7 +75,7 @@ export default function AccountLifecycleClient({businessName,isOwner,email}:{bus
         <label className="block text-xs text-ink-muted">Escribí <strong className="text-ink">{businessName}</strong> para confirmar.
           <input value={businessConfirm} onChange={(e)=>setBusinessConfirm(e.target.value)} className="mt-2 w-full rounded-lg border border-line bg-bg-subtle px-3 py-2 text-sm text-ink outline-none focus:border-danger-500/50"/>
         </label>
-        <Button variant="danger" disabled={pending||businessConfirm.trim()!==businessName} onClick={deleteBusiness}><Building2 className="h-4 w-4"/> Eliminar negocio</Button>
+        <Button variant="outline" className="border-danger-500/40 text-danger-300 hover:bg-danger-500/10" disabled={pending||businessConfirm.trim()!==businessName} onClick={deleteBusiness}><Building2 className="h-4 w-4"/> Eliminar negocio</Button>
       </div>}
     </SettingsCard>
 
@@ -84,7 +84,7 @@ export default function AccountLifecycleClient({businessName,isOwner,email}:{bus
         <label className="block text-xs text-ink-muted">Escribí <strong className="text-ink">ELIMINAR MI CUENTA</strong> para confirmar.
           <input value={accountConfirm} onChange={(e)=>setAccountConfirm(e.target.value)} className="mt-2 w-full rounded-lg border border-line bg-bg-subtle px-3 py-2 text-sm text-ink outline-none focus:border-danger-500/50"/>
         </label>
-        <Button variant="danger" disabled={pending||accountConfirm.trim()!=="ELIMINAR MI CUENTA"} onClick={deleteAccount}><UserRoundX className="h-4 w-4"/> Eliminar mi cuenta</Button>
+        <Button variant="outline" className="border-danger-500/40 text-danger-300 hover:bg-danger-500/10" disabled={pending||accountConfirm.trim()!=="ELIMINAR MI CUENTA"} onClick={deleteAccount}><UserRoundX className="h-4 w-4"/> Eliminar mi cuenta</Button>
       </div>
     </SettingsCard>
   </div>;
