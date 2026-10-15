@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { createSupabaseAdminClient } from "../../lib/supabase/admin";
 import { isDatabaseMode } from "@/lib/env";
 import type { Role } from "@/lib/permissions";
 import { logActivity } from "@/lib/data/activity";
