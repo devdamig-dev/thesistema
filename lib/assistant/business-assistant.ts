@@ -196,10 +196,19 @@ async function purchaseSuggestion(db: any, businessId: string, branchIds: string
   const recipeIds=recipes.map((r:any)=>r.id);
   if(!recipeIds.length) return { period:"últimos 7 días",recommendations:[],note:"Los productos vendidos todavía no tienen recetas." };
 
+  const branchesRes=await db.from("branches").select("id").eq("business_id",businessId).limit(500);
+  if(branchesRes.error) throw new Error("branches_read_failed");
+  const businessBranchIds=(branchesRes.data??[]).map((row:any)=>String(row.id));
+  const allowedStockBranches=branchIds===null
+    ? businessBranchIds
+    : branchIds.filter((id)=>businessBranchIds.includes(id));
+
   const [recipeItemsRes,ingredientsRes,stockRes]=await Promise.all([
     db.from("recipe_items").select("recipe_id,ingredient_id,quantity,unit").in("recipe_id",recipeIds).not("ingredient_id","is",null).limit(10000),
     db.from("ingredients").select("id,name,unit,avg_unit_cost,active").eq("business_id",businessId).eq("active",true).limit(2000),
-    (()=>{ let q=db.from("stock_items").select("ingredient_id,current,min,branch_id"); q=applyBranchScope(q,"branch_id",branchIds); return q ? q.limit(5000) : Promise.resolve({data:[],error:null}); })(),
+    allowedStockBranches.length
+      ? db.from("stock_items").select("ingredient_id,current,min,branch_id").in("branch_id",allowedStockBranches).limit(5000)
+      : Promise.resolve({data:[],error:null}),
   ]);
   if(recipeItemsRes.error||ingredientsRes.error||stockRes.error) throw new Error("inventory_read_failed");
 
