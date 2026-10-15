@@ -51,5 +51,12 @@ export async function deleteMyAccountAction(confirmation: string) {
     return { ok: false as const, error: "delete_failed" };
   }
 
+  // Clear the browser session as well. A deleted auth row must not leave a
+  // still-present access-token cookie that makes the UI look authenticated.
+  const signedOut = await supabase.auth.signOut();
+  if (signedOut.error) {
+    console.error("[account] local session cleanup failed", signedOut.error.message);
+  }
+
   return { ok: true as const };
 }
