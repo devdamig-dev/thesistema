@@ -6,7 +6,7 @@ import type { GroupMember } from "../lib/whatsapp/groups";
 
 const actor = { userId: "owner-user", businessId: "business-a", role: "owner" };
 const group = "Y2FwaV9ncm91cDox";
-let ready = true, failCreate = false, owned = true, createCalls = 0, approveCalls = 0, rpcCalls = 0;
+let ready = true, failReadiness = false, failCreate = false, owned = true, createCalls = 0, approveCalls = 0, rpcCalls = 0;
 let participants: string[] = [];
 let members: GroupMember[] = [{ memberId: "member-a", phone: "5491111111111", role: "owner", branchIds: null }];
 const journal = new Map<string, { subject: string; status: string }>();
@@ -34,7 +34,7 @@ const db = {
   async rpc(_name: string, args: Record<string, unknown>) { rpcCalls++; assert.equal(args.p_business_id, actor.businessId); assert.equal(args.p_actor_id, actor.userId); return { error: null, data: "conversation-a" }; },
 };
 const graph = {
-  async readiness() { return { ready, code: ready ? "ready" : "business_app", message: "Requiere Cloud API y OBA" }; },
+  async readiness() { if (failReadiness) throw new ConnectionError("group_meta_unavailable", "Meta no respondió", 502); return { ready, code: ready ? "ready" : "business_app", message: "Requiere Cloud API y OBA" }; },
   async list() { return [{ id: group, subject: "Local" }]; },
   async assertOwned(id: string) { if (!owned || id !== group) throw new ConnectionError("group_not_owned", "Grupo de otra cuenta", 403); },
   async info() { return { id: group, subject: "Local", approvalRequired: true, suspended: false, participants }; },
@@ -49,7 +49,16 @@ loader._load = function(name: string, ...args: any[]) {
 };
 const { manageGroups } = require("../lib/whatsapp/groups-management");
 loader._load = original;
-function reset() { ready = owned = true; failCreate = false; createCalls = approveCalls = rpcCalls = 0; participants = []; journal.clear(); members = [{ memberId: "member-a", phone: "5491111111111", role: "owner", branchIds: null }]; }
+function reset() { ready = owned = true; failReadiness = failCreate = false; createCalls = approveCalls = rpcCalls = 0; participants = []; journal.clear(); members = [{ memberId: "member-a", phone: "5491111111111", role: "owner", branchIds: null }]; }
+
+test("a Meta outage still returns local group settings and allows a local pause", async () => {
+  reset(); failReadiness = true;
+  const result = await manageGroups(db, actor, { action: "list" });
+  assert.equal(result.ok, true); assert.equal(result.readiness.ready, false); assert.equal(result.readiness.code, "group_meta_unavailable");
+  assert.deepEqual(result.saved, []);
+  assert.equal((await manageGroups(db, actor, { action: "pause", conversationId: "conversation-a" })).ok, true);
+  assert.equal(rpcCalls, 1);
+});
 
 test("unavailable groups are blocked server-side before creation or authorization", async () => {
   reset(); ready = false;

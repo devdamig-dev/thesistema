@@ -53,6 +53,13 @@ test("creation requires approval and a lost response is never retried internally
   assert.equal(calls, 1);
 });
 
+test("server and transient creation errors remain uncertain instead of permitting a duplicate", async () => {
+  for (const [status, error] of [[500, { code: 999 }], [400, { code: 1 }], [400, { code: 999, is_transient: true }]] as const) {
+    const client = graph(() => json({ error }, status));
+    await assert.rejects(client.create("Local", ""), (value: any) => value.code === "group_result_unknown");
+  }
+});
+
 test("unknown or partial participants cannot be interpreted as an empty verified group", async () => {
   const value: Record<string, unknown> = { id, subject: "Local", suspended: false, join_approval_mode: "approval_required", participants: [{ wa_id: "5491111111111" }], total_participant_count: 1 };
   const client = graph(() => json(value));

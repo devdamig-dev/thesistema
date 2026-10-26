@@ -41,6 +41,10 @@ La conexión del proyecto admite una integración principal por negocio. Incorpo
 
 Ejecutar `npm test`, `npm run typecheck`, `npm run lint`, `npm run build` y `node scripts/run-catalog-sql.mjs whatsapp-groups`. Las pruebas SQL usan las migraciones reales en una base aislada y deshacen los fixtures.
 
+Validación de esta etapa: 583 pruebas de unidad/integración aprobadas; typecheck y lint aprobados; build aprobado con Next.js 16.4.3 y auditoría de dependencias de producción sin vulnerabilidades reportadas. La prueba del componente real en Chromium (1440 y 390 px) aprobó requisitos bloqueantes, selección y consentimiento explícitos, invitación, pausa, teléfono faltante y respuesta de creación incierta. Forma parte de Quality. Un fallo intermitente heredado en el fixture de ventas se corrigió normalizando los segundos cero de `datetime-local`; no cambia el producto.
+
+Entrega de código: [PR #151](https://github.com/devdamig-dev/thesistema/pull/151), rama `codex/whatsapp-official-groups`. Publicación pendiente: `apply_migration` de Supabase devolvió `Invalid or expired requestState` y luego un error interno. Las consultas posteriores confirmaron que las tablas, columnas y función de grupos aún no se aplicaron. El CLI no tiene una sesión de acceso configurada. No se fusiona ni publica esta versión hasta aplicar y verificar `20261026182111_whatsapp_official_groups.sql`; el adaptador de mensajes necesita esas columnas. El uso del panel de Supabase como alternativa al conector requiere autorización de esa vía antes de continuar.
+
 Antes de habilitarlo con personas reales: completar requisitos de Meta, crear un grupo, autorizar al menos dos integrantes, confirmar una operación por su autor, rechazar la confirmación de otro integrante, verificar pausa, revocación y un reintento del webhook. No enviar mensajes ni invitaciones de prueba a terceros sin una instrucción concreta.
 
 Referencias oficiales consultadas:
@@ -50,4 +54,4 @@ Referencias oficiales consultadas:
 - https://developers.facebook.com/documentation/business-messaging/whatsapp/groups/groups-messaging/
 - https://developers.facebook.com/documentation/business-messaging/whatsapp/official-business-accounts/
 
-Próximos pasos autorizados: terminar la validación técnica y publicar esta evolución con sus requisitos visibles; continuar el alta cuando se identifique el número destinado a grupos. Sugerencias nuevas: ninguna. La elección/migración del número y la solicitud OBA no se han ejecutado ni se dan por aprobadas por Meta. Core: work item no identificado de forma única; no registrado por este chat. Disponible para continuidad desde este documento y la rama `codex/whatsapp-official-groups`.
+Próximos pasos autorizados: aplicar y verificar la migración cuando esté disponible la vía de acceso, publicar el PR validado y verificar el panel en producción; continuar el alta cuando se identifique el número destinado a grupos. Sugerencias nuevas: ninguna. La elección/migración del número y la solicitud OBA no se han ejecutado ni se dan por aprobadas por Meta. Core: work item no identificado de forma única; no registrado por este chat. Disponible para otro ejecutor desde este documento y el PR #151; primer paso: resolver la vía de migración y comprobar su estado antes de cualquier reintento.

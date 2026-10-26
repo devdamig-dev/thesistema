@@ -13,13 +13,21 @@ export async function manageGroups(db: any, actor: ConnectionActor, input: Group
     if (paused.error || !paused.data) throw new ConnectionError("group_pause_failed", "No pudimos confirmar la pausa del grupo.", 503);
     return { ok: true, message: "Procesamiento del grupo pausado." };
   }
-  const { graph, phoneNumberId } = await groupConnection(db, actor.businessId);
-  const readiness = await graph.readiness();
   if (input.action === "list") {
     const saved = await db.from("whatsapp_authorized_conversations").select("id,provider_conversation_id,display_name,branch_id,enabled,group_phone_number_id,whatsapp_group_members(member_id)").eq("business_id", actor.businessId).eq("conversation_type", "group");
     if (saved.error) throw new ConnectionError("group_list_failed", "No pudimos leer los grupos configurados.", 503);
-    return { ok: true, readiness, groups: readiness.ready ? await graph.list() : [], saved: saved.data ?? [] };
+    try {
+      const { graph } = await groupConnection(db, actor.businessId);
+      const readiness = await graph.readiness();
+      return { ok: true, readiness, groups: readiness.ready ? await graph.list() : [], saved: saved.data ?? [] };
+    } catch (error) {
+      if (!(error instanceof ConnectionError)) throw error;
+      // Local pause remains available if Meta or the connection is unavailable.
+      return { ok: true, readiness: { ready: false, code: error.code, message: error.message, phone: "Número vinculado" }, groups: [], saved: saved.data ?? [] };
+    }
   }
+  const { graph, phoneNumberId } = await groupConnection(db, actor.businessId);
+  const readiness = await graph.readiness();
   if (!readiness.ready) throw new ConnectionError(readiness.code, readiness.message, 409);
   if (input.action === "create") {
     const reserved = await db.from("whatsapp_group_creation_requests").insert({ id: input.requestId, business_id: actor.businessId, actor_id: actor.userId, phone_number_id: phoneNumberId, subject: input.subject });

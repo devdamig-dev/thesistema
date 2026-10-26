@@ -15,7 +15,11 @@ export class WhatsAppGroupsGraph {
     } catch { throw new ConnectionError(body ? "group_result_unknown" : "group_meta_unavailable", body ? "Meta no confirmó el resultado. Actualizá la lista antes de repetir la operación." : "Meta no respondió. Volvé a comprobar el acceso a grupos.", 502); }
     const payload = record(await response.json().catch(() => null));
     if (!response.ok || payload.error) {
-      const code = record(payload.error).code;
+      const providerError = record(payload.error);
+      const code = providerError.code;
+      if (body && (response.status >= 500 || providerError.is_transient === true || code === 1 || code === 2)) {
+        throw new ConnectionError("group_result_unknown", "Meta no confirmó el resultado. Actualizá la lista antes de repetir la operación.", 502);
+      }
       throw new ConnectionError("group_meta_rejected", `Meta no autorizó esta operación de grupos${typeof code === "number" ? ` (código ${code})` : ""}. Revisá la habilitación del número y los permisos de la cuenta.`, 502);
     }
     return payload;
