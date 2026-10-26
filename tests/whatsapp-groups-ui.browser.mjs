@@ -64,8 +64,8 @@ try {
     await page.getByLabel('Elegí el grupo de trabajo').selectOption(groupId);
     const authorize = page.getByRole('button', { name: 'Autorizar grupo', exact: true });
     assert.equal(await authorize.isDisabled(), true);
-    await page.getByLabel('Ana', { exact: false }).check();
-    assert.equal(await page.getByLabel('Julián', { exact: false }).isDisabled(), true);
+    await page.getByRole('checkbox', { name: /^Ana / }).check();
+    assert.equal(await page.getByRole('checkbox', { name: /^Julián / }).isDisabled(), true);
     assert.equal(await authorize.isDisabled(), true);
     await page.getByLabel('Confirmo los integrantes, la sucursal y que las respuestas del asistente serán compartidas en este grupo.').check();
     await authorize.click(); await page.getByText('Autorizado', { exact: true }).waitFor();
