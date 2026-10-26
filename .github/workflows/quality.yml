@@ -29,6 +29,7 @@ jobs:
       - run: npm run lint
       - run: npm run test:db:catalog
       - run: npm run test:db:stock
+      - run: node scripts/run-catalog-sql.mjs whatsapp-groups
       - run: npm run test:customers:sql
       - run: npm run test:suppliers:sql
       - run: npm run test:debts:sql

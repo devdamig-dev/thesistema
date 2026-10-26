@@ -30,7 +30,7 @@ export const WHATSAPP_TOOLS: readonly ToolDefinition[] = [
 export function toolsForActor(actor: AgentActor): ToolDefinition[] {
   const permissions = new Set(permissionsFor(actor.role));
   const modules = new Set(actor.enabledModules);
-  return WHATSAPP_TOOLS.filter((tool) => modules.has(tool.module) && permissions.has(tool.permission));
+  return WHATSAPP_TOOLS.filter((tool) => modules.has(tool.module) && permissions.has(tool.permission) && (!actor.permissionLimit || actor.permissionLimit.includes(tool.permission)));
 }
 
 export function getTool(name: string): ToolDefinition | undefined {

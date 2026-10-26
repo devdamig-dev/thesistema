@@ -1,9 +1,11 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { array, record, metaId } from "./signup";
+import { groupId } from "./groups";
 
 export type MetaIncomingText = {
   messageId: string; accountId: string; phoneNumberId: string; senderPhone: string;
   senderName: string; text: string; sentAt: number;
+  groupId?: string;
 };
 export function validMetaSignature(raw: string, header: string | null, secret: string | undefined): boolean {
   if (!secret || !header?.startsWith("sha256=")) return false;
@@ -33,7 +35,8 @@ export function incomingMetaTexts(payload: unknown): MetaIncomingText[] {
       for (const messageRaw of array(value.messages)) {
         const message = record(messageRaw);
         const context = record(message.context);
-        if (message.type !== "text" || message.is_echo === true || message.echo === true || message.group_id || context.group_id) continue;
+        if (message.type !== "text" || message.is_echo === true || message.echo === true || context.group_id) continue;
+        if (message.group_id !== undefined && !groupId(message.group_id)) continue;
         const text = record(message.text).body;
         if (typeof text !== "string" || !text.trim() || text.length > 4096) continue;
         if (typeof message.id !== "string" || !message.id || message.id.length > 512 || typeof message.from !== "string" || !/^\d{8,15}$/.test(message.from)) continue;
@@ -44,7 +47,7 @@ export function incomingMetaTexts(payload: unknown): MetaIncomingText[] {
         seen.add(key);
         const contact = array(value.contacts).map(record).find(contact => contact.wa_id === message.from);
         const name = record(contact?.profile).name;
-        messages.push({ messageId: message.id, accountId: entry.id, phoneNumberId: metadata.phone_number_id, senderPhone: message.from, senderName: typeof name === "string" ? name.slice(0, 200) : "WhatsApp", text, sentAt });
+        messages.push({ messageId: message.id, accountId: entry.id, phoneNumberId: metadata.phone_number_id, senderPhone: message.from, senderName: typeof name === "string" ? name.slice(0, 200) : "WhatsApp", text, sentAt, ...(groupId(message.group_id) ? { groupId: message.group_id } : {}) });
       }
     }
   }

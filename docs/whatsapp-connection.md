@@ -44,7 +44,7 @@ El RPC `set_whatsapp_member_conversation` es server-only y audita el permiso en 
 
 ## Transporte seguro y límites explícitos
 
-El receptor resuelve el negocio por **cuenta + phone_number_id** de Meta, no por coincidencias de teléfono visible. Itera todos los mensajes de todos los cambios del webhook. Sólo los eventos nuevos de texto entrante en chats directos pueden llegar al agente. Estados de entrega, historial, `smb_app_state_sync`, `smb_message_echoes`, ecos salientes, grupos y medios no implementados reciben acuse sin convertirse en operaciones. Se descartan mensajes anteriores a la vinculación y timestamps futuros inválidos.
+El receptor resuelve el negocio por **cuenta + phone_number_id** de Meta, no por coincidencias de teléfono visible. Itera todos los mensajes de todos los cambios del webhook. Sólo los eventos nuevos de texto entrante en chats directos autorizados o grupos oficiales habilitados pueden llegar al agente. Estados de entrega, historial, `smb_app_state_sync`, `smb_message_echoes`, ecos salientes y medios no implementados reciben acuse sin convertirse en operaciones. Se descartan mensajes anteriores a la vinculación y timestamps futuros inválidos. Los grupos agregan controles por número, activación, integrantes y permisos compartidos; ver [Grupos oficiales](./whatsapp-groups.md).
 
 La deduplicación durable de Agent Core precede las operaciones y las copias de Inbox: reintentos no crean una segunda operación. Esto garantiza a lo sumo un intento de las acciones protegidas, no entrega exactamente-una-vez de las respuestas. Si Meta rechaza una respuesta se audita; no se reejecuta una acción sensible para reconstruirla. Una outbox durable de respuestas queda como incremento separado si las pruebas de transporte lo requieren.
 

@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
       const connectedAt = Date.parse(integration.connected_at);
       if (!Number.isFinite(connectedAt) || message.sentAt < connectedAt - 1000 || message.sentAt > Date.now() + 300000) { ignored += 1; continue; }
       if (integration.token_expires_at && Date.parse(integration.token_expires_at) <= Date.now()) throw new Error("integration_authorization_expired");
-      const input = { messageId: message.messageId, senderPhone: message.senderPhone, recipientPhone: integration.display_phone_number as string, senderName: message.senderName, text: message.text, provider: "meta" as const, providerConversationId: message.senderPhone, conversationType: "direct" as const };
+      const input = { messageId: message.messageId, senderPhone: message.senderPhone, recipientPhone: integration.display_phone_number as string, senderName: message.senderName, text: message.text, provider: "meta" as const, providerConversationId: message.groupId || message.senderPhone, conversationType: message.groupId ? "group" as const : "direct" as const, sentAt: message.sentAt };
       const conversation = await resolveAuthorizedConversation(db, input, integration.business_id);
       if (!conversation) { ignored += 1; continue; }
       const reply = await processWhatsAppAgentMessage(input);
@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
       const saved = await db.from("whatsapp_messages").insert({ business_id: integration.business_id, branch_id: conversation.branch_id, sender_name: message.senderName, sender_role: "Equipo", channel: "text", raw: message.text, preview: message.text.slice(0, 120), received_at: new Date(message.sentAt).toISOString() });
       if (saved.error) await logActivity({ businessId: integration.business_id, actorRole: "system", action: "whatsapp.message_log_failed", summary: "No se pudo guardar la copia del mensaje; la auditoría del agente conserva el resultado", data: { message_id: message.messageId } });
       if (reply.text.trim()) {
-        try { await sendMetaTextReply(integration.business_id, message.senderPhone, reply.text); }
+        try { await sendMetaTextReply(integration.business_id, message.groupId || message.senderPhone, message.groupId ? `${message.senderName}: ${reply.text}` : reply.text, message.groupId ? "group" : "individual"); }
         catch {
           await logActivity({ businessId: integration.business_id, actorRole: "system", action: "whatsapp.reply_failed", summary: "Meta no aceptó la respuesta. No se reejecutará la operación automáticamente", data: { message_id: message.messageId } });
         }

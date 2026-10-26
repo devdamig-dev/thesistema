@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { SectionHeader } from "@/components/ui/section-header";
 import { WhatsAppConnectButton } from "./connect-button";
 import { ConversationEditor, type MemberOption } from "./conversation-editor";
+import { GroupEditor } from "./group-editor";
 
 export default async function WhatsappSettingsLayout({ children }: { children: ReactNode }) {
   if (!isDatabaseMode()) return <>{children}</>;
@@ -39,7 +40,7 @@ export default async function WhatsappSettingsLayout({ children }: { children: R
   const configId = process.env.NEXT_PUBLIC_META_WHATSAPP_CONFIG_ID?.trim() || null;
   const businessAppConfigId = process.env.NEXT_PUBLIC_META_WHATSAPP_BUSINESS_APP_CONFIG_ID?.trim() || configId;
   const apiVersion = process.env.NEXT_PUBLIC_META_GRAPH_VERSION?.trim() || "v25.0";
-  const conversations = conversationsResult.data ?? [];
+  const conversations = (conversationsResult.data ?? []).filter((conversation: any) => conversation.conversation_type === "direct");
   const connectButton = <WhatsAppConnectButton appId={appId} configId={configId} businessAppConfigId={businessAppConfigId} apiVersion={apiVersion} />;
   return <div className="space-y-6">
     <SectionHeader eyebrow="Ajustes · WhatsApp" title="Tu WhatsApp, conectado a tu negocio" description="Autorizá tu cuenta en Meta, elegí el número y definí quiénes pueden operar por este canal." />
@@ -54,13 +55,14 @@ export default async function WhatsappSettingsLayout({ children }: { children: R
         <p className="text-sm text-ink-muted">{expired ? "La autorización de Meta venció. Volvé a autorizar el mismo número para recuperar la conexión." : "Elegí cómo usás WhatsApp. No necesitás copiar claves ni crear una aplicación de Meta para cada negocio."}</p>{connectButton}
       </div>}</CardContent>
     </Card>
+    <GroupEditor connected={connected} members={members} branches={branchesResult.data ?? []} />
     <Card>
-      <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Conversaciones autorizadas</CardTitle></CardHeader>
+      <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Chats directos autorizados</CardTitle></CardHeader>
       <CardContent className="space-y-5">
         <p className="text-sm text-ink-muted">Sólo se procesan chats directos que autorices y mensajes de personas activas del equipo. Autorizar un chat no amplía sus permisos sobre los módulos o las sucursales.</p>
         {conversations.length ? <div className="space-y-2">{conversations.map((conversation: any) => <div key={conversation.id} className="flex items-center justify-between gap-3 rounded-xl border border-line p-4"><div><p className="text-sm font-semibold text-ink">{conversation.display_name || "Conversación autorizada"}</p><p className="text-xs text-ink-muted">{conversation.conversation_type === "group" ? "Grupo · no compatible con esta conexión" : "Chat directo"} · {conversation.branches?.name || "Según permisos del equipo"}</p></div><Badge tone={conversation.enabled && conversation.conversation_type === "direct" ? "success" : "default"}>{conversation.conversation_type === "group" ? "No compatible" : conversation.enabled ? "Autorizada" : "Pausada"}</Badge></div>)}</div> : <p className="rounded-xl border border-dashed border-line p-4 text-sm text-ink-muted">Todavía no autorizaste ninguna conversación. El agente no operará sobre otros chats.</p>}
         <ConversationEditor connected={connected} members={members} branches={branchesResult.data ?? []} />
-        <p className="text-xs leading-relaxed text-ink-subtle">Esta conexión no importa grupos del celular ni convierte el historial sincronizado en órdenes nuevas. Por ahora el agente operativo recibe mensajes de texto.</p>
+        <p className="text-xs leading-relaxed text-ink-subtle">Los chats directos y los grupos oficiales habilitados procesan mensajes de texto nuevos. El historial sincronizado no se convierte en órdenes nuevas.</p>
       </CardContent>
     </Card>
     {children}

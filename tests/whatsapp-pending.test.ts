@@ -179,6 +179,7 @@ test("authorized conversations are resolved inside the actor business only", asy
     ...identityInput,
     provider: "meta",
     providerConversationId: "group-1",
+    conversationType: "group",
   }, "business-a");
   assert.equal(conversation?.id, "conversation-a");
   assert.equal(conversation?.business_id, "business-a");
