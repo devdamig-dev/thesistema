@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Check, ChevronDown, FileText, MessageCircle, Plus, Settings2, Sparkles, Users, WifiOff } from "lucide-react";
-import type { ChatMessage, ChatSnapshot } from "@/lib/chat/types";
+import type { ChatSnapshot } from "@/lib/chat/types";
+import { mergeMessages, mergeSnapshot } from "@/lib/chat/client-state";
 import { Composer } from "./composer";
 import { RoomEditor } from "./room-editor";
 import { MobileTools } from "./mobile-tools";
@@ -10,20 +11,21 @@ import { chatRequest } from "./api";
 
 const time = (date: string) => new Intl.DateTimeFormat("es-AR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Argentina/Buenos_Aires" }).format(new Date(date));
 const day = (date: string) => new Intl.DateTimeFormat("es-AR", { day: "numeric", month: "long", timeZone: "America/Argentina/Buenos_Aires" }).format(new Date(date));
-function mergeMessages(older: ChatMessage[], newer: ChatMessage[]) {
-  const map = new Map(older.map(message => [message.id, message]));
-  newer.forEach(message => map.set(message.id, message));
-  return [...map.values()].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
-}
 export function ChatClient({ initial }: { initial: ChatSnapshot }) {
   const [data, setData] = useState(initial), [selected, setSelected] = useState(initial.room?.id ?? "");
   const [error, setError] = useState(""), [loading, setLoading] = useState(false), [online, setOnline] = useState(true);
   const [editor, setEditor] = useState<"new" | "edit" | null>(null), [actionBusy, setActionBusy] = useState(false), [historyBusy, setHistoryBusy] = useState(false);
   const [clock, setClock] = useState(() => Date.now());
+  const [mobileHeight, setMobileHeight] = useState<number>();
   const [prefill, setPrefill] = useState<{ text: string; nonce: number }>();
   const selectedRef = useRef(selected), requestVersion = useRef(0), bottom = useRef<HTMLDivElement>(null), viewport = useRef<HTMLDivElement>(null), stick = useRef(true);
   const inFlight = useRef<{ room: string; version: number } | null>(null);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
+  useEffect(() => {
+    const resize = () => setMobileHeight(window.innerWidth < 768 ? Math.max(220, (window.visualViewport?.height ?? window.innerHeight) - 56) : undefined);
+    resize(); window.addEventListener("resize", resize); window.visualViewport?.addEventListener("resize", resize);
+    return () => { window.removeEventListener("resize", resize); window.visualViewport?.removeEventListener("resize", resize); };
+  }, []);
   const refresh = useCallback(async (roomId: string, quiet = false) => {
     if (quiet && inFlight.current?.room === roomId) return;
     const version = ++requestVersion.current;
@@ -37,7 +39,7 @@ export function ChatClient({ initial }: { initial: ChatSnapshot }) {
         if ([401, 403, 404].includes(response.status)) { setData(previous => ({ ...previous, room: undefined, messages: [], pendingId: null })); setSelected(""); }
         throw new Error(result.error || "No pudimos actualizar el chat.");
       }
-      setData(previous => ({ ...result.data, messages: previous.room?.id === roomId && previous.participants?.find(p => p.member_id === previous.me.id)?.joined_at === result.data.participants?.find((p: { member_id: string; joined_at: string }) => p.member_id === result.data.me.id)?.joined_at ? mergeMessages(previous.messages ?? [], result.data.messages ?? []) : result.data.messages }));
+      setData(previous => mergeSnapshot(previous, result.data));
       setError("");
     } catch (e) { if (version === requestVersion.current) setError(e instanceof Error ? e.message : "Se interrumpió la conexión. Reintentaremos al volver."); }
     finally { if (inFlight.current?.version === version) inFlight.current = null; if (version === requestVersion.current) setLoading(false); }
@@ -94,7 +96,7 @@ export function ChatClient({ initial }: { initial: ChatSnapshot }) {
   }
   const room = data.room?.id === selected ? data.room : undefined;
   const busyAi = !!room?.agent_busy_until && Date.parse(room.agent_busy_until) > clock;
-  return <section className="relative flex h-[calc(100dvh-56px)] min-h-0 overflow-hidden bg-bg" aria-label="Chat del equipo">
+  return <section style={mobileHeight ? { height: mobileHeight } : undefined} className="relative flex h-[calc(100dvh-56px)] min-h-0 overflow-hidden bg-bg" aria-label="Chat del equipo">
     <aside className={`${selected ? "hidden md:flex" : "flex"} w-full shrink-0 flex-col border-r border-line bg-bg-subtle/50 md:w-64 xl:w-72`}>
       <div className="border-b border-line p-4"><div className="flex items-center justify-between"><div><h1 className="text-lg font-semibold">Chat del equipo</h1><p className="mt-1 text-xs text-ink-muted">Tu negocio, en conversación</p></div>{data.me.admin ? <button aria-label="Crear grupo" onClick={() => setEditor("new")} className="rounded-xl bg-brand-500/15 p-2 text-brand-300 hover:bg-brand-500/25"><Plus className="h-5 w-5" /></button> : null}</div></div>
       <nav aria-label="Grupos del negocio" className="flex-1 space-y-1 overflow-y-auto p-2">{data.rooms.map(r => <button key={r.id} onClick={() => openRoom(r.id)} aria-current={r.id === selected ? "page" : undefined} className={`flex w-full items-center gap-3 rounded-xl p-3 text-left transition-colors ${r.id === selected ? "bg-brand-500/10 ring-1 ring-inset ring-brand-500/25" : "hover:bg-bg-elevated"}`}><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-brand-500/20 bg-brand-500/10 text-brand-300"><Users className="h-5 w-5" /></span><span className="min-w-0"><span className="block truncate text-sm font-medium">{r.name}</span><span className="mt-0.5 block truncate text-xs text-ink-subtle">{data.branches.find(b => b.id === r.branch_id)?.name ?? "Sucursal"}</span></span></button>)}{!data.rooms.length ? <div className="p-4 text-sm leading-relaxed text-ink-muted">{data.me.admin ? "Creá un grupo y elegí a las personas que van a trabajar juntas." : "Tu administrador puede sumarte a un grupo del negocio."}</div> : null}</nav>

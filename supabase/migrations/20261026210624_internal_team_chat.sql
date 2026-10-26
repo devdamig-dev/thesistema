@@ -103,7 +103,9 @@ begin
  select p_room,p_business,m.id,m.role from public.business_members m where m.id=any(p_members) and m.business_id=p_business
  on conflict(room_id,member_id) do update set role_snapshot=excluded.role_snapshot,
  joined_at=case when chat_room_members.role_snapshot<>excluded.role_snapshot then now() else chat_room_members.joined_at end;
- update public.whatsapp_agent_pending_operations set consumed_at=now() where conversation_id=p_room and consumed_at is null;
+ -- Never discard the durable identity of an attempt whose commit is uncertain.
+ update public.whatsapp_agent_pending_operations set consumed_at=now()
+ where conversation_id=p_room and consumed_at is null and coalesce(arguments->>'__resultUncertain','false')<>'true';
  insert into public.activity_logs(business_id,actor_id,actor_role,action,target_type,target_id,summary,data)
  values(p_business,p_user,v_role,'chat.room.configured','chat_room',p_room,'Grupo interno y participantes actualizados',jsonb_build_object('member_ids',p_members,'archived',p_archived));
  return p_room;

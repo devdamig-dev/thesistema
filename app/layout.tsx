@@ -22,7 +22,7 @@ export const metadata: Metadata = {
   description:
     "Administrá tu negocio gastronómico con el chat de tu equipo, WhatsApp e inteligencia artificial.",
   manifest: "/manifest.webmanifest",
-  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "GastroPilot" },
+  appleWebApp: { capable: true, statusBarStyle: "black", title: "GastroPilot" },
   icons: { apple: "/app-icon/192" },
 };
 export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover", themeColor: "#101416" };

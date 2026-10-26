@@ -81,6 +81,9 @@ begin
  perform public.configure_chat_room(b,owner_id,room,branch,'Administración',array[owner_member,staff_member]);
  perform pg_temp.chat_assert(public.chat_access(staff_id,b,room)=staff_member,'new role explicitly authorized');
  perform pg_temp.chat_assert(not exists(select 1 from public.whatsapp_agent_pending_operations where conversation_id=room and consumed_at is null),'configuration invalidates old confirmations');
+ perform public.replace_whatsapp_agent_pending(b,owner_member,room,'confirmation','sales.create','{"__resultUncertain":true}',now()+interval '10 minutes');
+ perform public.configure_chat_room(b,owner_id,room,branch,'Administración',array[owner_member,staff_member]);
+ perform pg_temp.chat_assert(exists(select 1 from public.whatsapp_agent_pending_operations where conversation_id=room and consumed_at is null and arguments->>'__resultUncertain'='true'),'configuration preserves uncertain durable execution identity');
  update public.profiles set active=false where id=staff_id;
  perform pg_temp.chat_assert(public.chat_access(staff_id,b,room) is null,'deactivated user denied');
  update public.profiles set active=true where id=staff_id;

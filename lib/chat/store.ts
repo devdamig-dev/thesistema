@@ -8,7 +8,13 @@ import { getTool } from "../whatsapp-agent/registry";
 type Db = any;
 export type ChatActor = AgentActor & { admin: boolean };
 export function checked<T = any>(result: { error?: unknown; data?: T }): T {
-  if (result.error) throw new ChatError("chat_unavailable", "No pudimos verificar los datos del chat. Actualizá antes de repetir la acción.", 503);
+  if (result.error) {
+    const message = typeof result.error === "object" && result.error !== null && "message" in result.error ? String(result.error.message) : "";
+    if (message.includes("chat_agent_busy")) throw new ChatError("chat_agent_busy", "Esperá a que termine la consulta de IA antes de cambiar el grupo.", 409);
+    if (message.includes("chat_confirmation_expired")) throw new ChatError("confirmation_expired", "Esta confirmación venció o ya fue resuelta. Actualizá el chat.", 409);
+    if (message.includes("chat_request_conflict")) throw new ChatError("message_conflict", "Este envío ya existe con otro contenido. Actualizá el chat antes de continuar.", 409);
+    throw new ChatError("chat_unavailable", "No pudimos verificar los datos del chat. Actualizá antes de repetir la acción.", 503);
+  }
   return result.data as T;
 }
 export async function chatActor(db: Db, context: { isAuthenticated: boolean; userId: string | null; businessId: string | null }): Promise<ChatActor> {

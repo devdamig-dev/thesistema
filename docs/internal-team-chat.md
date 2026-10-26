@@ -22,7 +22,7 @@ Las notificaciones contienen texto genérico, sin datos del negocio. El servidor
 
 ## Validación y publicación
 
-- `npm test`: 601 pruebas al 26/10/2026; incluye transporte interno, autorización, adjuntos y confirmaciones.
+- `npm test`: 603 pruebas al 26/10/2026; incluye transporte interno, autorización, adjuntos, confirmaciones y paginación del historial.
 - `node scripts/run-catalog-sql.mjs internal-chat`: pasó sobre 78 migraciones reales en PostgreSQL aislado; fixtures revertidos.
 - `npm run typecheck`, `npm run lint`, `npm run build`: verificación local.
 - `tests/internal-chat-ui.browser.mjs`: prueba del componente real en escritorio y 390 px con backend controlado, envío/reintento, confirmación, PDF y micrófono simulado; incluida en Quality.
@@ -32,4 +32,6 @@ Las notificaciones contienen texto genérico, sin datos del negocio. El servidor
 
 Implementación autorizada: completar validación, migración y publicación; conservar WhatsApp directo. No se autorizó migrar el número ni enviar invitaciones o mensajes a otras personas.
 
-Bloqueo externo observado: `apply_migration` devolvió `Invalid or expired requestState` dos veces, sin crear las tablas; Browser agotó el tiempo de conexión. Aún no se confirmó la migración ni la publicación de esta evolución. Continuará Codex cuando el acceso esté disponible. No se registró un work item en dot/Nexo Core porque no se identificó uno inequívoco.
+Bloqueo externo observado: `apply_migration` devolvió `Invalid or expired requestState` dos veces, sin crear las tablas; Browser agotó el tiempo de conexión. Aún no se confirmó la migración ni la publicación de esta evolución. Código subido en https://github.com/devdamig-dev/thesistema/pull/152, rama `codex/internal-team-chat`, hacia `main`.
+
+Próximos pasos autorizados: aplicar y verificar la migración en `tcgcgrftnsuhorssjojk`, esperar Quality, publicar en el proyecto Vercel `thesistema` y comprobar el negocio piloto. Sugerencias nuevas: ninguna. Disponible para otro ejecutor si el acceso sigue bloqueado; punto de entrada: la migración y esta PR. Core: no registrado por este chat, porque no se identificó un work item inequívoco.

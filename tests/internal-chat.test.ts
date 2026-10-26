@@ -3,6 +3,8 @@ import test from "node:test";
 import { ChatError, fileDescriptor, matchesMagic, MAX_FILE_SIZE, memberIds, uuid, validPushEndpoint } from "../lib/chat/validation";
 import { chatActor, loadRoom, roomActor, snapshot, type ChatActor } from "../lib/chat/store";
 import { toolsForActor } from "../lib/whatsapp-agent/registry";
+import { mergeSnapshot } from "../lib/chat/client-state";
+import type { ChatSnapshot, ChatMessage } from "../lib/chat/types";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const actor: ChatActor = { userId: id(1), memberId: id(11), businessId: id(100), phone: "", role: "owner", name: "Ana", admin: true, branchIds: null, enabledModules: ["sales", "stock", "products", "purchases"] };
@@ -71,4 +73,18 @@ test("history is bounded by join time and safe pagination; no credentials reach 
   assert(db.calls.some(c => c[0] === "chat_messages" && c[1] === "gte" && c[2] === "created_at" && c[3] === "2026-10-26T10:00:00Z"));
   assert.equal(data.me.userId, actor.userId);
   await assert.rejects(snapshot(database(), actor, id(300), "2026-01-01),business.eq.foreign|bad"), /historial/);
+});
+test("polling keeps loaded history without resurrecting its completed pagination", () => {
+  const message = (n: number) => ({ id: id(n), created_at: `2026-10-26T10:${String(n).padStart(2, "0")}:00Z` }) as ChatMessage;
+  const base = { me: { id: id(1) }, room: { id: id(300) }, participants: [{ member_id: id(1), joined_at: "2026-10-26" }], messages: [message(1), message(2)], hasOlder: false } as ChatSnapshot;
+  const next = { ...base, messages: [message(2), message(3)], hasOlder: true };
+  const merged = mergeSnapshot(base, next);
+  assert.deepEqual(merged.messages?.map(m => m.id), [id(1), id(2), id(3)]); assert.equal(merged.hasOlder, false);
+  const gap = mergeSnapshot(base, { ...next, messages: [message(20), message(21)] });
+  assert.deepEqual(gap.messages?.map(m => m.id), [id(20), id(21)]); assert.equal(gap.hasOlder, true);
+});
+test("a changed membership boundary discards previously loaded private history", () => {
+  const base = { me: { id: id(1) }, room: { id: id(300) }, participants: [{ member_id: id(1), joined_at: "2026-10-25" }], messages: [{ id: id(50) }] } as ChatSnapshot;
+  const next = { ...base, participants: [{ member_id: id(1), joined_at: "2026-10-26", role_snapshot: "owner" as const }], messages: [] };
+  assert.deepEqual(mergeSnapshot(base, next).messages, []);
 });
