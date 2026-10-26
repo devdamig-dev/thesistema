@@ -20,6 +20,8 @@ export type AuthorizedConversation = {
   provider_conversation_id: string;
   conversation_type: "direct" | "group";
   display_name: string | null;
+  group_phone_number_id?: string | null;
+  group_activated_at?: string | null;
 };
 
 export async function resolveAuthorizedConversation(
@@ -31,7 +33,7 @@ export async function resolveAuthorizedConversation(
   const conversationId = input.providerConversationId?.trim();
   if (!conversationId) return null;
   const res = await db.from("whatsapp_authorized_conversations")
-    .select("id,business_id,branch_id,provider,provider_conversation_id,conversation_type,display_name")
+    .select("id,business_id,branch_id,provider,provider_conversation_id,conversation_type,display_name,group_phone_number_id,group_activated_at")
     .eq("business_id", businessId)
     .eq("provider", provider)
     .eq("provider_conversation_id", conversationId)
@@ -39,6 +41,7 @@ export async function resolveAuthorizedConversation(
     .limit(2);
   if (res.error) throw res.error;
   if (res.data?.length !== 1) return null;
+  if (res.data[0].conversation_type !== (input.conversationType ?? "direct")) return null;
   return res.data[0];
 }
 

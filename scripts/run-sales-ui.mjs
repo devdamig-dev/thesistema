@@ -7,7 +7,8 @@ await runUiHarness({
   async run({ page, origin, check, screenshot }) {
     const open = async () => { await page.getByRole('button', { name: 'Nueva venta', exact: true }).click(); return editorReady(page); };
     const fill = async (editor, description) => {
-      await editor.getByLabel('Fecha y hora', { exact: true }).fill(await page.evaluate(() => new Intl.DateTimeFormat('sv-SE', { timeZone: window.qa.timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(new Date(Date.now() - 3600000)).replace(' ', 'T')));
+      // Chromium canonicalizes zero seconds away; use that same datetime-local representation.
+      await editor.getByLabel('Fecha y hora', { exact: true }).fill(await page.evaluate(() => new Intl.DateTimeFormat('sv-SE', { timeZone: window.qa.timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(new Date(Date.now() - 3600000)).replace(' ', 'T').replace(/:00$/, '')));
       await editor.getByLabel('Sucursal', { exact: true }).selectOption({ label: 'Central QA ficticia' });
       await editor.getByLabel('Medio de pago', { exact: true }).fill('Transferencia');
       await editor.getByLabel('Concepto 1', { exact: true }).fill(description);

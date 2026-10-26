@@ -205,7 +205,7 @@ test("webhook iterates every incoming text and deduplicates repeated IDs within 
   data.entry.push({ ...data.entry[0], changes: [{ ...data.entry[0].changes[0], value: { ...data.entry[0].changes[0].value, messages: [message("c")] } }] });
   assert.equal(incomingMetaTexts(data).length, 3);
 });
-test("histories, SMB app sync, echoes, delivery receipts and group/media events never become commands", () => {
+test("histories, SMB app sync, echoes, receipts and malformed group/media events never become commands", () => {
   for (const field of ["history", "smb_app_state_sync", "smb_message_echoes", "account_update"]) assert.deepEqual(incomingMetaTexts(envelope(field)), []);
   for (const event of [{ ...message("a"), type: "image" }, { ...message("a"), is_echo: true }, { ...message("a"), context: { group_id: "group" } }, { ...message("a"), timestamp: "bad" }]) assert.deepEqual(incomingMetaTexts(envelope("messages", [event])), []);
   assert.deepEqual(incomingMetaTexts({ text: "registrá una compra", from: "5491112345678" }), []);

@@ -11,6 +11,7 @@ const integration = { business_id: "business-a", phone_number_id: "123456789", w
 let copies: Record<string, unknown>[] = [];
 let calls = 0, replies = 0, extractions = 0;
 let status = "executed", authorized = true;
+let receivedInput: any, sentReply: any[];
 const db = { from(table: string) {
   const filters: Array<(row: any) => boolean> = [];
   const query: any = {
@@ -26,9 +27,9 @@ loader._load = function(name: string, ...args: any[]) {
     "@/lib/supabase/admin": { createSupabaseAdminClient: () => db },
     "@/lib/ai/extract": { extractFromMessage: async () => { extractions++; return {}; } },
     "@/lib/data/activity": { logActivity: async () => {} },
-    "@/lib/whatsapp-agent/service": { processWhatsAppAgentMessage: async () => { calls++; return { status, text: "Resultado controlado" }; } },
+    "@/lib/whatsapp-agent/service": { processWhatsAppAgentMessage: async (input: unknown) => { receivedInput = input; calls++; return { status, text: "Resultado controlado" }; } },
     "@/lib/whatsapp-agent/supabase-adapter": { resolveAuthorizedConversation: async () => authorized ? { id: "conversation-a", business_id: integration.business_id, branch_id: branch } : null },
-    "@/lib/whatsapp-agent/meta-transport": { sendMetaTextReply: async () => { replies++; } },
+    "@/lib/whatsapp-agent/meta-transport": { sendMetaTextReply: async (...args: any[]) => { sentReply = args; replies++; } },
     "@/lib/whatsapp/webhook": webhook,
     "@/lib/whatsapp/signup": { record },
   };
@@ -47,6 +48,16 @@ async function post(payload: unknown, signed = true) {
   return POST(new Request("https://fixture.test/api/webhooks/whatsapp", { method: "POST", headers, body: raw }));
 }
 function reset() { copies = []; calls = replies = extractions = 0; authorized = true; status = "executed"; }
+
+test("group webhook keeps the human sender and replies to the group with its recipient type", async () => {
+  reset(); const payload = envelope();
+  Object.assign(payload.entry[0].changes[0].value.messages[0], { group_id: "Y2FwaV9ncm91cDox" });
+  assert.equal((await post(payload)).status, 200);
+  assert.equal(receivedInput.senderPhone, "5491198765432");
+  assert.equal(receivedInput.providerConversationId, "Y2FwaV9ncm91cDox");
+  assert.equal(receivedInput.conversationType, "group");
+  assert.equal(sentReply[1], "Y2FwaV9ncm91cDox"); assert.equal(sentReply[3], "group");
+});
 
 test("signed route preserves the authorized branch on the Inbox copy", async () => {
   reset(); const response = await post(envelope());

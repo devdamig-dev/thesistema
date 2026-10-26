@@ -8,6 +8,8 @@ import { interpretHeuristically } from "./interpreter";
 import { interpretWithManagedAi } from "../ai/whatsapp-interpreter";
 import { claimPurchasePending, cancelPurchasePending, claimSalePending, cancelSalePending, claimDebtPending, cancelDebtPending, audit, claimMessage, consumePending, executeTool, getPending, resolveActor, savePending, resolveAuthorizedConversation, type AuthorizedConversation } from "./supabase-adapter";
 import type { AgentActor, IncomingAgentMessage } from "./types";
+import { authorizeGroupMessage } from "../whatsapp/groups-access";
+import { toolsForActor } from "./registry";
 
 export function scopeActorToConversation(
   actor: AgentActor,
@@ -38,18 +40,23 @@ export async function processWhatsAppAgentMessage(input: IncomingAgentMessage) {
   }
   const conversation = await resolveAuthorizedConversation(db, input, resolvedActor.businessId);
   if (!conversation) return { status: "ignored" as const, text: "" };
-  const actor = scopeActorToConversation(resolvedActor, conversation);
+  let actor = scopeActorToConversation(resolvedActor, conversation);
   if (!actor) return { status: "rejected" as const, text: "No tenés acceso a la sucursal autorizada para esta conversación." };
+  if (conversation.conversation_type === "group") {
+    actor = await authorizeGroupMessage(db, input, actor, conversation);
+    if (!actor) return { status: "ignored" as const, text: "" };
+  }
+  const scopedActor = actor;
   const conversationId = conversation.id;
-  return runAgent(input, {
-    resolveActor: async () => actor,
+  const reply = await runAgent(input, {
+    resolveActor: async () => scopedActor,
     claimMessage: (message, scopedActor) => claimMessage(db, message, scopedActor, conversationId),
     interpret: async (text, tools, pending) => {
       const heuristic = await interpretHeuristically(text, tools, pending);
       if (heuristic) return heuristic;
       return interpretWithManagedAi({
-        businessId: actor.businessId,
-        actorId: actor.userId,
+        businessId: scopedActor.businessId,
+        actorId: scopedActor.userId,
         text,
         tools,
         pending,
@@ -69,4 +76,13 @@ export async function processWhatsAppAgentMessage(input: IncomingAgentMessage) {
     audit: (event) => audit(db, event, conversationId),
     now: () => new Date(),
   });
+  if (conversation.conversation_type === "group" && reply.text.trim()) {
+    // A participant/role can change while the model or a domain operation runs.
+    // Re-check the audience before publishing a response into a shared chat.
+    const currentConversation = await resolveAuthorizedConversation(db, input, scopedActor.businessId);
+    const currentActor = await resolveActor(db, input);
+    const current = currentConversation && currentActor ? await authorizeGroupMessage(db, input, currentActor, currentConversation) : null;
+    if (!current || reply.tool && !toolsForActor(current).some(tool => tool.name === reply.tool)) return { ...reply, text: "" };
+  }
+  return reply;
 }

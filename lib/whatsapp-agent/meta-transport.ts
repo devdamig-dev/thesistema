@@ -5,6 +5,7 @@ export async function sendMetaTextReply(
   businessId: string,
   to: string,
   text: string,
+  recipientType: "individual" | "group" = "individual",
 ): Promise<void> {
   // whatsapp_integrations is newer than the generated Database helper types.
   // Keep the admin client server-only and narrow the untyped surface to this table.
@@ -36,11 +37,13 @@ export async function sendMetaTextReply(
       },
       body: JSON.stringify({
         messaging_product: "whatsapp",
-        recipient_type: "individual",
+        recipient_type: recipientType,
         to,
         type: "text",
         text: { preview_url: false, body: text.slice(0, 4096) },
       }),
+      signal: AbortSignal.timeout(15000),
+      redirect: "error",
     },
   );
 

@@ -11,6 +11,8 @@ export type AgentActor = {
   role: Role;
   enabledModules: ModuleKey[];
   branchIds: string[] | null;
+  /** Group replies are public to participants: restrict tools to their common permissions. */
+  permissionLimit?: Permission[];
 };
 
 export type ToolDefinition = {
@@ -40,6 +42,7 @@ export type IncomingAgentMessage = {
   provider?: "meta" | "internal";
   providerConversationId?: string;
   conversationType?: "direct" | "group";
+  sentAt?: number;
 };
 
 export type PendingOperation = {
