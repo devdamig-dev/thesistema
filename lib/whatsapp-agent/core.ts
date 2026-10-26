@@ -39,13 +39,15 @@ const money = (value: unknown) =>
   new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 2 })
     .format(Number(value ?? 0));
 
-function confirmationText(toolName: string, argumentsValue: Record<string, unknown>, description: string): string {
+export function confirmationText(toolName: string, argumentsValue: Record<string, unknown>, description: string): string {
   if (isPurchaseWrite(toolName)) return purchaseConfirmationText({ name: toolName, arguments: argumentsValue });
   if (isSaleWrite(toolName)) return saleConfirmationText({ name: toolName, arguments: argumentsValue });
   if (isDebtPlanWrite(toolName)) return debtConfirmationText({ name: toolName, arguments: argumentsValue });
   if (toolName === "debts.registerPayment") {
     return `Voy a registrar un pago a ${String(argumentsValue.creditor)} por ${money(argumentsValue.amount)} mediante ${String(argumentsValue.paymentMethod)} el ${String(argumentsValue.paidAt)}. Respondé “Sí” para confirmar o “Cancelar” para descartar.`;
   }
+  if (toolName === "stock.addMovement") return `Voy a registrar ${String(argumentsValue.operation)} de ${String(argumentsValue.quantity)} ${String(argumentsValue.unit)} de ${String(argumentsValue.ingredient)}. Motivo: ${String(argumentsValue.reason)}. Respondé “Sí” para confirmar o “Cancelar” para descartar.`;
+  if (toolName === "products.create") return `Voy a crear el producto ${String(argumentsValue.name)} con precio ${money(argumentsValue.price)}. Respondé “Sí” para confirmar o “Cancelar” para descartar.`;
   return `Voy a ejecutar “${description}”. Respondé “Sí” para confirmar o “Cancelar” para descartar.`;
 }
 

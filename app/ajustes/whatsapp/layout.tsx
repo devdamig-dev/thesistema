@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { MessageSquareText, Phone, ShieldCheck } from "lucide-react";
 import { isDatabaseMode } from "@/lib/env";
@@ -19,7 +20,7 @@ export default async function WhatsappSettingsLayout({ children }: { children: R
   if (!db) return <Unavailable />;
   const [business, conversationsResult, membersResult, branchesResult] = await Promise.all([
     db.from("businesses").select("whatsapp_connected,whatsapp_phone_number_id").eq("id", ctx.businessId).maybeSingle(),
-    db.from("whatsapp_authorized_conversations").select("id,display_name,conversation_type,enabled,branch_id,branches(name)").eq("business_id", ctx.businessId).order("created_at", { ascending: true }),
+    db.from("whatsapp_authorized_conversations").select("id,display_name,conversation_type,enabled,branch_id,branches(name)").eq("business_id", ctx.businessId).eq("provider", "meta").order("created_at", { ascending: true }),
     db.from("business_members").select("id,user_id").eq("business_id", ctx.businessId),
     db.from("branches").select("id,name").eq("business_id", ctx.businessId).order("name"),
   ]);
@@ -55,6 +56,7 @@ export default async function WhatsappSettingsLayout({ children }: { children: R
         <p className="text-sm text-ink-muted">{expired ? "La autorización de Meta venció. Volvé a autorizar el mismo número para recuperar la conexión." : "Elegí cómo usás WhatsApp. No necesitás copiar claves ni crear una aplicación de Meta para cada negocio."}</p>{connectButton}
       </div>}</CardContent>
     </Card>
+    <Card><CardContent className="flex flex-wrap items-center justify-between gap-4 pt-6"><div><h2 className="font-semibold">¿Necesitás un grupo para administrar con tu equipo?</h2><p className="mt-1 text-sm text-ink-muted">El chat interno permite sumar integrantes, compartir archivos y pedir ayuda a la IA desde el celular.</p></div><Link href="/chat" className="rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white">Abrir chat del equipo</Link></CardContent></Card>
     <GroupEditor connected={connected} members={members} branches={branchesResult.data ?? []} />
     <Card>
       <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Chats directos autorizados</CardTitle></CardHeader>
