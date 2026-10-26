@@ -95,6 +95,7 @@ export function WhatsAppConnectButton({ appId, configId, apiVersion, businessApp
       const value = parseSignupEvent(event.origin, event.data);
       if (!value) return;
       if (value.kind === "finish") {
+        setStatus("Meta terminó el formulario. Estamos esperando su autorización para mostrar los números; la vinculación todavía no está guardada.");
         payload.current = { ...payload.current, ...(value.accountId ? { wabaId: value.accountId } : {}), ...(value.phoneNumberId ? { phoneNumberId: value.phoneNumberId } : {}) };
         void prepare(attempt.current);
       } else {
@@ -143,11 +144,12 @@ export function WhatsAppConnectButton({ appId, configId, apiVersion, businessApp
     setStatus(mode === "business_app" ? "En Meta elegí conectar tu WhatsApp Business app para conservarlo en el celular." : "En Meta elegí el portfolio y la cuenta de WhatsApp que querés autorizar.");
     timers.current.push(setTimeout(() => {
       if (generation !== attempt.current || started.current) return;
-      active.current = false;
-      attempt.current += 1;
-      payload.current = {};
-      setPhase("error");
-      setStatus("No recibimos la finalización de Meta. Cerrá la ventana anterior y reintentá; no se marcó ninguna conexión como terminada.");
+      // This is a progress reminder, not an authorization expiry. Meta may
+      // still be waiting for phone verification or business details. Expiring
+      // the generation here silently discards a later valid FB.login callback.
+      // Cancellation/unmount still invalidate the attempt; the backend checks
+      // the authorization code, grants and expiring selection session.
+      setStatus("Seguimos esperando a Meta. Terminá los pasos en su ventana; al volver, elegí tu número y confirmá la vinculación aquí. Si cerraste Meta, cancelá este intento para empezar otro.");
     }, 180000));
     try {
       window.FB.login(response => {
