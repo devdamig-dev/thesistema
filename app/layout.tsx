@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import { Suspense } from "react";
 import "./globals.css";
@@ -20,8 +20,12 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "GastroPilot AI — Administración gastronómica con IA",
   description:
-    "Administrá tu negocio gastronómico desde WhatsApp. La IA ordena tus ventas, compras, gastos, stock, empleados y reportes en tiempo real.",
+    "Administrá tu negocio gastronómico con el chat de tu equipo, WhatsApp e inteligencia artificial.",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, statusBarStyle: "black", title: "GastroPilot" },
+  icons: { apple: "/app-icon/192" },
 };
+export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover", themeColor: "#101416" };
 
 export default async function RootLayout({
   children,

@@ -11,6 +11,8 @@
   },
   "include": [
     "./*.test.ts",
+    "../lib/chat/**/*.ts",
+    "../app/api/chat/**/*.ts",
     "../lib/customers/**/*.ts",
     "../app/actions/customers.ts",
     "../app/actions/customers-page.ts",

@@ -66,11 +66,14 @@ type GatewayInput<T> = {
   source: AiSource;
   instructions: string;
   input: string;
+  /** Server-validated private attachment, never an arbitrary external URL. */
+  media?: { mime: string; filename: string; base64: string };
   schemaName: string;
   schema: JsonSchema;
   metadata?: Record<string, string>;
   requestId?: string;
   maxOutputTokens?: number;
+  timeoutMs?: number;
 };
 
 export type GatewaySuccess<T> = {
@@ -205,6 +208,8 @@ export async function runManagedAi<T>(request: GatewayInput<T>): Promise<Gateway
   try {
     providerResponse = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
+      ...(request.timeoutMs ? { signal: AbortSignal.timeout(request.timeoutMs) } : {}),
+      redirect: "error",
       headers: {
         authorization: `Bearer ${apiKey}`,
         "content-type": "application/json",
@@ -213,7 +218,12 @@ export async function runManagedAi<T>(request: GatewayInput<T>): Promise<Gateway
         model,
         store: false,
         instructions: request.instructions,
-        input: request.input,
+        input: request.media ? [{ role: "user", content: [
+          { type: "input_text", text: request.input },
+          request.media.mime === "application/pdf"
+            ? { type: "input_file", filename: request.media.filename, file_data: `data:application/pdf;base64,${request.media.base64}` }
+            : { type: "input_image", image_url: `data:${request.media.mime};base64,${request.media.base64}`, detail: "auto" },
+        ] }] : request.input,
         max_output_tokens: Math.min(Math.max(request.maxOutputTokens ?? 1200, 64), 8000),
         reasoning: { effort: request.taskType === "business_analysis" ? "medium" : "low" },
         text: {

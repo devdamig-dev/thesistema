@@ -14,7 +14,7 @@ export async function manageGroups(db: any, actor: ConnectionActor, input: Group
     return { ok: true, message: "Procesamiento del grupo pausado." };
   }
   if (input.action === "list") {
-    const saved = await db.from("whatsapp_authorized_conversations").select("id,provider_conversation_id,display_name,branch_id,enabled,group_phone_number_id,whatsapp_group_members(member_id)").eq("business_id", actor.businessId).eq("conversation_type", "group");
+    const saved = await db.from("whatsapp_authorized_conversations").select("id,provider_conversation_id,display_name,branch_id,enabled,group_phone_number_id,whatsapp_group_members(member_id)").eq("business_id", actor.businessId).eq("conversation_type", "group").eq("provider", "meta");
     if (saved.error) throw new ConnectionError("group_list_failed", "No pudimos leer los grupos configurados.", 503);
     try {
       const { graph } = await groupConnection(db, actor.businessId);

@@ -30,6 +30,7 @@ jobs:
       - run: npm run test:db:catalog
       - run: npm run test:db:stock
       - run: node scripts/run-catalog-sql.mjs whatsapp-groups
+      - run: node scripts/run-catalog-sql.mjs internal-chat
       - run: npm run test:customers:sql
       - run: npm run test:suppliers:sql
       - run: npm run test:debts:sql
@@ -71,6 +72,7 @@ jobs:
       - run: npm ci
       - name: Verify PostgreSQL17 suites and independent session races
         run: npm run test:db:native
+      - run: node scripts/run-catalog-sql.mjs internal-chat --native-docker
 
   postgrest:
     runs-on: ubuntu-24.04

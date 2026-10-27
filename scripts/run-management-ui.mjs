@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const suites = [
+  ['internal-chat', 'tests/internal-chat-ui.browser.mjs'],
   ['whatsapp-connect', 'tests/whatsapp-connect-ui.browser.mjs'],
   ['whatsapp-groups', 'tests/whatsapp-groups-ui.browser.mjs'],
   ['catalog', 'scripts/run-catalog-ui.mjs'],
