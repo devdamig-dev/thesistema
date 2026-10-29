@@ -31,6 +31,15 @@ create table if not exists public.whatsapp_read_receipts (
 alter table public.whatsapp_read_sources enable row level security;
 alter table public.whatsapp_read_receipts enable row level security;
 revoke all on public.whatsapp_read_sources, public.whatsapp_read_receipts from public, anon, authenticated;
+-- Owner/admin can inspect only their own read sources. Data API has no write grants.
+grant select on public.whatsapp_read_sources to authenticated;
+create policy "whatsapp read sources owner admin only"
+  on public.whatsapp_read_sources for select to authenticated
+  using (exists (
+    select 1 from public.business_members m
+    where m.business_id = whatsapp_read_sources.business_id
+      and m.user_id = (select auth.uid()) and m.role in ('owner', 'admin')
+  ));
 -- All source configuration/reads pass through the authenticated server route.
 -- This dedicated ingest RPC is service-role only and executes atomically.
 create or replace function public.ingest_whatsapp_read_source(
