@@ -20,6 +20,8 @@ export type AiUsageOverview = {
   provider: string;
   routingPolicy: string;
   byModel: Record<string, number>;
+  latestCompletedModel: string | null;
+  latestCompletedAt: string | null;
 };
 
 const MODULE_LABELS: Record<string, string> = {
