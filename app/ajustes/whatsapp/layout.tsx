@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import { MessageSquareText, Phone, ShieldCheck } from "lucide-react";
 import { isDatabaseMode } from "@/lib/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getCurrentUserContext } from "@/lib/data/auth";
 import { readWhatsAppConnectionStatus } from "@/lib/whatsapp/connection-store";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,8 +37,8 @@ export default async function WhatsappSettingsLayout({ children }: { children: R
   const state = await readWhatsAppConnectionStatus(db, ctx.businessId).catch(() => null);
   if (!state) return <Unavailable />;
   const { integration, expired } = state;
-  // Source rows contain phone numbers, so only the checked owner/admin reads them.
-  const sourceResult = await (createSupabaseAdminClient() as any)
+  // The authenticated client must also pass per-tenant, admin-only RLS.
+  const sourceResult = await db
     .from("whatsapp_read_sources").select("id,label,sender_phone,branch_id,enabled,last_message_at")
     .eq("business_id", ctx.businessId).order("created_at", { ascending: true });
   const connected = Boolean(integration?.status === "connected" && !expired && business.data?.whatsapp_connected && business.data?.whatsapp_phone_number_id === integration.phone_number_id);
