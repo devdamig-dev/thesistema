@@ -57,3 +57,13 @@ test("permission change after a read redacts the result instead of publishing pr
 test("a lost finalization lease is reported as uncertain and never re-executes automatically", async () => {
   reset(); state.finish = false; await assert.rejects(processChatAi(db, actor, id(5), id(6)), /No pudimos confirmar/); assert.equal(state.executed, 1);
 });
+
+test("ordinary help questions get a useful response without executing a write", async () => {
+  reset(); state.message.body = "¿Cómo cargo las ventas?";
+  await processChatAi(db, actor, id(5), id(6));
+  assert.equal(state.executed, 0);
+  assert.equal(state.helpCalled, 1);
+  assert.equal(state.finished.p_result, "completed");
+  assert.match(state.finished.p_text, /cargar una venta/);
+  assert.equal(state.finished.p_tool, null);
+});
