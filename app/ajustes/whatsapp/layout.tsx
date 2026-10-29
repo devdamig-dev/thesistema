@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { MessageSquareText, Phone, ShieldCheck } from "lucide-react";
 import { isDatabaseMode } from "@/lib/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getCurrentUserContext } from "@/lib/data/auth";
 import { readWhatsAppConnectionStatus } from "@/lib/whatsapp/connection-store";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,6 +12,7 @@ import { SectionHeader } from "@/components/ui/section-header";
 import { WhatsAppConnectButton } from "./connect-button";
 import { ConversationEditor, type MemberOption } from "./conversation-editor";
 import { GroupEditor } from "./group-editor";
+import { ReadSourcesEditor } from "./read-sources-editor";
 
 export default async function WhatsappSettingsLayout({ children }: { children: ReactNode }) {
   if (!isDatabaseMode()) return <>{children}</>;
@@ -36,6 +38,10 @@ export default async function WhatsappSettingsLayout({ children }: { children: R
   const state = await readWhatsAppConnectionStatus(db, ctx.businessId).catch(() => null);
   if (!state) return <Unavailable />;
   const { integration, expired } = state;
+  // Source rows contain phone numbers, so only the checked owner/admin reads them.
+  const sourceResult = await (createSupabaseAdminClient() as any)
+    .from("whatsapp_read_sources").select("id,label,sender_phone,branch_id,enabled,last_message_at")
+    .eq("business_id", ctx.businessId).order("created_at", { ascending: true });
   const connected = Boolean(integration?.status === "connected" && !expired && business.data?.whatsapp_connected && business.data?.whatsapp_phone_number_id === integration.phone_number_id);
   const appId = process.env.NEXT_PUBLIC_META_APP_ID?.trim() || null;
   const configId = process.env.NEXT_PUBLIC_META_WHATSAPP_CONFIG_ID?.trim() || null;
@@ -58,10 +64,11 @@ export default async function WhatsappSettingsLayout({ children }: { children: R
     </Card>
     <Card><CardContent className="flex flex-wrap items-center justify-between gap-4 pt-6"><div><h2 className="font-semibold">¿Necesitás un grupo para administrar con tu equipo?</h2><p className="mt-1 text-sm text-ink-muted">El chat interno permite sumar integrantes, compartir archivos y pedir ayuda a la IA desde el celular.</p></div><Link href="/chat" className="rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white">Abrir chat del equipo</Link></CardContent></Card>
     <GroupEditor connected={connected} members={members} branches={branchesResult.data ?? []} />
+    <ReadSourcesEditor connected={connected} branches={branchesResult.data ?? []} sources={sourceResult.error ? [] : sourceResult.data ?? []} available={!sourceResult.error} />
     <Card>
       <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Chats directos autorizados</CardTitle></CardHeader>
       <CardContent className="space-y-5">
-        <p className="text-sm text-ink-muted">Sólo se procesan chats directos que autorices y mensajes de personas activas del equipo. Autorizar un chat no amplía sus permisos sobre los módulos o las sucursales.</p>
+        <p className="text-sm text-ink-muted">Estas conversaciones permiten operar con los permisos de una persona activa del equipo. Para recibir información sin crear integrantes, usá Fuentes de WhatsApp · solo lectura, arriba. Ninguna fuente de lectura podrá ejecutar movimientos.</p>
         {conversations.length ? <div className="space-y-2">{conversations.map((conversation: any) => <div key={conversation.id} className="flex items-center justify-between gap-3 rounded-xl border border-line p-4"><div><p className="text-sm font-semibold text-ink">{conversation.display_name || "Conversación autorizada"}</p><p className="text-xs text-ink-muted">{conversation.conversation_type === "group" ? "Grupo · no compatible con esta conexión" : "Chat directo"} · {conversation.branches?.name || "Según permisos del equipo"}</p></div><Badge tone={conversation.enabled && conversation.conversation_type === "direct" ? "success" : "default"}>{conversation.conversation_type === "group" ? "No compatible" : conversation.enabled ? "Autorizada" : "Pausada"}</Badge></div>)}</div> : <p className="rounded-xl border border-dashed border-line p-4 text-sm text-ink-muted">Todavía no autorizaste ninguna conversación. El agente no operará sobre otros chats.</p>}
         <ConversationEditor connected={connected} members={members} branches={branchesResult.data ?? []} />
         <p className="text-xs leading-relaxed text-ink-subtle">Los chats directos y los grupos oficiales habilitados procesan mensajes de texto nuevos. El historial sincronizado no se convierte en órdenes nuevas.</p>
