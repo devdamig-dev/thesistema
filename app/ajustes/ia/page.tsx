@@ -53,7 +53,7 @@ export default async function AjustesIAPage() {
         .maybeSingle(),
       supabase
         .from("ai_usage_events")
-        .select("credits,cost_usd_micros,model,status")
+        .select("credits,cost_usd_micros,model,status,reserved_at")
         .eq("business_id", ctx.businessId)
         .gte("reserved_at", periodStart.toISOString())
         .in("status", ["reserved", "completed"]),
@@ -65,6 +65,7 @@ export default async function AjustesIAPage() {
         cost_usd_micros: number | string;
         model: string;
         status: "reserved" | "completed";
+        reserved_at: string;
       }>;
       const monthlyCredits = Number(planResult.data.monthly_credits ?? 0);
       const usedCredits = rows.reduce((sum, row) => sum + Number(row.credits ?? 0), 0);
@@ -76,6 +77,7 @@ export default async function AjustesIAPage() {
         return acc;
       }, {});
 
+      const latestCompleted = rows.filter(row => row.status === "completed").sort((a, b) => Date.parse(b.reserved_at) - Date.parse(a.reserved_at))[0];
       usage = {
         planCode: String(planResult.data.plan_code ?? "pilot"),
         monthlyCredits,
@@ -88,6 +90,8 @@ export default async function AjustesIAPage() {
         provider: String(planResult.data.provider ?? "openai"),
         routingPolicy: String(planResult.data.routing_policy ?? "managed_auto"),
         byModel,
+        latestCompletedModel: latestCompleted?.model ?? null,
+        latestCompletedAt: latestCompleted?.reserved_at ?? null,
       };
     }
   }

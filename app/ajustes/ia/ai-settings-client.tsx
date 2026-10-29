@@ -20,6 +20,8 @@ export type AiUsageOverview = {
   provider: string;
   routingPolicy: string;
   byModel: Record<string, number>;
+  latestCompletedModel: string | null;
+  latestCompletedAt: string | null;
 };
 
 const MODULE_LABELS: Record<string, string> = {
@@ -151,9 +153,9 @@ export function AiSettingsClient({
               <Summary label="Costo interno" value={formatUsdMicros(usage.costUsdMicros)} detail="Visible sólo para control del producto" />
             </div>
             <div className="grid gap-3 lg:grid-cols-3">
-              <EngineItem icon={Cpu} title="Proveedor administrado" detail={usage.provider === "openai" ? "OpenAI · credencial de GastroPilot" : usage.provider} />
+              <EngineItem icon={Cpu} title="Proveedor administrado" detail={usage.provider === "openai" ? "OpenAI · cuenta administrada por GastroPilot" : usage.provider} />
               <EngineItem icon={Gauge} title="Routing automático" detail="Luna para operación · Terra para análisis · Sol para casos complejos" />
-              <EngineItem icon={Coins} title="Modelo comercial" detail="El cliente consume créditos GastroPilot; no necesita cargar una API key." />
+              <EngineItem icon={Coins} title="Motor verificado" detail={usage.latestCompletedModel && usage.latestCompletedAt ? `${usage.latestCompletedModel} · solicitud completada el ${new Date(usage.latestCompletedAt).toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires", dateStyle: "short", timeStyle: "short" })}` : "Sin ejecución completada verificable; un número vinculado no garantiza respuesta de IA."} />
             </div>
             {Object.keys(usage.byModel).length > 0 && (
               <div className="rounded-xl border border-line bg-bg-subtle/40 p-4">

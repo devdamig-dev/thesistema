@@ -60,6 +60,8 @@ export interface AgentDependencies {
   resolveActor(input: IncomingAgentMessage): Promise<AgentActor | null>;
   claimMessage(input: IncomingAgentMessage, actor: AgentActor): Promise<boolean>;
   interpret(text: string, tools: ToolDefinition[], pending?: PendingOperation | null): Promise<ToolCall | null>;
+  /** Read-only conversational fallback, only when no operation or confirmation is pending. */
+  answerUnknown?(text: string, tools: ToolDefinition[]): Promise<AgentReply>;
   getPending(actor: AgentActor): Promise<PendingOperation | null>;
   savePending(operation: Omit<PendingOperation, "id">): Promise<PendingOperation>;
   /** Atomically consumes an unconsumed row scoped to the actor. Only the winner returns true. */

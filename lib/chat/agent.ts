@@ -11,6 +11,7 @@ import type { AgentReply, ToolCall } from "../whatsapp-agent/types";
 import { checked, roomActor, type ChatActor } from "./store";
 import { ChatError } from "./validation";
 import { extractAttachment } from "./media";
+import { answerInternalChat } from "./conversation";
 
 export async function processChatAi(db: any, actor: ChatActor, roomId: string, messageId: string) {
   if (checked(await db.rpc("claim_chat_ai", { p_business: actor.businessId, p_user: actor.userId, p_room: roomId, p_id: messageId })) !== true) return;
@@ -42,6 +43,7 @@ export async function processChatAi(db: any, actor: ChatActor, roomId: string, m
         resolveActor: async () => scoped,
         claimMessage: (i, a) => adapter.claimMessage(db, i, a, roomId),
         interpret: async (text, tools, operation) => await interpretHeuristically(text, tools, operation) || interpretWithManagedAi({ businessId: actor.businessId, actorId: actor.userId, text, tools, pending: operation, source: "web" }),
+        answerUnknown: (text, tools) => answerInternalChat({ businessId: actor.businessId, actorId: actor.userId, text, tools }),
         getPending: a => adapter.getPending(db, a, roomId),
         savePending: async operation => { await guard(operation.toolCall); return adapter.savePending(db, operation, roomId); },
         consumePending: (id, a, unexpired) => adapter.consumePending(db, id, a, unexpired, roomId),
