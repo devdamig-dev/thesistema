@@ -153,7 +153,7 @@ export function AiSettingsClient({
               <Summary label="Costo interno" value={formatUsdMicros(usage.costUsdMicros)} detail="Visible sólo para control del producto" />
             </div>
             <div className="grid gap-3 lg:grid-cols-3">
-              <EngineItem icon={Cpu} title="Proveedor administrado" detail={usage.provider === "openai" ? "OpenAI · credencial de GastroPilot" : usage.provider} />
+              <EngineItem icon={Cpu} title="Proveedor administrado" detail={usage.provider === "openai" ? "OpenAI · cuenta administrada por GastroPilot" : usage.provider} />
               <EngineItem icon={Gauge} title="Routing automático" detail="Luna para operación · Terra para análisis · Sol para casos complejos" />
               <EngineItem icon={Coins} title="Modelo comercial" detail="El cliente consume créditos GastroPilot; no necesita cargar una API key." />
             </div>
