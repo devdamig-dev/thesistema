@@ -74,7 +74,40 @@ export async function POST(request: NextRequest) {
       if (integration.token_expires_at && Date.parse(integration.token_expires_at) <= Date.now()) throw new Error("integration_authorization_expired");
       const input = { messageId: message.messageId, senderPhone: message.senderPhone, recipientPhone: integration.display_phone_number as string, senderName: message.senderName, text: message.text, provider: "meta" as const, providerConversationId: message.groupId || message.senderPhone, conversationType: message.groupId ? "group" as const : "direct" as const, sentAt: message.sentAt };
       const conversation = await resolveAuthorizedConversation(db, input, integration.business_id);
-      if (!conversation) { ignored += 1; continue; }
+      if (!conversation) {
+        // Passive, business-authorized sources may supply *new* text to the Inbox.
+        // They have no member identity, cannot invoke the agent, cannot confirm
+        // financial operations and never receive an automatic WhatsApp reply.
+        if (message.groupId) { ignored += 1; continue; }
+        const source = await db.from("whatsapp_read_sources").select("id")
+          .eq("business_id", integration.business_id).eq("phone_number_id", message.phoneNumberId)
+          .eq("sender_phone", message.senderPhone).eq("enabled", true).maybeSingle();
+        if (source.error) {
+          if (["42P01", "PGRST205"].includes(String(source.error.code))) { ignored += 1; continue; }
+          throw new Error("source_lookup_failed");
+        }
+        if (!source.data) { ignored += 1; continue; }
+        const extracted = await extractFromMessage(message.text, message.senderName);
+        const captured = await db.rpc("ingest_whatsapp_read_source", {
+          p_business_id: integration.business_id,
+          p_phone_number_id: message.phoneNumberId,
+          p_sender_phone: message.senderPhone,
+          p_provider_message_id: message.messageId,
+          p_sender_name: message.senderName,
+          p_text: message.text,
+          p_sent_at: new Date(message.sentAt).toISOString(),
+          p_type: extracted.movement_type,
+          p_fields: extracted.detected_fields,
+          p_missing: extracted.missing_fields,
+          p_confidence: extracted.confidence,
+          p_summary: extracted.normalized_summary,
+        });
+        if (captured.error) throw new Error("source_ingest_failed");
+        if (captured.data === "ingested") processed += 1;
+        else if (captured.data === "duplicate") duplicates += 1;
+        else ignored += 1;
+        continue;
+      }
       const reply = await processWhatsAppAgentMessage(input);
       if (reply.status === "ignored" || reply.status === "rejected") {
         // Never send denied/unknown actors into the old Inbox extraction fallback.
