@@ -9,14 +9,15 @@ const secret = "controlled-webhook-fixture-not-real";
 const branch = "a0000000-0000-4000-8000-000000000001";
 const integration = { business_id: "business-a", phone_number_id: "123456789", waba_id: "987654321", status: "connected", display_phone_number: "+5491112345678", connected_at: new Date(Date.now() - 60000).toISOString(), token_expires_at: null };
 let copies: Record<string, unknown>[] = [];
-let calls = 0, replies = 0, extractions = 0;
+let calls = 0, replies = 0, extractions = 0, sourceIngests = 0;
+let passiveSource = false;
 let status = "executed", authorized = true;
 let receivedInput: any, sentReply: any[];
-const db = { from(table: string) {
+const db = { async rpc(name: string) { assert.equal(name, "ingest_whatsapp_read_source"); sourceIngests++; return { data: "ingested", error: null }; }, from(table: string) {
   const filters: Array<(row: any) => boolean> = [];
   const query: any = {
     select() { return query; }, eq(key: string, value: unknown) { filters.push(row => row[key] === value); return query; },
-    async maybeSingle() { assert.equal(table, "whatsapp_integrations"); return { data: filters.every(fn => fn(integration)) ? integration : null, error: null }; },
+    async maybeSingle() { if (table === "whatsapp_read_sources") return { data: passiveSource ? { id: "read-source-a" } : null, error: null }; assert.equal(table, "whatsapp_integrations"); return { data: filters.every(fn => fn(integration)) ? integration : null, error: null }; },
     async insert(value: Record<string, unknown>) { assert.equal(table, "whatsapp_messages"); copies.push(value); return { error: null }; },
   }; return query;
 } };
@@ -47,7 +48,7 @@ async function post(payload: unknown, signed = true) {
   if (signed) headers["x-hub-signature-256"] = "sha256=" + createHmac("sha256", secret).update(raw).digest("hex");
   return POST(new Request("https://fixture.test/api/webhooks/whatsapp", { method: "POST", headers, body: raw }));
 }
-function reset() { copies = []; calls = replies = extractions = 0; authorized = true; status = "executed"; }
+function reset() { copies = []; calls = replies = extractions = sourceIngests = 0; passiveSource = false; authorized = true; status = "executed"; }
 
 test("group webhook keeps the human sender and replies to the group with its recipient type", async () => {
   reset(); const payload = envelope();
@@ -78,4 +79,25 @@ test("history and timestamps older than connection do not reach the Agent Core",
   reset(); const history = envelope(); history.entry[0].changes[0].field = "history"; await post(history);
   const old = envelope(); old.entry[0].changes[0].value.messages[0].timestamp = "100"; await post(old);
   assert.equal(calls, 0); assert.equal(copies.length, 0);
+});
+
+test("authorized read-only source is ingested without agent execution or WhatsApp reply", async () => {
+  reset(); authorized = false; passiveSource = true;
+  const response = await post(envelope());
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).processed, 1);
+  assert.equal(sourceIngests, 1);
+  assert.equal(extractions, 1);
+  assert.equal(calls, 0);
+  assert.equal(copies.length, 0);
+  assert.equal(replies, 0);
+});
+test("unknown external phone cannot enter the Inbox or invoke tools", async () => {
+  reset(); authorized = false; passiveSource = false;
+  const response = await post(envelope());
+  assert.equal(response.status, 200);
+  assert.equal(sourceIngests, 0);
+  assert.equal(extractions, 0);
+  assert.equal(calls, 0);
+  assert.equal(replies, 0);
 });
