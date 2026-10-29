@@ -27,7 +27,7 @@ loader._load = function(name: string, ...args: any[]) {
   return name in mocks ? mocks[name] : original.call(this, name, ...args);
 };
 const { processChatAi } = require("../lib/chat/agent"); loader._load = original;
-function reset() { Object.assign(state, { claimed: true, finish: true, message: { body: "productos", attachment_id: null, pending_id: null }, pending: null, executed: 0, extracted: 0, guards: 0, revokeAt: 0, finished: null, claimedInput: null }); }
+function reset() { Object.assign(state, { claimed: true, finish: true, message: { body: "productos", attachment_id: null, pending_id: null }, pending: null, executed: 0, extracted: 0, helpCalled: 0, guards: 0, revokeAt: 0, finished: null, claimedInput: null }); }
 test("internal AI reuses the agent core with a stable transport ID and authenticated group scope", async () => {
   reset(); await processChatAi(db, actor, id(5), id(6));
   assert.equal(state.executed, 1); assert.equal(state.claimedInput.messageId, `chat:${id(6)}`);
