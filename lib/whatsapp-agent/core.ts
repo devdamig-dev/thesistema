@@ -201,10 +201,22 @@ export async function runAgent(input: IncomingAgentMessage, deps: AgentDependenc
 
   const interpreted = confirmed && pending ? pending.toolCall : await deps.interpret(input.text, available, pending);
   if (!interpreted) {
+    // Conversational assistance is read-only. Never skip an unresolved confirmation
+    // or reinterpret an ambiguous write as permission to mutate business records.
+    if (!pending && deps.answerUnknown) {
+      try {
+        const answer = await deps.answerUnknown(input.text, available);
+        await safeAudit(deps, { actor, input, intent: "read_only_help" });
+        return { status: answer.status, text: answer.text.slice(0, 3000) };
+      } catch {
+        await safeAudit(deps, { actor, input, error: "conversation_help_unavailable" });
+        return { status: "failed", text: "No pude completar la consulta al asistente. No se hizo ninguna carga. Podés usar los módulos del menú y volver a consultar." };
+      }
+    }
     await safeAudit(deps, { actor, input, error: "intent_not_recognized" });
     return {
       status: "needs_input",
-      text: "No pude identificar una operación habilitada. Reformulá el pedido sin incluir datos sensibles.",
+      text: pending ? "No entendí el dato de la operación pendiente. Respondé con el dato solicitado o escribí Cancelar." : "No identifiqué una operación autorizada. Indicá qué querés consultar o cargar; ninguna operación se ejecutó.",
     };
   }
 
