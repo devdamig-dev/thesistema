@@ -11,6 +11,7 @@ import type { AgentReply, ToolCall } from "../whatsapp-agent/types";
 import { checked, roomActor, type ChatActor } from "./store";
 import { ChatError } from "./validation";
 import { extractAttachment } from "./media";
+import { answerInternalChat } from "./conversation";
 
 export async function processChatAi(db: any, actor: ChatActor, roomId: string, messageId: string) {
   if (checked(await db.rpc("claim_chat_ai", { p_business: actor.businessId, p_user: actor.userId, p_room: roomId, p_id: messageId })) !== true) return;
