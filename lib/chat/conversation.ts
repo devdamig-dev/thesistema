@@ -8,7 +8,6 @@ type HelpRequest = {
   tools: ToolDefinition[];
 };
 const answer = (text: string): AgentReply => ({ status: "completed", text });
-const can = (tools: ToolDefinition[], name: string) => tools.some(tool => tool.name === name);
 
 /**
  * No DB reads or mutations are permitted on this path. Operational information
