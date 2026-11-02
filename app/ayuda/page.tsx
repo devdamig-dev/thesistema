@@ -9,9 +9,6 @@ import {
   ClipboardList,
   FileText,
   Inbox,
-  MessageCircle,
-  Phone,
-  PlayCircle,
   Search,
   Sparkles,
   Workflow,
@@ -21,7 +18,6 @@ import { SectionHeader } from "@/components/ui/section-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { useToast, ToastPresets } from "@/components/ui/toast";
 
 const CATEGORIES = [
   {
@@ -58,7 +54,7 @@ const CATEGORIES = [
   {
     icon: Zap,
     title: "Integraciones",
-    detail: "WhatsApp Business, Mercado Pago, Pedidos Ya y más.",
+    detail: "Configuración de WhatsApp y permisos de los servicios disponibles.",
     href: "/ajustes/whatsapp",
   },
 ];
@@ -66,23 +62,23 @@ const CATEGORIES = [
 const FAQ = [
   {
     q: "¿Cómo conecto WhatsApp con GastroPilot?",
-    a: "Andá a Ajustes › WhatsApp y escaneá el QR con la cuenta de WhatsApp Business. La conexión queda activa para todo tu equipo.",
+    a: "Entrá en Ajustes › WhatsApp y seguí el proceso de conexión oficial de Meta disponible para tu cuenta. Verificá los permisos, el número y la llegada de un mensaje de prueba antes de considerar el canal operativo.",
   },
   {
     q: "¿Quién puede aprobar facturas y cierres?",
     a: "Sólo los usuarios con rol Encargado, Socio o Contador. Los empleados pueden cargar pero no aprobar.",
   },
   {
-    q: "¿La IA aprende mi voz de marca?",
-    a: "Sí. Después de la primera semana, la IA ajusta tono y estilo según cómo escribís y aprobás campañas.",
+    q: "¿Cómo sé si tengo la IA disponible?",
+    a: "Revisá Ajustes › IA para conocer el proveedor, el plan y el estado de consumo disponibles para tu negocio. Sin una configuración activa o cuota suficiente, algunas respuestas pueden no estar disponibles.",
   },
   {
     q: "¿Qué pasa si la IA se equivoca?",
-    a: "Cada registro queda como borrador hasta que vos lo aprobás. Si la IA marca dato faltante, se pregunta automáticamente por WhatsApp.",
+    a: "Las operaciones sensibles tienen revisiones y confirmaciones según el rol. Las fuentes de WhatsApp configuradas para solo lectura no responden automáticamente ni ejecutan operaciones.",
   },
   {
-    q: "¿Puedo exportar mi info para el contador?",
-    a: "Sí, desde Facturas y Reportes con un click. Se exporta en CSV, PDF y formato AFIP-friendly.",
+    q: "¿Dónde reviso los datos para mi contador?",
+    a: "Consultá Facturas y Reportes para ver los registros disponibles. Las opciones de descarga dependen del módulo; no todas las vistas ofrecen los mismos formatos.",
   },
   {
     q: "¿Funciona con varias sucursales o foodtrucks?",
@@ -92,7 +88,6 @@ const FAQ = [
 
 export default function AyudaPage() {
   const [query, setQuery] = useState("");
-  const { toast } = useToast();
   const filtered = FAQ.filter(
     (f) =>
       f.q.toLowerCase().includes(query.toLowerCase()) ||
@@ -104,7 +99,7 @@ export default function AyudaPage() {
       <SectionHeader
         eyebrow="Centro de ayuda"
         title="¿En qué te ayudamos?"
-        description="Buscá una guía, revisá las preguntas frecuentes o escribinos. Estamos para que GastroPilot ordene tu negocio en serio."
+        description="Buscá una guía, revisá las preguntas frecuentes y entrá a las herramientas de configuración disponibles."
       />
 
       {/* Buscador */}
@@ -115,13 +110,10 @@ export default function AyudaPage() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Buscar guías, integraciones, problemas conocidos…"
+            placeholder="Buscar en preguntas frecuentes…"
             className="h-9 flex-1 bg-transparent text-sm placeholder:text-ink-subtle focus:outline-none"
           />
-          <Badge tone="ai">
-            <Sparkles className="h-3 w-3" />
-            IA
-          </Badge>
+          <Badge tone="default">Buscar</Badge>
         </div>
       </div>
 
@@ -195,47 +187,39 @@ export default function AyudaPage() {
                 Preguntale directo al copiloto
               </h3>
               <p className="mt-1 text-xs text-ink-muted">
-                Resuelve dudas de uso, ejemplos de mensajes y mejores prácticas en
-                segundos.
+                Consultá reportes y herramientas disponibles. Las respuestas de IA dependen
+                de la configuración y el plan de tu negocio.
               </p>
               <Link href="/reportes">
                 <Button variant="ai" size="sm" className="mt-3">
                   <Sparkles className="h-3.5 w-3.5" />
-                  Abrir copiloto
+                  Abrir reportes
                 </Button>
               </Link>
             </div>
             <CardContent className="space-y-3">
-              <ContactRow
-                icon={MessageCircle}
-                label="Chat con soporte"
-                value="Lun a sáb · 9 a 22 hs"
-                onClick={() =>
-                  toast({
-                    tone: "ai",
-                    title: "Conectando con soporte…",
-                    description: "Te respondemos en menos de 5 minutos.",
-                  })
-                }
+              <HelpLinkRow
+                icon={BookOpen}
+                label="Guía del piloto"
+                value="Configuración y recorridos operativos"
+                href="/ayuda/piloto"
               />
-              <ContactRow
-                icon={Phone}
-                label="WhatsApp soporte"
-                value="+54 9 11 5556-7700"
-                onClick={() =>
-                  toast({
-                    tone: "ai",
-                    title: "Abriendo WhatsApp",
-                    description: "Te abrimos un chat con el equipo de soporte.",
-                  })
-                }
+              <HelpLinkRow
+                icon={Workflow}
+                label="Configurar WhatsApp"
+                value="Revisar conexión y permisos del canal"
+                href="/ajustes/whatsapp"
               />
-              <ContactRow
-                icon={PlayCircle}
-                label="Videos cortos"
-                value="6 tutoriales · 2-3 min cada uno"
-                onClick={() => toast(ToastPresets.comingSoon("Videoteca"))}
+              <HelpLinkRow
+                icon={Sparkles}
+                label="Estado de la IA"
+                value="Consultar plan y disponibilidad del motor"
+                href="/ajustes/ia"
               />
+              <p className="text-xs leading-relaxed text-ink-muted">
+                Los canales de soporte directo todavía no están habilitados en esta sección.
+                No mostramos teléfonos ni tiempos de respuesta sin un servicio verificado.
+              </p>
             </CardContent>
           </Card>
         </div>
@@ -275,22 +259,21 @@ function FaqRow({
   );
 }
 
-function ContactRow({
+function HelpLinkRow({
   icon: Icon,
   label,
   value,
-  onClick,
+  href,
 }: {
-  icon: any;
+  icon: typeof BookOpen;
   label: string;
   value: string;
-  onClick: () => void;
+  href: string;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-xl border border-line bg-bg-subtle/40 p-3 text-left transition-colors hover:border-line-strong hover:bg-bg-subtle"
+    <Link
+      href={href}
+      className="flex w-full items-center gap-3 rounded-xl border border-line bg-bg-subtle/40 p-3 text-left transition-colors hover:border-line-strong hover:bg-bg-subtle focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
     >
       <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-line bg-bg-elevated text-ink-muted">
         <Icon className="h-4 w-4" />
@@ -300,6 +283,6 @@ function ContactRow({
         <div className="text-xs text-ink-muted">{value}</div>
       </div>
       <ArrowRight className="h-4 w-4 text-ink-subtle" />
-    </button>
+    </Link>
   );
 }
