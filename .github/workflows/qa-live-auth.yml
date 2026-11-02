@@ -1,10 +1,27 @@
 name: E2E QA Auth real y lectura multiempresa
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/qa/live-auth-rls-readonly.mjs'
+      - '.github/workflows/qa-live-auth.yml'
 permissions:
   contents: read
 jobs:
+  syntax-only:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - run: node --check scripts/qa/live-auth-rls-readonly.mjs
   two-tenant:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

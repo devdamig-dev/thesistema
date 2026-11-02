@@ -34,7 +34,8 @@ async function signIn(email, password) {
   return {accessToken:data.access_token,userId:who.id};
 }
 async function select(client,table,filter=''){
-  const url=origin+'/rest/v1/'+table+'?select=*&limit=100'+filter;
+  const columns = table === orgTable ? 'id' : 'id,organization_id';
+  const url=origin+'/rest/v1/'+table+'?select='+encodeURIComponent(columns)+'&limit=100'+filter;
   const rows=await readResponse(await fetch(url,{
     headers:apiHeaders(client.accessToken),
     signal:AbortSignal.timeout(15000),
