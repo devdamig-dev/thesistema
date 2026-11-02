@@ -3,7 +3,7 @@
 Estado canónico para agentes: **seguir este archivo en orden y trabajar siempre sobre el primer objetivo no bloqueado**.
 
 ## Objetivo final
-Convertir GastroPilot en una plataforma SaaS gastronómica integral, IA-first, capaz de convivir inicialmente con Fudo y reemplazar progresivamente funciones operativas propias sin degradar seguridad, multiempresa, trazabilidad ni operación real.
+Convertir GastroPilot en una plataforma SaaS gastronómica integral, IA-first y todo-en-uno capaz de REEMPLAZAR FUDO por completo dentro del alcance definido. Fudo se utiliza únicamente como puente temporal de integración/migración, fuente de datos para pilotos y referencia funcional mientras GastroPilot incorpora capacidades nativas propias.
 
 ## Regla de ejecución autónoma
 1. Leer `AGENTS.md`, `QUALITY_GATE.md` y la skill pertinente antes de modificar.
@@ -138,4 +138,4 @@ Dependencias: se habilita incrementalmente con O1–O5.
 ---
 
 ## Métricas de salida del objetivo final
-GastroPilot sólo se considera “todo-en-uno” cuando un negocio piloto puede operar una jornada completa, desde apertura hasta cierre, sin depender de Fudo para las funciones incluidas en el alcance, con QA E2E, roles, aislamiento multiempresa, móvil, recuperación de errores y evidencia de producción.
+GastroPilot sólo se considera objetivo cumplido cuando un negocio piloto puede operar una jornada completa, desde apertura hasta cierre, SIN FUDO para las funciones incluidas en el alcance: operación, mesas, pedidos, comandas/KDS, stock, recetas, compras, proveedores, caja, pagos, reservas, CRM, reportes e IA operativa, con QA E2E, roles, aislamiento multiempresa, móvil, recuperación de errores y evidencia de producción. La integración con Fudo debe quedar como herramienta opcional de migración/importación, no como dependencia operativa.
