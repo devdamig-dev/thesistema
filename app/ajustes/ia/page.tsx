@@ -41,57 +41,34 @@ export default async function AjustesIAPage() {
         : "disconnected";
     }
 
-    const periodStart = new Date();
-    periodStart.setUTCDate(1);
-    periodStart.setUTCHours(0, 0, 0, 0);
-
-    const [planResult, eventsResult] = await Promise.all([
+    const [planResult, usageResult] = await Promise.all([
       supabase
         .from("ai_business_plans")
-        .select("plan_code,monthly_credits,hard_limit,overage_enabled,provider,routing_policy")
+        .select("plan_code,monthly_credits,hard_limit,overage_enabled")
         .eq("business_id", ctx.businessId)
         .maybeSingle(),
-      supabase
-        .from("ai_usage_events")
-        .select("credits,cost_usd_micros,model,status,reserved_at")
-        .eq("business_id", ctx.businessId)
-        .gte("reserved_at", periodStart.toISOString())
-        .in("status", ["reserved", "completed"]),
+      supabase.rpc("get_my_ai_usage_overview"),
     ]);
 
-    if (!planResult.error && planResult.data && !eventsResult.error) {
-      const rows = (eventsResult.data ?? []) as Array<{
-        credits: number;
-        cost_usd_micros: number | string;
-        model: string;
-        status: "reserved" | "completed";
-        reserved_at: string;
-      }>;
+    if (!planResult.error && planResult.data && !usageResult.error) {
+      const row = (usageResult.data ?? []).find(
+        (item: { business_id?: string }) => item.business_id === ctx.businessId,
+      ) as {
+        used_credits?: number | string;
+        request_count?: number | string;
+        latest_completed_at?: string | null;
+      } | undefined;
       const monthlyCredits = Number(planResult.data.monthly_credits ?? 0);
-      const usedCredits = rows.reduce((sum, row) => sum + Number(row.credits ?? 0), 0);
-      const costUsdMicros = rows
-        .filter((row) => row.status === "completed")
-        .reduce((sum, row) => sum + Number(row.cost_usd_micros ?? 0), 0);
-      const byModel = rows.reduce<Record<string, number>>((acc, row) => {
-        acc[row.model] = (acc[row.model] ?? 0) + Number(row.credits ?? 0);
-        return acc;
-      }, {});
-
-      const latestCompleted = rows.filter(row => row.status === "completed").sort((a, b) => Date.parse(b.reserved_at) - Date.parse(a.reserved_at))[0];
+      const usedCredits = Number(row?.used_credits ?? 0);
       usage = {
-        planCode: String(planResult.data.plan_code ?? "pilot"),
+        planCode: String(planResult.data.plan_code ?? "free"),
         monthlyCredits,
         usedCredits,
         remainingCredits: Math.max(0, monthlyCredits - usedCredits),
-        requestCount: rows.length,
-        costUsdMicros,
+        requestCount: Number(row?.request_count ?? 0),
         hardLimit: Boolean(planResult.data.hard_limit),
         overageEnabled: Boolean(planResult.data.overage_enabled),
-        provider: String(planResult.data.provider ?? "openai"),
-        routingPolicy: String(planResult.data.routing_policy ?? "managed_auto"),
-        byModel,
-        latestCompletedModel: latestCompleted?.model ?? null,
-        latestCompletedAt: latestCompleted?.reserved_at ?? null,
+        latestCompletedAt: row?.latest_completed_at ?? null,
       };
     }
   }
