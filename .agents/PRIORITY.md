@@ -11,3 +11,6 @@ Todo agente que trabaje en GastroPilot debe:
 - mantener Fudo read-only hasta que el roadmap habilite explícitamente escrituras.
 
 Bloqueos externos no detienen trabajo independiente: avanzar adapter, modelos, tests, UI, mocks contractuales y documentación mientras se espera la cuenta piloto.
+
+## Norte del producto
+El destino final NO es convivir con Fudo. GastroPilot debe reemplazarlo como sistema gastronómico todo-en-uno dentro del alcance definido. Toda integración con Fudo es transitoria y debe facilitar migración, aprendizaje y continuidad operativa mientras se construyen módulos nativos.
