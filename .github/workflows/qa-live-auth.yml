@@ -1,0 +1,24 @@
+name: E2E QA Auth real y lectura multiempresa
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  two-tenant:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - name: Probar login Auth y RLS con dos usuarios QA (sin datos de clientes)
+        env:
+          QA_PUBLIC_KEY: ${{ secrets.QA_PUBLIC_KEY }}
+          QA_USER_A_EMAIL: ${{ secrets.QA_USER_A_EMAIL }}
+          QA_USER_A_PASSWORD: ${{ secrets.QA_USER_A_PASSWORD }}
+          QA_USER_B_EMAIL: ${{ secrets.QA_USER_B_EMAIL }}
+          QA_USER_B_PASSWORD: ${{ secrets.QA_USER_B_PASSWORD }}
+        run: node scripts/qa/live-auth-rls-readonly.mjs
