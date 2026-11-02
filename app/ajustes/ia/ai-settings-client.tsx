@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { AlertTriangle, Bot, Check, CircleSlash2, Coins, Cpu, Gauge, LockKeyhole, MessageSquareText, Sparkles } from "lucide-react";
+import { AlertTriangle, Bot, Check, CircleSlash2, Coins, Gauge, LockKeyhole, MessageSquareText, Sparkles, type LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { SettingsCard } from "@/components/ajustes/setting-row";
 import type { WhatsAppCapability } from "@/lib/whatsapp-agent/registry";
+import { AI_COMMERCIAL_PLANS, AI_CREDIT_PACKS, formatAiPlanPrice } from "@/lib/ai/commercial-plans";
 
 export type WhatsAppConnectionState = "connected" | "disconnected" | "unknown" | "demo";
 
@@ -14,13 +15,8 @@ export type AiUsageOverview = {
   usedCredits: number;
   remainingCredits: number;
   requestCount: number;
-  costUsdMicros: number;
   hardLimit: boolean;
   overageEnabled: boolean;
-  provider: string;
-  routingPolicy: string;
-  byModel: Record<string, number>;
-  latestCompletedModel: string | null;
   latestCompletedAt: string | null;
 };
 
@@ -147,26 +143,16 @@ export function AiSettingsClient({
         {mode === "database" && usage ? (
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <Summary label="Plan IA" value={usage.planCode === "pilot" ? "Pilot" : usage.planCode} detail={usage.hardLimit ? "Límite mensual activo" : "Sin corte automático"} />
+              <Summary label="Plan IA" value={planLabel(usage.planCode)} detail={usage.hardLimit ? "Límite mensual activo" : "Sin corte automático"} />
               <Summary label="Créditos usados" value={`${usage.usedCredits.toLocaleString("es-AR")} / ${usage.monthlyCredits.toLocaleString("es-AR")}`} detail={`${usage.remainingCredits.toLocaleString("es-AR")} disponibles`} />
               <Summary label="Operaciones IA" value={usage.requestCount.toLocaleString("es-AR")} detail="Mes calendario actual" />
-              <Summary label="Costo interno" value={formatUsdMicros(usage.costUsdMicros)} detail="Visible sólo para control del producto" />
+              <Summary label="Última actividad" value={usage.latestCompletedAt ? new Date(usage.latestCompletedAt).toLocaleDateString("es-AR") : "—"} detail="Consumo administrado por GastroPilot" />
             </div>
-            <div className="grid gap-3 lg:grid-cols-3">
-              <EngineItem icon={Cpu} title="Proveedor administrado" detail={usage.provider === "openai" ? "OpenAI · cuenta administrada por GastroPilot" : usage.provider} />
-              <EngineItem icon={Gauge} title="Routing automático" detail="Luna para operación · Terra para análisis · Sol para casos complejos" />
-              <EngineItem icon={Coins} title="Motor verificado" detail={usage.latestCompletedModel && usage.latestCompletedAt ? `${usage.latestCompletedModel} · solicitud completada el ${new Date(usage.latestCompletedAt).toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires", dateStyle: "short", timeStyle: "short" })}` : "Sin ejecución completada verificable; un número vinculado no garantiza respuesta de IA."} />
+            <div className="grid gap-3 lg:grid-cols-2">
+              <EngineItem icon={Gauge} title="Motor automático" detail="GastroPilot selecciona el modelo más eficiente según cada tarea." />
+              <EngineItem icon={Coins} title="Saldo compartido" detail="Los créditos pertenecen al negocio y se comparten entre sus usuarios autorizados." />
             </div>
-            {Object.keys(usage.byModel).length > 0 && (
-              <div className="rounded-xl border border-line bg-bg-subtle/40 p-4">
-                <div className="text-xs font-semibold text-ink">Consumo por modelo</div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {Object.entries(usage.byModel).map(([model, credits]) => (
-                    <Badge key={model} tone="ai">{model} · {credits.toLocaleString("es-AR")} créditos</Badge>
-                  ))}
-                </div>
-              </div>
-            )}
+            <UsageBar used={usage.usedCredits} total={usage.monthlyCredits} />
           </div>
         ) : (
           <div className="flex items-start gap-3 rounded-xl border border-line bg-bg-subtle/40 p-4">
@@ -181,6 +167,37 @@ export function AiSettingsClient({
             </div>
           </div>
         )}
+      </SettingsCard>
+
+      <SettingsCard
+        title="Planes de Inteligencia Artificial"
+        description="Elegí capacidad para el negocio. La activación paga quedará vinculada al checkout; nunca se habilita un plan pago sin pago confirmado."
+      >
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {AI_COMMERCIAL_PLANS.map((plan) => (
+            <div key={plan.code} className={`rounded-xl border p-4 ${usage?.planCode === plan.code ? "border-ai-500/50 bg-ai-500/[0.06]" : "border-line bg-bg-subtle/40"}`}>
+              <div className="text-sm font-semibold text-ink">{plan.name}</div>
+              <div className="mt-2 text-2xl font-semibold text-ink">{formatAiPlanPrice(plan.priceUsdCents)}</div>
+              <div className="mt-1 text-xs text-ink-muted">{plan.monthlyCredits.toLocaleString("es-AR")} créditos / mes</div>
+              <Badge tone={usage?.planCode === plan.code ? "ai" : "default"} className="mt-3">
+                {usage?.planCode === plan.code ? "Plan actual" : plan.priceUsdCents === 0 ? "Sin IA" : "Activación con pago"}
+              </Badge>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-5">
+          <div className="mb-2 text-xs font-semibold text-ink">Packs adicionales</div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {AI_CREDIT_PACKS.map((pack) => (
+              <div key={pack.code} className="rounded-xl border border-line bg-bg-subtle/40 p-4">
+                <div className="text-sm font-semibold text-ink">{pack.name}</div>
+                <div className="mt-1 text-lg font-semibold text-ink">{formatAiPlanPrice(pack.priceUsdCents)}</div>
+                <div className="mt-1 text-xs text-ink-muted">{pack.credits.toLocaleString("es-AR")} créditos · vigencia {pack.validityDays} días</div>
+              </div>
+            ))}
+          </div>
+        </div>
       </SettingsCard>
     </div>
   );
@@ -197,7 +214,7 @@ function Summary({ label, value, detail }: { label: string; value: string; detai
 }
 
 
-function EngineItem({ icon: Icon, title, detail }: { icon: typeof Cpu; title: string; detail: string }) {
+function EngineItem({ icon: Icon, title, detail }: { icon: LucideIcon; title: string; detail: string }) {
   return (
     <div className="flex items-start gap-3 rounded-xl border border-line bg-bg-subtle/40 p-4">
       <Icon className="mt-0.5 h-4 w-4 shrink-0 text-ai-400" />
@@ -209,7 +226,24 @@ function EngineItem({ icon: Icon, title, detail }: { icon: typeof Cpu; title: st
   );
 }
 
-function formatUsdMicros(value: number) {
-  const usd = value / 1_000_000;
-  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "USD", minimumFractionDigits: usd < 0.01 ? 4 : 2, maximumFractionDigits: 4 }).format(usd);
+function planLabel(code: string) {
+  return AI_COMMERCIAL_PLANS.find((plan) => plan.code === code)?.name ?? code;
+}
+
+function UsageBar({ used, total }: { used: number; total: number }) {
+  const percentage = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
+  return (
+    <div className="rounded-xl border border-line bg-bg-subtle/40 p-4">
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span className="font-semibold text-ink">Consumo mensual</span>
+        <span className="tabular-nums text-ink-muted">{percentage}%</span>
+      </div>
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-bg-elevated">
+        <div className="h-full rounded-full bg-ai-500 transition-all" style={{ width: `${percentage}%` }} />
+      </div>
+      <div className="mt-2 text-[11px] text-ink-muted">
+        {used.toLocaleString("es-AR")} usados · {Math.max(0, total - used).toLocaleString("es-AR")} disponibles
+      </div>
+    </div>
+  );
 }
