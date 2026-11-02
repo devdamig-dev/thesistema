@@ -145,3 +145,41 @@ $$;
 
 revoke all on function public.ai_business_available_credits(uuid) from public, anon, authenticated;
 grant execute on function public.ai_business_available_credits(uuid) to service_role;
+
+
+-- Customer-safe usage summary. Raw ai_usage_events includes provider token counts
+-- and internal cost, therefore authenticated users must not select it directly.
+revoke select on public.ai_usage_events from authenticated;
+
+create or replace function public.get_my_ai_usage_overview()
+returns table (
+  business_id uuid,
+  used_credits bigint,
+  request_count bigint,
+  latest_completed_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select
+    p.business_id,
+    coalesce(sum(e.credits) filter (where e.status in ('reserved','completed')),0)::bigint as used_credits,
+    count(e.id) filter (where e.status in ('reserved','completed'))::bigint as request_count,
+    max(e.completed_at) filter (where e.status = 'completed') as latest_completed_at
+  from public.ai_business_plans p
+  left join public.ai_usage_events e
+    on e.business_id = p.business_id
+   and e.reserved_at >= date_trunc('month', now())
+  where exists (
+    select 1
+    from public.business_members m
+    where m.business_id = p.business_id
+      and m.user_id = auth.uid()
+  )
+  group by p.business_id;
+$$;
+
+revoke all on function public.get_my_ai_usage_overview() from public, anon;
+grant execute on function public.get_my_ai_usage_overview() to authenticated;
