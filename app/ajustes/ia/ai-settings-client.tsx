@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { AlertTriangle, Bot, Check, CircleSlash2, Coins, Gauge, LockKeyhole, MessageSquareText, Sparkles } from "lucide-react";
+import { AlertTriangle, Bot, Check, CircleSlash2, Coins, Gauge, LockKeyhole, MessageSquareText, Sparkles, type LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { SettingsCard } from "@/components/ajustes/setting-row";
 import type { WhatsAppCapability } from "@/lib/whatsapp-agent/registry";
@@ -214,7 +214,7 @@ function Summary({ label, value, detail }: { label: string; value: string; detai
 }
 
 
-function EngineItem({ icon: Icon, title, detail }: { icon: typeof Cpu; title: string; detail: string }) {
+function EngineItem({ icon: Icon, title, detail }: { icon: LucideIcon; title: string; detail: string }) {
   return (
     <div className="flex items-start gap-3 rounded-xl border border-line bg-bg-subtle/40 p-4">
       <Icon className="mt-0.5 h-4 w-4 shrink-0 text-ai-400" />
