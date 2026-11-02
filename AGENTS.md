@@ -16,3 +16,7 @@ Aplicar **NexoDG Engineering Standards v1.0**. Leer `PROJECT_CONTEXT.md`, `QUALI
 
 ## Skills de desarrollo
 Leer la Skill pertinente de `.agents/skills/`: nexodg-feature-delivery, nexodg-debugging, nexodg-qa, nexodg-integrations, nexodg-release o nexodg-commercial-landing. Son guías de trabajo; no sustituyen las pruebas reales ni las reglas del código.
+
+
+## Prioridad operativa actual
+Antes de iniciar trabajo no urgente, leer `.agents/PRIORITY.md` y `ROADMAP.md`. La prioridad vigente es el primer objetivo ACTIVO no bloqueado del roadmap.
