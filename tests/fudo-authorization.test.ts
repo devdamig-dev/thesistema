@@ -8,6 +8,7 @@ const USER = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 let role = "owner";
 let tenant = A;
 let validMembership = false;
+let profileActive = true;
 let memberLookups = 0;
 let storedRow: Record<string, unknown> | null = null;
 let syncRunning = false;
@@ -40,6 +41,7 @@ const db = {
       in(_field: string, _values: string[]) { return this; },
       limit(_value: number) { return Promise.resolve({ data: [], error: null }); },
       async maybeSingle() {
+        if (table === "profiles") return { data: { active: profileActive }, error: null };
         if (table === "business_members") {
           memberLookups++;
           return { data: validMembership && filters.business_id === tenant && filters.user_id === USER
@@ -88,6 +90,15 @@ test("Fudo owner/admin without a valid membership cannot connect another tenant"
   const outcome = await connectFudo(credentials);
   assert.equal(outcome.ok, false);
   assert.equal(storedRow, null);
+});
+
+test("Fudo inactive owner cannot access service credentials even with an active membership", async () => {
+  role = "owner"; tenant = A; validMembership = true; profileActive = false;
+  try {
+    const outcome = await connectFudo(credentials);
+    assert.equal(outcome.ok, false);
+    if (!outcome.ok) assert.equal(outcome.code, "forbidden");
+  } finally { profileActive = true; }
 });
 
 test("Fudo owner connection derives business_id from validated server session and encrypts stored data", async () => {
