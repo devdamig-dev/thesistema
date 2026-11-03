@@ -35,7 +35,8 @@ create table if not exists public.fudo_sync_progress (
   business_id uuid not null references public.businesses(id) on delete cascade,
   connection_generation uuid not null,
   resource_type text not null check (resource_type in ('products','ingredients','providers','orders','sales')),
-  next_page integer not null default 1 check (next_page between 1 and 100000),
+  -- 0 means that the resource completed this import cycle; next invocation skips it.
+  next_page integer not null default 1 check (next_page between 0 and 100000),
   last_complete_at timestamptz,
   updated_at timestamptz not null default now(),
   primary key (business_id, connection_generation, resource_type)
