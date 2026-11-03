@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { connectFudo, testStoredFudoConnection, disconnectFudo, syncFudoReadOnly, type FudoActionResult } from "@/lib/integrations/fudo/service";
+import { connectFudo, testStoredFudoConnection, inspectFudoReadPermissions, disconnectFudo, syncFudoReadOnly, type FudoActionResult } from "@/lib/integrations/fudo/service";
 
 const refresh = async (operation: Promise<FudoActionResult>) => {
   const result = await operation;
@@ -21,4 +21,9 @@ export async function disconnectFudoAction() {
 }
 export async function syncFudoAction() {
   return refresh(syncFudoReadOnly());
+}
+
+// Read-only diagnostics; never returns credentials or provider records.
+export async function inspectFudoPermissionsAction() {
+  return inspectFudoReadPermissions();
 }

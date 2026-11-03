@@ -5,14 +5,24 @@ import { useRouter } from "next/navigation";
 import { DatabaseZap, PlugZap, RefreshCcw, ShieldCheck, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/ajustes/setting-row";
-import type { FudoConnectionView } from "@/lib/integrations/fudo/service";
+import type { FudoConnectionView, FudoResourcePreflight } from "@/lib/integrations/fudo/service";
 import {
-  connectFudoAction, testFudoConnectionAction, disconnectFudoAction, syncFudoAction,
+  connectFudoAction, testFudoConnectionAction, inspectFudoPermissionsAction, disconnectFudoAction, syncFudoAction,
 } from "@/app/actions/fudo";
 
 const LABELS: Record<string, string> = {
   products: "Productos", ingredients: "Ingredientes", providers: "Proveedores",
   orders: "Pedidos", sales: "Ventas",
+};
+
+const ACCESS_LABELS: Record<string, string> = {
+  available: "Lectura disponible",
+  forbidden: "Sin permiso",
+  invalid_credentials: "Credenciales rechazadas",
+  api_unavailable: "API o recurso no disponible",
+  rate_limited: "Límite de consultas",
+  provider_unavailable: "Sin respuesta de Fudo",
+  invalid_response: "Formato incompatible",
 };
 
 export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
@@ -21,11 +31,13 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
   const [secret, setSecret] = useState("");
   const [working, startTransition] = useTransition();
   const [notice, setNotice] = useState<{ ok: boolean; message: string } | null>(null);
+  const [preflight, setPreflight] = useState<FudoResourcePreflight | null>(null);
   const connected = status.status === "connected";
   const hasCredentials = status.status !== "disconnected";
 
   const execute = (action: () => Promise<{ ok: boolean; message: string }>, clear = false) => {
     setNotice(null);
+    setPreflight(null);
     startTransition(async () => {
       const result = await action();
       setNotice({ ok: result.ok, message: result.message });
@@ -84,6 +96,13 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
             {hasCredentials && <Button disabled={working} onClick={() => execute(testFudoConnectionAction)}>
               <RefreshCcw className="h-4 w-4" /> Probar conexión
             </Button>}
+            {hasCredentials && <Button disabled={working} onClick={() => execute(async () => {
+              const result = await inspectFudoPermissionsAction();
+              setPreflight(result);
+              return result;
+            })}>
+              <ShieldCheck className="h-4 w-4" /> Revisar permisos de importación
+            </Button>}
           </div>
         </div>
         {notice && (
@@ -91,6 +110,24 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
             ? "border-success-500/30 text-success-400" : "border-warn-500/30 text-warn-400"}`}>
             {notice.message}
           </p>
+        )}
+        {preflight && preflight.checks.length > 0 && (
+          <div className="mt-3 rounded-xl border border-line p-4" aria-live="polite">
+            <p className="mb-3 text-xs font-semibold text-ink">Lectura por recurso (sin importar datos)</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {preflight.checks.map(({ resource, code }) => (
+                <p key={resource} className="flex items-center justify-between gap-3 text-xs">
+                  <span className="text-ink">{LABELS[resource] ?? resource}</span>
+                  <span className={code === "available" ? "text-success-400" : "text-warn-400"}>
+                    {ACCESS_LABELS[code] ?? "Error de lectura"}
+                  </span>
+                </p>
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-ink-muted">
+              Esta comprobación sólo lee una página de muestra por recurso; no confirma totales ni reemplaza la conciliación del piloto.
+            </p>
+          </div>
         )}
         <p className="mt-4 text-xs text-ink-muted">
           <a href="https://soporte.fu.do/es/articles/11939789-api-publica-de-proposito-general"

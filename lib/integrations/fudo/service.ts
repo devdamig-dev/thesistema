@@ -1,11 +1,16 @@
 import { getCurrentUserContext } from "@/lib/data/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isDatabaseMode } from "@/lib/env";
-import { FudoApiError, FudoClient, type FudoCredentials } from "./client";
+import { FudoApiError, FudoClient, type FudoCredentials, type FudoReadResourceStatus } from "./client";
 import { encryptFudoCredentials, decryptFudoCredentials } from "./crypto";
 import { FUDO_SYNC_PAGE_SIZE, FUDO_SYNC_RESOURCES, nextFudoPage, parseFudoPage } from "./snapshot";
 
 export type FudoActionResult = { ok: true; message: string } | { ok: false; code: string; message: string };
+export type FudoResourcePreflight = {
+  ok: boolean;
+  message: string;
+  checks: FudoReadResourceStatus[];
+};
 export type FudoSyncRunView = {
   startedAt: string;
   finishedAt: string | null;
@@ -187,6 +192,39 @@ export async function testStoredFudoConnection(): Promise<FudoActionResult> {
       return failure;
     }
   } catch (error) { return safeFailure(error); }
+}
+
+/**
+ * Pilot readiness check: five lightweight read-only GETs, one for each resource
+ * required for O1. This never persists provider payloads or mutates sync state.
+ * Only the authenticated business owner/admin sees sanitized resource outcomes.
+ */
+export async function inspectFudoReadPermissions(): Promise<FudoResourcePreflight> {
+  try {
+    const authorized = await authorize();
+    if (!authorized) {
+      return { ok: false, message: "Necesitás ser owner o administrador del negocio.", checks: [] };
+    }
+    const { actor, db } = authorized;
+    const stored = await db.from("fudo_connections").select("credentials_ciphertext")
+      .eq("business_id", actor.businessId).maybeSingle();
+    if (stored.error) return { ok: false, message: UNKNOWN, checks: [] };
+    if (!stored.data) return { ok: false, message: "Primero conectá Fudo.", checks: [] };
+    const credentials = decryptFudoCredentials(actor.businessId, stored.data.credentials_ciphertext);
+    const checks = await new FudoClient(credentials).probeReadAccess(FUDO_SYNC_RESOURCES);
+    const available = checks.filter((item) => item.code === "available").length;
+    return {
+      ok: available === FUDO_SYNC_RESOURCES.length,
+      message: available === FUDO_SYNC_RESOURCES.length
+        ? "Los cinco recursos respondieron con datos compatibles. Falta conciliar la importación real."
+        : `Acceso de lectura confirmado en ${available} de ${FUDO_SYNC_RESOURCES.length} recursos. Revisá permisos y disponibilidad antes de sincronizar.`,
+      checks,
+    };
+  } catch (error) {
+    // Global auth or ciphertext failures produce no fake per-resource success.
+    const result = safeFailure(error);
+    return { ok: false, message: result.message, checks: [] };
+  }
 }
 
 export async function disconnectFudo(): Promise<FudoActionResult> {
