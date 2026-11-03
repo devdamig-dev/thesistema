@@ -66,3 +66,10 @@ La primera importación no debe escribir movimientos financieros ni de stock pro
 - El cliente Fudo usa `redirect: "error"` tanto en el POST de autenticación como en GETs de lectura, para no redirigir secretos/tokens a otro destino.
 - Ningún resultado del diagnóstico equivale a conciliación completa, permisos de otras operaciones o validación con datos reales. La aplicación no realiza ninguna escritura en la API Fudo.
 - QA requerida: owner/admin, denegación por rol y membresía, A/B con distintas claves, caso 403/404/error temporal, redirecciones y esquema inválido. Validar en la cuenta piloto real una vez que se conecte.
+
+## O1 — Avance visible de la importación (03/11/2026)
+
+- El resumen owner/admin incorpora estado de cursor para cada recurso de la conexión actual: **Sin iniciar**, **Pendiente: página N** o **Ciclo leído**.
+- Los cursores se leen únicamente en el servidor, filtrados por `business_id` y `connection_generation`; el cliente no recibe identificadores externos, registros crudos ni credenciales.
+- **Ciclo leído** sólo indica que el cursor de esa importación llegó al final; todavía se deben comparar totales, integridad y permisos con la cuenta Fudo del piloto.
+- La interfaz no hace nuevas llamadas al proveedor ni modifica Fudo; el reporte ayuda a detectar cuál de los cinco recursos necesita otra tanda.
