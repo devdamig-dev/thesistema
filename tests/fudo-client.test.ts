@@ -112,3 +112,59 @@ test("Fudo foundation exposes only GET/list helpers and no mutation methods", ()
   assert.ok(!names.includes("post"));
   assert.ok(!names.includes("patch"));
 });
+
+test("Fudo never follows auth or API redirects carrying secrets or bearer tokens", async () => {
+  const seen: Array<{ method?: string; redirect?: RequestRedirect }> = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    seen.push({ method: init?.method, redirect: init?.redirect });
+    if (String(input) === "https://auth.fu.do/api") {
+      return jsonResponse({ token: "test-token", exp: 2_000_000_000 });
+    }
+    return jsonResponse({ data: [] });
+  };
+  const client = new FudoClient(
+    { apiKey: "private-key", apiSecret: "private-secret" },
+    { fetchImpl: fakeFetch, now: () => 1_800_000_000_000 },
+  );
+  await client.products();
+  assert.deepEqual(seen, [
+    { method: "POST", redirect: "error" },
+    { method: "GET", redirect: "error" },
+  ]);
+});
+
+test("Fudo preflight probes each resource without returning private records or permission details", async () => {
+  let authCalls = 0;
+  const requests: string[] = [];
+  const now = 1_800_000_000_000;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url === "https://auth.fu.do/api") {
+      authCalls++;
+      assert.equal(init?.redirect, "error");
+      return jsonResponse({ token: "private-bearer", exp: Math.floor((now + 86_400_000) / 1000) });
+    }
+    assert.equal(init?.method, "GET");
+    assert.equal(init?.redirect, "error");
+    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer private-bearer");
+    requests.push(url);
+    if (url.includes("/providers?")) return jsonResponse({ private: "do not expose" }, 403);
+    if (url.includes("/orders?")) return jsonResponse({ message: "non-JSON-API response with sensitive value" });
+    return jsonResponse({ data: [{ id: "example", attributes: { name: "private product data" } }] });
+  };
+  const client = new FudoClient(
+    { apiKey: "private-key", apiSecret: "private-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+  const results = await client.probeReadAccess(["products", "ingredients", "providers", "orders", "sales"]);
+  assert.equal(authCalls, 1);
+  assert.equal(requests.length, 5);
+  assert.deepEqual(results.map(({ resource, code }) => [resource, code]), [
+    ["products", "available"],
+    ["ingredients", "available"],
+    ["providers", "forbidden"],
+    ["orders", "invalid_response"],
+    ["sales", "available"],
+  ]);
+  assert.doesNotMatch(JSON.stringify(results), /private|bearer|secret|example|sensitive value/i);
+});
