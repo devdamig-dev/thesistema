@@ -105,17 +105,14 @@ export async function connectFudo(input: FudoCredentials): Promise<FudoActionRes
     // Fail closed if encryption is not available; never persist plaintext credentials.
     const encrypted = encryptFudoCredentials(authorized.actor.businessId, creds);
     await new FudoClient(creds).testConnection();
-    const running = await authorized.db.from("fudo_sync_runs").select("id").eq("business_id", authorized.actor.businessId).eq("status", "running").limit(1);
-    if (running.error) return fail("storage_unavailable", UNKNOWN);
-    if (running.data?.length) return fail("sync_running", "Hay una sincronización en curso; esperá antes de rotar credenciales.");
-    const saved = await authorized.db.from("fudo_connections").upsert({
-      business_id: authorized.actor.businessId, connection_generation: crypto.randomUUID(),
-      credentials_ciphertext: encrypted, status: "connected",
-      last_synced_at: null, last_sync_status: null,
-      last_tested_at: new Date().toISOString(), last_error_code: null,
-      updated_by: authorized.actor.userId, updated_at: new Date().toISOString(),
-    }, { onConflict: "business_id" });
+    // One transaction coordinates rotation with sync startup. Never check and write separately.
+    const saved = await authorized.db.rpc("fudo_replace_connection", {
+      p_business_id: authorized.actor.businessId, p_actor_id: authorized.actor.userId,
+      p_ciphertext: encrypted,
+    });
     if (saved.error) return fail("storage_unavailable", "No se pudo guardar la conexión cifrada. Verificá la migración Fudo.");
+    if (saved.data === "sync_running") return fail("sync_running", "Hay una sincronización en curso; esperá antes de rotar credenciales.");
+    if (saved.data !== "connected") return fail("storage_unavailable", UNKNOWN);
     return { ok: true, message: "Conexión validada y guardada. Fudo sigue siendo la fuente operativa; GastroPilot solo leerá datos." };
   } catch (error) { return safeFailure(error); }
 }
@@ -152,12 +149,12 @@ export async function disconnectFudo(): Promise<FudoActionResult> {
     const authorized = await authorize();
     if (!authorized) return fail("forbidden", "No tenés permiso para desconectar Fudo.");
     const { actor, db } = authorized;
-    const running = await db.from("fudo_sync_runs").select("id").eq("business_id", actor.businessId)
-      .eq("status", "running").limit(1);
-    if (running.error) return fail("storage_unavailable", UNKNOWN);
-    if (running.data?.length) return fail("sync_running", "Hay una sincronización en curso. Reintentá cuando termine.");
-    const removed = await db.from("fudo_connections").delete().eq("business_id", actor.businessId);
+    // Runs abandoned by serverless invocations are recovered here, even if credentials
+    // can no longer be decrypted (e.g. after a server key rotation).
+    const removed = await db.rpc("fudo_disconnect_connection", { p_business_id: actor.businessId });
     if (removed.error) return fail("storage_unavailable", UNKNOWN);
+    if (removed.data === "sync_running") return fail("sync_running", "Hay una sincronización en curso. Reintentá cuando termine.");
+    if (removed.data !== "disconnected") return fail("storage_unavailable", UNKNOWN);
     return { ok: true, message: "Se eliminaron las credenciales. Se conserva la importación histórica para auditoría interna; no habrá nuevas consultas a Fudo." };
   } catch (error) { return safeFailure(error); }
 }
@@ -188,18 +185,17 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
     const credentials = decryptFudoCredentials(actor.businessId, encryptedConnection);
     const client = new FudoClient(credentials);
 
-    // Recover abandoned invocations, while unique partial index prevents concurrent runs.
-    const staleBefore = new Date(Date.now() - 10 * 60_000).toISOString();
-    await db.from("fudo_sync_runs").update({
-      status: "failed", error_code: "interrupted", finished_at: new Date().toISOString(),
-    }).eq("business_id", actor.businessId).eq("status", "running").lt("started_at", staleBefore);
-
-    const created = await db.from("fudo_sync_runs").insert({
-      business_id: actor.businessId, connection_generation: generation, status: "running", started_by: actor.userId,
-    }).select("id").single();
-    if (created.error) return fail(created.error.code === "23505" ? "sync_running" : "storage_unavailable",
-      created.error.code === "23505" ? "Ya hay una sincronización activa de este negocio." : UNKNOWN);
-    runId = created.data.id;
+    // Fences disconnected/rotated credentials at sync startup, using the same
+    // transaction-level business lock as rotation and disconnection.
+    const started = await db.rpc("fudo_begin_sync", {
+      p_business_id: actor.businessId, p_expected_generation: generation,
+      p_actor_id: actor.userId,
+    });
+    if (started.error) return fail("storage_unavailable", UNKNOWN);
+    if (started.data?.code === "sync_running") return fail("sync_running", "Ya hay una sincronización activa de este negocio.");
+    if (started.data?.code === "connection_changed") return fail("connection_changed", "La conexión Fudo cambió; actualizá la pantalla e intentá nuevamente.");
+    if (started.data?.code !== "started" || typeof started.data?.run_id !== "string") return fail("storage_unavailable", UNKNOWN);
+    runId = started.data.run_id;
     const previous = await db.from("fudo_sync_progress").select("resource_type,next_page")
       .eq("business_id", actor.businessId).eq("connection_generation", generation);
     if (previous.error) throw new Error("fudo_storage_failed");
