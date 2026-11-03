@@ -182,9 +182,10 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       .eq("business_id", actor.businessId).maybeSingle();
     if (connection.error) return fail("storage_unavailable", UNKNOWN);
     if (!connection.data) return fail("not_connected", "Conectá Fudo antes de sincronizar.");
-    ciphertext = connection.data.credentials_ciphertext;
+    const encryptedConnection: string = connection.data.credentials_ciphertext;
+    ciphertext = encryptedConnection;
     generation = connection.data.connection_generation;
-    const credentials = decryptFudoCredentials(actor.businessId, ciphertext);
+    const credentials = decryptFudoCredentials(actor.businessId, encryptedConnection);
     const client = new FudoClient(credentials);
 
     // Recover abandoned invocations, while unique partial index prevents concurrent runs.
