@@ -69,3 +69,133 @@ revoke all on table public.fudo_connections, public.fudo_sync_runs,
  public.fudo_sync_progress, public.fudo_external_records from public, anon, authenticated;
 grant select, insert, update, delete on table public.fudo_connections, public.fudo_sync_runs,
  public.fudo_sync_progress, public.fudo_external_records to service_role;
+
+
+-- Fudo lifecycle fencing: serialize sync startup, rotation and disconnection on
+-- the same business row in one database transaction. A "running" check from
+-- JavaScript followed by a separate mutation is NOT concurrency safe.
+--
+-- A function can be abandoned by serverless termination. All entrypoints
+-- recover runs older than 10 minutes, even if decrypting credentials fails.
+-- Each request is bounded by provider timeouts (well below this threshold).
+
+create or replace function public.fudo_recover_stale_runs(p_business_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.fudo_sync_runs
+     set status = 'failed', error_code = 'interrupted', finished_at = now()
+   where business_id = p_business_id
+     and status = 'running'
+     and started_at < now() - interval '10 minutes';
+end;
+$$;
+
+create or replace function public.fudo_replace_connection(
+  p_business_id uuid,
+  p_actor_id uuid,
+  p_ciphertext text
+)
+returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if p_business_id is null or p_actor_id is null or
+     p_ciphertext is null or length(p_ciphertext) not between 50 and 16384
+  then return 'invalid_input'; end if;
+
+  -- Serializes all three lifecycle operations for this tenant.
+  perform 1 from public.businesses where id = p_business_id for update;
+  if not found then return 'not_found'; end if;
+  perform public.fudo_recover_stale_runs(p_business_id);
+  if exists (select 1 from public.fudo_sync_runs
+             where business_id = p_business_id and status = 'running')
+  then return 'sync_running'; end if;
+
+  insert into public.fudo_connections (
+    business_id, connection_generation, credentials_ciphertext, status,
+    last_synced_at, last_sync_status, last_tested_at, last_error_code, updated_by, updated_at
+  ) values (
+    p_business_id, gen_random_uuid(), p_ciphertext, 'connected',
+    null, null, now(), null, p_actor_id, now()
+  )
+  on conflict (business_id) do update
+    set connection_generation = excluded.connection_generation,
+        credentials_ciphertext = excluded.credentials_ciphertext,
+        status = 'connected',
+        last_synced_at = null,
+        last_sync_status = null,
+        last_tested_at = now(),
+        last_error_code = null,
+        updated_by = excluded.updated_by,
+        updated_at = now();
+  return 'connected';
+end;
+$$;
+
+create or replace function public.fudo_disconnect_connection(p_business_id uuid)
+returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if p_business_id is null then return 'invalid_input'; end if;
+  perform 1 from public.businesses where id = p_business_id for update;
+  if not found then return 'not_found'; end if;
+  perform public.fudo_recover_stale_runs(p_business_id);
+  if exists (select 1 from public.fudo_sync_runs
+             where business_id = p_business_id and status = 'running')
+  then return 'sync_running'; end if;
+  delete from public.fudo_connections where business_id = p_business_id;
+  return 'disconnected';
+end;
+$$;
+
+create or replace function public.fudo_begin_sync(
+  p_business_id uuid,
+  p_expected_generation uuid,
+  p_actor_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_run_id uuid;
+begin
+  if p_business_id is null or p_expected_generation is null or p_actor_id is null
+  then return jsonb_build_object('code', 'invalid_input'); end if;
+  perform 1 from public.businesses where id = p_business_id for update;
+  if not found then return jsonb_build_object('code', 'not_found'); end if;
+  perform public.fudo_recover_stale_runs(p_business_id);
+
+  if not exists (select 1 from public.fudo_connections
+                 where business_id = p_business_id
+                   and connection_generation = p_expected_generation
+                   and status = 'connected')
+  then return jsonb_build_object('code', 'connection_changed'); end if;
+  if exists (select 1 from public.fudo_sync_runs
+             where business_id = p_business_id and status = 'running')
+  then return jsonb_build_object('code', 'sync_running'); end if;
+  insert into public.fudo_sync_runs (business_id, connection_generation, status, started_by)
+    values (p_business_id, p_expected_generation, 'running', p_actor_id)
+    returning id into v_run_id;
+  return jsonb_build_object('code', 'started', 'run_id', v_run_id);
+end;
+$$;
+
+revoke all on function public.fudo_recover_stale_runs(uuid) from public, anon, authenticated;
+revoke all on function public.fudo_replace_connection(uuid,uuid,text) from public, anon, authenticated;
+revoke all on function public.fudo_disconnect_connection(uuid) from public, anon, authenticated;
+revoke all on function public.fudo_begin_sync(uuid,uuid,uuid) from public, anon, authenticated;
+grant execute on function public.fudo_recover_stale_runs(uuid) to service_role;
+grant execute on function public.fudo_replace_connection(uuid,uuid,text) to service_role;
+grant execute on function public.fudo_disconnect_connection(uuid) to service_role;
+grant execute on function public.fudo_begin_sync(uuid,uuid,uuid) to service_role;
