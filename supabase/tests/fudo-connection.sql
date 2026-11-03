@@ -86,7 +86,7 @@ begin
 
   perform pg_temp.fudo_assert(public.fudo_disconnect_connection(b)='disconnected',
     'other tenant remains independently manageable');
-end $;
+end $$;
 
 -- A full second cycle does not delete old staging rows; it marks which IDs
 -- were seen again, and only a finished cursor permits "possibly absent".
