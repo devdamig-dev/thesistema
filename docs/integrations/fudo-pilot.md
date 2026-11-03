@@ -73,3 +73,16 @@ La primera importación no debe escribir movimientos financieros ni de stock pro
 - Los cursores se leen únicamente en el servidor, filtrados por `business_id` y `connection_generation`; el cliente no recibe identificadores externos, registros crudos ni credenciales.
 - **Ciclo leído** sólo indica que el cursor de esa importación llegó al final; todavía se deben comparar totales, integridad y permisos con la cuenta Fudo del piloto.
 - La interfaz no hace nuevas llamadas al proveedor ni modifica Fudo; el reporte ayuda a detectar cuál de los cinco recursos necesita otra tanda.
+
+## O1 — Conciliación de presencia por ciclo (pendiente de QA y despliegue)
+
+La tabla de staging conserva IDs vistos en importaciones anteriores. Un nuevo escaneo de Fudo no demuestra que los registros históricos sigan presentes en origen; tampoco permite concluir que hayan sido eliminados si un recurso sólo se leyó parcialmente.
+
+- `fudo_sync_progress.cycle_started_at` identifica el inicio de la lectura completa por `business_id`, `connection_generation` y recurso. Se conserva al continuar páginas y al reintentar. Ante cursores históricos sin fecha, el estado se trata como **no verificable**, sin inventar un inicio.
+- La pantalla separa **Guardados** (histórico), **Vistos en ciclo** y **Posibles ausencias**. Una ausencia sólo se informa cuando el recurso tiene cursor completo (`next_page=0`), y significa *no fue visto en ese escaneo*, NO una baja definitiva del proveedor.
+- No se borra staging, ni se ejecutan escrituras sobre Fudo, ventas, stock o pedidos de GastroPilot. Los conteos sirven para preparar una conciliación manual con el negocio piloto, no para certificar paridad.
+- Al iniciar un nuevo ciclo, la comparación debe volver a estar pendiente hasta completar la paginación. La primera sincronización real del piloto debe contrastar fuente, ventana, permisos y conteos por recurso.
+- Requiere migración aditiva `20261103230000_fudo_cycle_reconciliation.sql` **antes** del despliegue de la app. Sin migración no habilitar esta nueva interfaz.
+- Rollback: revert de la app; conservar columna nullable e índice hasta una migración de rollback separada y revisada. No efectuar cambios sobre datos de cliente durante el rollback.
+
+Estado: **IMPLEMENTADO EN RAMA / QA Y DESPLIEGUE PENDIENTES / FUDO REAL NO VALIDADO**. Ver issue O1 [#180](https://github.com/devdamig-dev/thesistema/issues/180).
