@@ -7,8 +7,8 @@ const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const USER = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const GA = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const GB = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
-const CYCLE_A = "2026-11-03T09:00:00Z";
-const CYCLE_B = "2026-11-03T08:00:00Z";
+const CYCLE_A = "a1111111-1111-4111-8111-111111111111";
+const CYCLE_B = "b2222222-2222-4222-8222-222222222222";
 let tenant = A;
 let role = "owner";
 let isMember = true;
@@ -30,26 +30,25 @@ const runs = [
     counts: { products: 12 }, error_code: "another_tenant" },
 ];
 const progress = [
-  { business_id: A, connection_generation: GA, resource_type: "products", next_page: 3, cycle_started_at: CYCLE_A },
-  { business_id: A, connection_generation: GA, resource_type: "ingredients", next_page: 0, cycle_started_at: CYCLE_A },
+  { business_id: A, connection_generation: GA, resource_type: "products", next_page: 3, cycle_id: CYCLE_A },
+  { business_id: A, connection_generation: GA, resource_type: "ingredients", next_page: 0, cycle_id: CYCLE_A },
   { business_id: A, connection_generation: "ffffffff-ffff-4fff-8fff-ffffffffffff",
     resource_type: "sales", next_page: 99 },
-  { business_id: B, connection_generation: GB, resource_type: "products", next_page: 0, cycle_started_at: CYCLE_B },
+  { business_id: B, connection_generation: GB, resource_type: "products", next_page: 0, cycle_id: CYCLE_B },
 ];
 const records = [
-  { business_id: A, connection_generation: GA, resource_type: "products", id: "1", last_seen_at: "2026-11-03T09:05:00Z", payload: { secret: "PRIVATE_PAYLOAD_A" } },
-  { business_id: A, connection_generation: GA, resource_type: "products", id: "2", last_seen_at: "2026-11-02T08:00:00Z" },
-  { business_id: A, connection_generation: GA, resource_type: "ingredients", id: "3", last_seen_at: "2026-11-03T09:06:00Z" },
+  { business_id: A, connection_generation: GA, resource_type: "products", id: "1", last_seen_cycle_id: CYCLE_A, payload: { secret: "PRIVATE_PAYLOAD_A" } },
+  { business_id: A, connection_generation: GA, resource_type: "products", id: "2", last_seen_cycle_id: CYCLE_B },
+  { business_id: A, connection_generation: GA, resource_type: "ingredients", id: "3", last_seen_cycle_id: CYCLE_A },
   { business_id: A, connection_generation: "ffffffff-ffff-4fff-8fff-ffffffffffff",
     resource_type: "products", id: "4" },
-  { business_id: B, connection_generation: GB, resource_type: "products", id: "5", last_seen_at: "2026-11-03T09:04:00Z", payload: { secret: "PRIVATE_PAYLOAD_B" } },
+  { business_id: B, connection_generation: GB, resource_type: "products", id: "5", last_seen_cycle_id: CYCLE_B, payload: { secret: "PRIVATE_PAYLOAD_B" } },
 ];
 
 function query(table: string) {
   const filters: Record<string, unknown> = {};
   let countOnly = false;
   let max = Infinity;
-  const lowerBounds: Record<string, string> = {};
   const get = () => {
     if (table === "profiles") return [{ active: true }];
     if (table === "business_members") return isMember && filters.business_id === tenant && filters.user_id === USER ? [{ id: "member" }] : [];
@@ -58,15 +57,12 @@ function query(table: string) {
         : table === "fudo_sync_progress" ? progress
           : table === "fudo_external_records" ? records : [];
     const matches = all.filter((row) =>
-      Object.entries(filters).every(([key,value]) => (row as any)[key] === value)
-      && Object.entries(lowerBounds).every(([key,value]) =>
-        typeof (row as any)[key] === "string" && (row as any)[key] >= value));
+      Object.entries(filters).every(([key,value]) => (row as any)[key] === value));
     return matches.slice(0,max);
   };
   const q: any = {
     select(_fields: string, opts?: { count?: string; head?: boolean }) { countOnly = !!opts?.head; return this; },
     eq(key: string, value: unknown) { filters[key] = value; return this; },
-    gte(key: string, value: string) { lowerBounds[key] = value; return this; },
     in(_key: string, _values: unknown[]) { return this; },
     order(_key: string, _value: unknown) { return this; },
     limit(value: number) { max = value; return this; },
