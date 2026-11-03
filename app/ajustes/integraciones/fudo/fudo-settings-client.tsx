@@ -160,18 +160,27 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
           </div>
         </div>
         <div className="mt-3 rounded-lg border border-line p-4">
-          <p className="text-xs font-semibold text-ink">Total importado por recurso</p>
+          <p className="text-xs font-semibold text-ink">Conciliación preliminar de registros</p>
           <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-            Registros únicos guardados en staging de esta conexión. No son totales de Fudo
-            hasta que se complete la paginación y se concilien ambas fuentes.
+            Guardados incluye registros históricos que podrían haber desaparecido de Fudo.
+            Vistos corresponde al ciclo de lectura actual; las posibles ausencias se muestran
+            solamente cuando ese recurso completó todas sus páginas. Ninguna ausencia se elimina automáticamente.
           </p>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {Object.entries(LABELS).map(([code, label]) => (
-              <p key={code} className="flex justify-between gap-2 text-xs text-ink">
-                <span>{label}</span>
-                <span className="font-semibold tabular-nums">{(status.importedCounts[code] ?? 0).toLocaleString("es-AR")}</span>
-              </p>
-            ))}
+          <div className="mt-3 space-y-3">
+            {Object.entries(LABELS).map(([code, label]) => {
+              const seen = status.seenThisCycleCounts[code];
+              const missing = status.possiblyMissingCounts[code];
+              return (
+                <div key={code} className="rounded-lg border border-line/60 p-3 text-xs text-ink">
+                  <p className="mb-2 font-semibold">{label}</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div><p className="text-ink-muted">Guardados</p><p className="tabular-nums">{(status.importedCounts[code] ?? 0).toLocaleString("es-AR")}</p></div>
+                    <div><p className="text-ink-muted">Vistos en ciclo</p><p className="tabular-nums">{typeof seen === "number" ? seen.toLocaleString("es-AR") : "No verificable"}</p></div>
+                    <div><p className="text-ink-muted">Posibles ausencias</p><p className="tabular-nums">{typeof missing === "number" ? missing.toLocaleString("es-AR") : "Pendiente"}</p></div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
         <div className="mt-3 rounded-lg border border-line p-4">
