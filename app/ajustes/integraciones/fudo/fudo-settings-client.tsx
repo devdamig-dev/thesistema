@@ -174,6 +174,25 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
             ))}
           </div>
         </div>
+        <div className="mt-3 rounded-lg border border-line p-4">
+          <p className="text-xs font-semibold text-ink">Paginación de la importación actual</p>
+          <p className="mt-1 text-xs text-ink-muted">
+            Cada recurso conserva su avance. Una página completada no equivale a datos conciliados contra Fudo.
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {Object.entries(LABELS).map(([resource, label]) => {
+              const nextPage = status.nextPages[resource];
+              return (
+                <p key={resource} className="flex justify-between gap-2 text-xs text-ink">
+                  <span>{label}</span>
+                  <span className={nextPage === 0 ? "text-success-400" : "text-ink-muted"}>
+                    {nextPage === 0 ? "Ciclo leído" : typeof nextPage === "number" ? `Pendiente: página ${nextPage}` : "Sin iniciar"}
+                  </span>
+                </p>
+              );
+            })}
+          </div>
+        </div>
         {status.recentRuns.length > 0 && (
           <div className="mt-3 rounded-lg border border-line p-4">
             <p className="mb-3 text-xs font-semibold text-ink">Últimas cinco ejecuciones</p>
