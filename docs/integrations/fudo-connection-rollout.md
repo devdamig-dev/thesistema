@@ -38,3 +38,14 @@
 
 **Referencia Fudo (publicada 2026-10-02):**
 https://soporte.fu.do/es/articles/11939789-api-publica-de-proposito-general
+
+
+## O1 QA adicional — paginación y auditoría de piloto (03/11/2026)
+
+- El integrador usa ahora `links.next` cuando Fudo incluye metadatos JSON:API. Esto evita cerrar un recurso prematuramente si el proveedor limita cada página a menos de 100 registros, aunque se pidan 100.
+- Nunca se siguen URLs devueltas por el proveedor: el sistema incrementa exclusivamente el parámetro de página del endpoint Fudo allowlisted.
+- Si no hay `links.next`, se conserva la inferencia histórica por longitud de página; esa modalidad **no acredita cobertura completa** sin conciliación real.
+- La UI del owner/admin muestra registros **únicos almacenados** por recurso en la generación actual de conexión y un resumen de las cinco últimas corridas, con estado, conteos de cada tanda y códigos de error sanitizados; jamás credenciales ni payloads.
+- Los totales de staging **no equivalen a los totales definitivos de Fudo**. Al habilitar piloto real hay que comparar contra cada recurso/rango y registrar discrepancias. Las generaciones anteriores se conservan privadas pero no se agregan a la conexión vigente.
+- Regresiones automáticas: página corta con `links.next`, página llena con `links.next=null`, ausencia/metadatos inválidos, control de rol y separación entre tenants/generaciones en reporte. Pruebas de API real siguen pendientes.
+- No se habilitan escrituras, cron, movimientos de caja ni de stock.

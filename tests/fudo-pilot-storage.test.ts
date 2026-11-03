@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { randomBytes } from "node:crypto";
 import { encryptFudoCredentials, decryptFudoCredentials } from "../lib/integrations/fudo/crypto";
-import { parseFudoPage, FUDO_SYNC_PAGE_SIZE, FUDO_SYNC_RESOURCES } from "../lib/integrations/fudo/snapshot";
+import { nextFudoPage, parseFudoPage, FUDO_SYNC_PAGE_SIZE, FUDO_SYNC_RESOURCES } from "../lib/integrations/fudo/snapshot";
 
 const businessA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const businessB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -49,4 +49,35 @@ test("Fudo staging rejects ambiguous records and oversized provider pages", () =
   assert.throws(() => parseFudoPage({ data: [{ id: "1" }, { id: "1" }] }), /invalid_fudo_record/);
   assert.throws(() => parseFudoPage({ data: Array.from({ length: 101 }, (_, i) => ({ id: String(i) })) }), /invalid_fudo_page/);
   assert.throws(() => parseFudoPage({ data: [{ id: "1", attributes: { large: "z".repeat(131072) } }] }), /fudo_record_too_large/);
+});
+
+
+test("Fudo keeps paging a short provider-capped page when JSON:API links.next exists", () => {
+  const shortPage = { data: [{ id: "x1" }, { id: "x2" }],
+    links: { next: "https://api.fu.do/v1alpha1/products?page%5Bnumber%5D=2" } };
+  const rows = parseFudoPage(shortPage);
+  assert.equal(rows.length, 2);
+  assert.equal(nextFudoPage(shortPage, 1, rows.length), 2);
+  // A supplied URL is a signal only. The adapter still uses its fixed,
+  // allowlisted GET endpoint with numeric page parameters.
+  const offOrigin = { ...shortPage, links: { next: "https://malicious.invalid/exfiltrate" } };
+  assert.equal(nextFudoPage(offOrigin, 1, rows.length), 2);
+});
+
+test("Fudo pagination honors explicit end, even on a full page", () => {
+  const full = { data: Array.from({ length: FUDO_SYNC_PAGE_SIZE }, (_, i) => ({ id: String(i) })),
+    links: { next: null } };
+  assert.equal(nextFudoPage(full, 1, parseFudoPage(full).length), 0);
+  assert.equal(nextFudoPage({ data: [] }, 2, 0), 0);
+  assert.equal(nextFudoPage({ data: full.data }, 2, FUDO_SYNC_PAGE_SIZE), 3);
+  assert.equal(nextFudoPage({ data: full.data, links: { next: { href: "/products?page=3" } } }, 2, FUDO_SYNC_PAGE_SIZE), 3);
+});
+
+test("Fudo rejects malformed or inconsistent pagination metadata", () => {
+  assert.throws(() => nextFudoPage({ links: { next: true } }, 1, 2), /invalid_fudo_page/);
+  assert.throws(() => nextFudoPage({ links: { next: "/products?page=2" } }, 1, 0), /invalid_fudo_page/);
+  assert.throws(() => nextFudoPage({ links: { next: " " } }, 1, 2), /invalid_fudo_page/);
+  assert.throws(() => nextFudoPage({ links: null }, 1, 2), /invalid_fudo_page/);
+  assert.throws(() => nextFudoPage({ links: { next: "/products?page=100001" } }, 100000, 2), /invalid_fudo_page/);
+  assert.throws(() => nextFudoPage({ data: [] }, 0, 0), /invalid_fudo_page/);
 });

@@ -3,9 +3,17 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isDatabaseMode } from "@/lib/env";
 import { FudoApiError, FudoClient, type FudoCredentials } from "./client";
 import { encryptFudoCredentials, decryptFudoCredentials } from "./crypto";
-import { FUDO_SYNC_PAGE_SIZE, FUDO_SYNC_RESOURCES, parseFudoPage } from "./snapshot";
+import { FUDO_SYNC_PAGE_SIZE, FUDO_SYNC_RESOURCES, nextFudoPage, parseFudoPage } from "./snapshot";
 
 export type FudoActionResult = { ok: true; message: string } | { ok: false; code: string; message: string };
+export type FudoSyncRunView = {
+  startedAt: string;
+  finishedAt: string | null;
+  status: "running" | "completed" | "partial" | "failed";
+  counts: Record<string, number>;
+  errorCode: string | null;
+};
+
 export type FudoConnectionView = {
   configured: boolean;
   status: "disconnected" | "connected" | "error";
@@ -14,6 +22,8 @@ export type FudoConnectionView = {
   lastSyncStatus: string | null;
   lastErrorCode: string | null;
   lastCounts: Record<string, number>;
+  importedCounts: Record<string, number>;
+  recentRuns: FudoSyncRunView[];
 };
 
 type Actor = { businessId: string; userId: string };
@@ -72,18 +82,48 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
     return {
       configured: true, status: "disconnected",
       lastTestedAt: null, lastSyncedAt: null, lastSyncStatus: null, lastErrorCode: null, lastCounts: {},
+      importedCounts: {}, recentRuns: [],
     };
   }
-  const lastRun = await db.from("fudo_sync_runs").select("counts")
-    .eq("business_id", actor.businessId).eq("connection_generation", row.connection_generation).order("started_at", { ascending: false }).limit(1).maybeSingle();
-  const rawCounts = lastRun.error ? null : lastRun.data?.counts;
-  const counts: Record<string, number> = {};
-  if (rawCounts && typeof rawCounts === "object" && !Array.isArray(rawCounts)) {
-    for (const resource of FUDO_SYNC_RESOURCES) {
-      const n = (rawCounts as Record<string, unknown>)[resource];
-      if (typeof n === "number" && Number.isFinite(n) && n >= 0) counts[resource] = n;
+
+  // Keep the pilot's audit/count summary server-only; never return provider
+  // payloads, ciphertext, user IDs or raw authorization metadata to the UI.
+  const [recentResult, ...countResults] = await Promise.all([
+    db.from("fudo_sync_runs")
+      .select("started_at,finished_at,status,counts,error_code")
+      .eq("business_id", actor.businessId).eq("connection_generation", row.connection_generation)
+      .order("started_at", { ascending: false }).limit(5),
+    ...FUDO_SYNC_RESOURCES.map((resource) =>
+      db.from("fudo_external_records").select("id", { count: "exact", head: true })
+        .eq("business_id", actor.businessId).eq("connection_generation", row.connection_generation)
+        .eq("resource_type", resource)),
+  ]);
+  if (recentResult.error || countResults.some((result: { error?: unknown }) => result.error)) return null;
+  const safeCounts = (raw: unknown): Record<string, number> => {
+    const result: Record<string, number> = {};
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      for (const resource of FUDO_SYNC_RESOURCES) {
+        const n = (raw as Record<string, unknown>)[resource];
+        if (typeof n === "number" && Number.isFinite(n) && n >= 0) result[resource] = n;
+      }
     }
-  }
+    return result;
+  };
+  const recentRuns: FudoSyncRunView[] = ((recentResult.data ?? []) as Array<{
+    started_at: string; finished_at: string | null; status: FudoSyncRunView["status"];
+    counts: Record<string, unknown>; error_code: string | null;
+  }>).map((run) => ({
+    startedAt: run.started_at,
+    finishedAt: run.finished_at,
+    status: run.status,
+    counts: safeCounts(run.counts),
+    errorCode: run.error_code,
+  }));
+  const counts = recentRuns[0]?.counts ?? {};
+  const importedCounts: Record<string, number> = {};
+  FUDO_SYNC_RESOURCES.forEach((resource, index) => {
+    importedCounts[resource] = Math.max(0, Number(countResults[index].count ?? 0));
+  });
   return {
     configured: true,
     status: row.status === "connected" ? "connected" : "error",
@@ -92,6 +132,8 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
     lastSyncStatus: row.last_sync_status ?? null,
     lastErrorCode: row.last_error_code ?? null,
     lastCounts: counts,
+    importedCounts,
+    recentRuns,
   };
 }
 
@@ -235,11 +277,12 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
         if (saved.error) throw new Error("fudo_storage_failed");
       }
       counts[resource] = snapshots.length;
-      const partial = snapshots.length === FUDO_SYNC_PAGE_SIZE;
+      const nextPage = nextFudoPage(response, page, snapshots.length);
+      const partial = nextPage !== 0;
       hasPendingPages ||= partial;
       const progress = await db.from("fudo_sync_progress").upsert({
         business_id: actor.businessId, connection_generation: generation, resource_type: resource,
-        next_page: partial ? page + 1 : 0,
+        next_page: nextPage,
         last_complete_at: partial ? null : seenAt, updated_at: seenAt,
       }, { onConflict: "business_id,connection_generation,resource_type" });
       if (progress.error) throw new Error("fudo_storage_failed");

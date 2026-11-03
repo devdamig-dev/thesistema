@@ -122,6 +122,38 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
             </div>
           </div>
         </div>
+        <div className="mt-3 rounded-lg border border-line p-4">
+          <p className="text-xs font-semibold text-ink">Total importado por recurso</p>
+          <p className="mt-1 text-xs leading-relaxed text-ink-muted">
+            Registros únicos guardados en staging de esta conexión. No son totales de Fudo
+            hasta que se complete la paginación y se concilien ambas fuentes.
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {Object.entries(LABELS).map(([code, label]) => (
+              <p key={code} className="flex justify-between gap-2 text-xs text-ink">
+                <span>{label}</span>
+                <span className="font-semibold tabular-nums">{(status.importedCounts[code] ?? 0).toLocaleString("es-AR")}</span>
+              </p>
+            ))}
+          </div>
+        </div>
+        {status.recentRuns.length > 0 && (
+          <div className="mt-3 rounded-lg border border-line p-4">
+            <p className="mb-3 text-xs font-semibold text-ink">Últimas cinco ejecuciones</p>
+            <div className="space-y-2">
+              {status.recentRuns.map((run, index) => (
+                <div key={run.startedAt + index} className="flex flex-wrap items-center justify-between gap-2 border-b border-line/50 pb-2 text-xs last:border-0 last:pb-0">
+                  <span className="text-ink">{new Date(run.startedAt).toLocaleString("es-AR")}</span>
+                  <span className="text-ink-muted">{run.status === "completed" ? "Completada" : run.status === "partial" ? "Parcial" : run.status === "failed" ? "Fallida" : "En curso"}</span>
+                  <span className="tabular-nums text-ink-muted">
+                    {Object.values(run.counts).reduce((sum, n) => sum + n, 0).toLocaleString("es-AR")} registros en tanda
+                  </span>
+                  {run.errorCode && <span className="text-warn-400">Error: {run.errorCode}</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {status.lastErrorCode && <p className="mt-3 text-xs text-warn-400">
           Último error identificado: {status.lastErrorCode}
         </p>}
