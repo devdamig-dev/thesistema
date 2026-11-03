@@ -60,7 +60,7 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
   if (!authorized) return null;
   const { db, actor } = authorized;
   const connection = await db.from("fudo_connections")
-    .select("status,last_tested_at,last_synced_at,last_sync_status,last_error_code")
+    .select("connection_generation,status,last_tested_at,last_synced_at,last_sync_status,last_error_code")
     .eq("business_id", actor.businessId).maybeSingle();
   if (connection.error) return null;
   const row = connection.data;
@@ -71,7 +71,7 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
     };
   }
   const lastRun = await db.from("fudo_sync_runs").select("counts")
-    .eq("business_id", actor.businessId).order("started_at", { ascending: false }).limit(1).maybeSingle();
+    .eq("business_id", actor.businessId).eq("connection_generation", row.connection_generation).order("started_at", { ascending: false }).limit(1).maybeSingle();
   const rawCounts = lastRun.error ? null : lastRun.data?.counts;
   const counts: Record<string, number> = {};
   if (rawCounts && typeof rawCounts === "object" && !Array.isArray(rawCounts)) {
@@ -104,9 +104,13 @@ export async function connectFudo(input: FudoCredentials): Promise<FudoActionRes
     // Fail closed if encryption is not available; never persist plaintext credentials.
     const encrypted = encryptFudoCredentials(authorized.actor.businessId, creds);
     await new FudoClient(creds).testConnection();
+    const running = await authorized.db.from("fudo_sync_runs").select("id").eq("business_id", authorized.actor.businessId).eq("status", "running").limit(1);
+    if (running.error) return fail("storage_unavailable", UNKNOWN);
+    if (running.data?.length) return fail("sync_running", "Hay una sincronización en curso; esperá antes de rotar credenciales.");
     const saved = await authorized.db.from("fudo_connections").upsert({
-      business_id: authorized.actor.businessId,
+      business_id: authorized.actor.businessId, connection_generation: crypto.randomUUID(),
       credentials_ciphertext: encrypted, status: "connected",
+      last_synced_at: null, last_sync_status: null,
       last_tested_at: new Date().toISOString(), last_error_code: null,
       updated_by: authorized.actor.userId, updated_at: new Date().toISOString(),
     }, { onConflict: "business_id" });
@@ -167,6 +171,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
   let actor: Actor | null = null;
   let db: any;
   let ciphertext: string | null = null;
+  let generation: string | null = null;
   const counts: Record<string, number> = {};
   try {
     const authorized = await authorize();
@@ -177,6 +182,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
     if (connection.error) return fail("storage_unavailable", UNKNOWN);
     if (!connection.data) return fail("not_connected", "Conectá Fudo antes de sincronizar.");
     ciphertext = connection.data.credentials_ciphertext;
+    generation = connection.data.connection_generation;
     const credentials = decryptFudoCredentials(actor.businessId, ciphertext);
     const client = new FudoClient(credentials);
 
@@ -187,7 +193,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
     }).eq("business_id", actor.businessId).eq("status", "running").lt("started_at", staleBefore);
 
     const created = await db.from("fudo_sync_runs").insert({
-      business_id: actor.businessId, status: "running", started_by: actor.userId,
+      business_id: actor.businessId, connection_generation: generation, status: "running", started_by: actor.userId,
     }).select("id").single();
     if (created.error) return fail(created.error.code === "23505" ? "sync_running" : "storage_unavailable",
       created.error.code === "23505" ? "Ya hay una sincronización activa de este negocio." : UNKNOWN);
@@ -195,7 +201,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
     let hasPendingPages = false;
     for (const resource of FUDO_SYNC_RESOURCES) {
       const cursor = await db.from("fudo_sync_progress").select("next_page")
-        .eq("business_id", actor.businessId).eq("resource_type", resource).maybeSingle();
+        .eq("business_id", actor.businessId).eq("connection_generation", generation).eq("resource_type", resource).maybeSingle();
       if (cursor.error) throw new Error("fudo_storage_failed");
       const page = Number(cursor.data?.next_page || 1);
       const response = await client.list(resource, {
@@ -205,22 +211,22 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       const seenAt = new Date().toISOString();
       if (snapshots.length) {
         const rows = snapshots.map((entry) => ({
-          business_id: actor!.businessId, provider: "fudo", resource_type: resource,
+          business_id: actor!.businessId, connection_generation: generation, provider: "fudo", resource_type: resource,
           external_id: entry.externalId, payload: entry.payload, content_hash: entry.contentHash,
           source_updated_at: entry.sourceUpdatedAt, last_seen_at: seenAt,
         }));
         const saved = await db.from("fudo_external_records")
-          .upsert(rows, { onConflict: "business_id,resource_type,external_id" });
+          .upsert(rows, { onConflict: "business_id,connection_generation,resource_type,external_id" });
         if (saved.error) throw new Error("fudo_storage_failed");
       }
       counts[resource] = snapshots.length;
       const partial = snapshots.length === FUDO_SYNC_PAGE_SIZE;
       hasPendingPages ||= partial;
       const progress = await db.from("fudo_sync_progress").upsert({
-        business_id: actor.businessId, resource_type: resource,
+        business_id: actor.businessId, connection_generation: generation, resource_type: resource,
         next_page: partial ? page + 1 : 1,
         last_complete_at: partial ? null : seenAt, updated_at: seenAt,
-      }, { onConflict: "business_id,resource_type" });
+      }, { onConflict: "business_id,connection_generation,resource_type" });
       if (progress.error) throw new Error("fudo_storage_failed");
     }
     const status = hasPendingPages ? "partial" : "completed";
