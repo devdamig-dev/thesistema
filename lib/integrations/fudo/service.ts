@@ -4,6 +4,7 @@ import { isDatabaseMode } from "@/lib/env";
 import { FudoApiError, FudoClient, type FudoCredentials, type FudoReadResourceStatus } from "./client";
 import { encryptFudoCredentials, decryptFudoCredentials } from "./crypto";
 import { FUDO_SYNC_PAGE_SIZE, FUDO_SYNC_RESOURCES, nextFudoPage, parseFudoPage } from "./snapshot";
+import { runFudoReadBatch } from "./read-batch";
 
 export type FudoActionResult = { ok: true; message: string } | { ok: false; code: string; message: string };
 export type FudoResourcePreflight = {
@@ -292,13 +293,15 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
         .eq("business_id", actor.businessId).eq("connection_generation", generation);
       if (reset.error) throw new Error("fudo_storage_failed");
     }
-    let hasPendingPages = false;
-    for (const resource of FUDO_SYNC_RESOURCES) {
+    // Each Fudo GET may take up to 15s. Five sequential resource reads can
+    // time out a 60s function; three bounded workers keep progress resumable.
+    // Wait for ALL launched page writes to settle even if one resource fails.
+    const pendingPages = await runFudoReadBatch(FUDO_SYNC_RESOURCES, async (resource) => {
       const cursor = await db.from("fudo_sync_progress").select("next_page")
         .eq("business_id", actor.businessId).eq("connection_generation", generation).eq("resource_type", resource).maybeSingle();
       if (cursor.error) throw new Error("fudo_storage_failed");
       const page = cursor.data ? Number(cursor.data.next_page) : 1;
-      if (page === 0) { counts[resource] = 0; continue; }
+      if (page === 0) { counts[resource] = 0; return false; }
       const response = await client.list(resource, {
         "page[number]": page, "page[size]": FUDO_SYNC_PAGE_SIZE,
       });
@@ -317,14 +320,15 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       counts[resource] = snapshots.length;
       const nextPage = nextFudoPage(response, page, snapshots.length);
       const partial = nextPage !== 0;
-      hasPendingPages ||= partial;
       const progress = await db.from("fudo_sync_progress").upsert({
         business_id: actor.businessId, connection_generation: generation, resource_type: resource,
         next_page: nextPage,
         last_complete_at: partial ? null : seenAt, updated_at: seenAt,
       }, { onConflict: "business_id,connection_generation,resource_type" });
       if (progress.error) throw new Error("fudo_storage_failed");
-    }
+      return partial;
+    });
+    const hasPendingPages = pendingPages.some(Boolean);
     const status = hasPendingPages ? "partial" : "completed";
     const completed = new Date().toISOString();
     const [runUpdate, connUpdate] = await Promise.all([
