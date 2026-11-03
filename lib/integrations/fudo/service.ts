@@ -27,6 +27,7 @@ function safeFailure(error: unknown): FudoActionResult {
       forbidden: "El usuario de Fudo no tiene permisos para acceder al recurso solicitado.",
       rate_limited: "Fudo está limitando las consultas. Esperá y reintentá.",
       provider_unavailable: "No pudimos contactar la API de Fudo. Reintentá más tarde.",
+      api_unavailable: "El endpoint no está disponible. Revisá que la API Pública General de Fudo esté habilitada en Plan Pro.",
       invalid_response: "La API de Fudo devolvió un formato inesperado. Revisá la versión de la integración.",
     };
     return fail(error.code, messages[error.code] ?? UNKNOWN);
@@ -198,12 +199,26 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
     if (created.error) return fail(created.error.code === "23505" ? "sync_running" : "storage_unavailable",
       created.error.code === "23505" ? "Ya hay una sincronización activa de este negocio." : UNKNOWN);
     runId = created.data.id;
+    const previous = await db.from("fudo_sync_progress").select("resource_type,next_page")
+      .eq("business_id", actor.businessId).eq("connection_generation", generation);
+    if (previous.error) throw new Error("fudo_storage_failed");
+    const progressRows = (previous.data ?? []) as Array<{ resource_type: string; next_page: number }>;
+    // Once all five resources were completed, a new click begins a fresh full scan.
+    // During an incomplete cycle, already completed resources are not re-read.
+    const fullCycleFinished = FUDO_SYNC_RESOURCES.every((resource) =>
+      progressRows.some((row) => row.resource_type === resource && row.next_page === 0));
+    if (fullCycleFinished) {
+      const reset = await db.from("fudo_sync_progress").delete()
+        .eq("business_id", actor.businessId).eq("connection_generation", generation);
+      if (reset.error) throw new Error("fudo_storage_failed");
+    }
     let hasPendingPages = false;
     for (const resource of FUDO_SYNC_RESOURCES) {
       const cursor = await db.from("fudo_sync_progress").select("next_page")
         .eq("business_id", actor.businessId).eq("connection_generation", generation).eq("resource_type", resource).maybeSingle();
       if (cursor.error) throw new Error("fudo_storage_failed");
-      const page = Number(cursor.data?.next_page || 1);
+      const page = cursor.data ? Number(cursor.data.next_page) : 1;
+      if (page === 0) { counts[resource] = 0; continue; }
       const response = await client.list(resource, {
         "page[number]": page, "page[size]": FUDO_SYNC_PAGE_SIZE,
       });
@@ -224,7 +239,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       hasPendingPages ||= partial;
       const progress = await db.from("fudo_sync_progress").upsert({
         business_id: actor.businessId, connection_generation: generation, resource_type: resource,
-        next_page: partial ? page + 1 : 1,
+        next_page: partial ? page + 1 : 0,
         last_complete_at: partial ? null : seenAt, updated_at: seenAt,
       }, { onConflict: "business_id,connection_generation,resource_type" });
       if (progress.error) throw new Error("fudo_storage_failed");
