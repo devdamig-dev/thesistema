@@ -88,20 +88,20 @@ begin
     'other tenant remains independently manageable');
 end $$;
 
--- A full second cycle does not delete old staging rows; it marks which IDs
--- were seen again, and only a finished cursor permits "possibly absent".
+-- A full second cycle retains historical IDs; only the stable cycle UUID
+-- identifies records seen again. This does not depend on server clocks.
 insert into public.fudo_sync_progress (
-  business_id,connection_generation,resource_type,next_page,cycle_started_at,last_complete_at
+  business_id,connection_generation,resource_type,next_page,cycle_id,cycle_started_at,last_complete_at
 ) values
-('00000000-0000-4000-8000-000000008010','00000000-0000-4000-8000-000000008111','products',0,'2026-11-03T09:00:00Z','2026-11-03T09:03:00Z'),
-('00000000-0000-4000-8000-000000008020','00000000-0000-4000-8000-000000008222','products',2,'2026-11-03T09:00:00Z',null),
-('00000000-0000-4000-8000-000000008010','00000000-0000-4000-8000-000000008111','ingredients',1,null,null);
+('00000000-0000-4000-8000-000000008010','00000000-0000-4000-8000-000000008111','products',0,'00000000-0000-4000-8000-000000008311','2026-11-03T09:00:00Z','2026-11-03T09:03:00Z'),
+('00000000-0000-4000-8000-000000008020','00000000-0000-4000-8000-000000008222','products',2,'00000000-0000-4000-8000-000000008322','2026-11-03T09:00:00Z',null),
+('00000000-0000-4000-8000-000000008010','00000000-0000-4000-8000-000000008111','ingredients',1,null,null,null);
 insert into public.fudo_external_records (
-  business_id,connection_generation,resource_type,external_id,payload,content_hash,last_seen_at
+  business_id,connection_generation,resource_type,external_id,payload,content_hash,last_seen_cycle_id,last_seen_at
 ) values
-('00000000-0000-4000-8000-000000008010','00000000-0000-4000-8000-000000008111','products','seen-again','{"id":"seen-again"}',repeat('a',64),'2026-11-03T09:02:00Z'),
-('00000000-0000-4000-8000-000000008010','00000000-0000-4000-8000-000000008111','products','historical-only','{"id":"historical-only"}',repeat('a',64),'2026-11-01T09:02:00Z'),
-('00000000-0000-4000-8000-000000008020','00000000-0000-4000-8000-000000008222','products','other-business','{"id":"other-business"}',repeat('a',64),'2026-11-03T09:02:00Z');
+('00000000-0000-4000-8000-000000008010','00000000-0000-4000-8000-000000008111','products','seen-again','{"id":"seen-again"}',repeat('a',64),'00000000-0000-4000-8000-000000008311','2026-11-03T09:02:00Z'),
+('00000000-0000-4000-8000-000000008010','00000000-0000-4000-8000-000000008111','products','historical-only','{"id":"historical-only"}',repeat('a',64),'00000000-0000-4000-8000-000000008301','2026-11-03T09:04:00Z'),
+('00000000-0000-4000-8000-000000008020','00000000-0000-4000-8000-000000008222','products','other-business','{"id":"other-business"}',repeat('a',64),'00000000-0000-4000-8000-000000008322','2026-11-03T09:02:00Z');
 
 select pg_temp.fudo_assert(
   (select count(*)=2 from public.fudo_external_records
@@ -113,19 +113,19 @@ select pg_temp.fudo_assert(
    where business_id='00000000-0000-4000-8000-000000008010'
      and connection_generation='00000000-0000-4000-8000-000000008111'
      and resource_type='products'
-     and last_seen_at >= '2026-11-03T09:00:00Z'::timestamptz),
-  'second scan preserves both records but only one is seen in the current cycle');
+     and last_seen_cycle_id='00000000-0000-4000-8000-000000008311'),
+  'second scan retains historical records but only one belongs to this cycle');
 
 select pg_temp.fudo_assert(
   (select count(*)=1 from public.fudo_external_records
    where business_id='00000000-0000-4000-8000-000000008020'
      and connection_generation='00000000-0000-4000-8000-000000008222'
      and resource_type='products'
-     and last_seen_at >= '2026-11-03T09:00:00Z'::timestamptz)
+     and last_seen_cycle_id='00000000-0000-4000-8000-000000008322')
   and
-  (select cycle_started_at is null from public.fudo_sync_progress
+  (select cycle_id is null from public.fudo_sync_progress
    where business_id='00000000-0000-4000-8000-000000008010'
      and resource_type='ingredients'),
-  'tenant counts stay separate; legacy progress remains unknown');
+  'tenant counts stay separate; legacy cycle stays unknown');
 
 rollback;
