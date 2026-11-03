@@ -22,6 +22,7 @@ export type FudoClientOptions = {
   authUrl?: string;
   fetchImpl?: typeof fetch;
   now?: () => number;
+  timeoutMs?: number;
 };
 
 export type FudoListParams = Record<string, string | number | boolean | undefined>;
@@ -52,6 +53,7 @@ export class FudoApiError extends Error {
       | "forbidden"
       | "rate_limited"
       | "provider_unavailable"
+      | "api_unavailable"
       | "invalid_response",
     message: string,
     public readonly status: number | null,
@@ -82,6 +84,9 @@ function safeError(status: number): FudoApiError {
       status,
       false,
     );
+  }
+  if (status === 404) {
+    return new FudoApiError("api_unavailable", "No encontramos el endpoint de Fudo. Revisá la versión y la habilitación de la API.", status, false);
   }
   if (status === 429) {
     return new FudoApiError(
@@ -125,6 +130,7 @@ export class FudoClient {
   private readonly authUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
+  private readonly timeoutMs: number;
   private token: string | null = null;
   private tokenExpiresAt = 0;
 
@@ -144,6 +150,7 @@ export class FudoClient {
     this.authUrl = options.authUrl ?? DEFAULT_AUTH_URL;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.now = options.now ?? Date.now;
+    this.timeoutMs = Math.min(30000, Math.max(1000, options.timeoutMs ?? 15000));
   }
 
   private async authenticate(): Promise<void> {
@@ -160,6 +167,7 @@ export class FudoClient {
           apiSecret: this.credentials.apiSecret,
         }),
         cache: "no-store",
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch {
       throw new FudoApiError(
@@ -221,6 +229,7 @@ export class FudoClient {
             Authorization: `Bearer ${this.token}`,
           },
           cache: "no-store",
+          signal: AbortSignal.timeout(this.timeoutMs),
         },
       );
     } catch {

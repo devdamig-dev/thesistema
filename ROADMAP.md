@@ -45,6 +45,12 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### Avance técnico del 03/11/2026 (PR de O1 en revisión)
+- Se incorporó pantalla de conexión Fudo (owner/admin), cifrado AES-256-GCM con separación por business_id y generación de credenciales, prueba real de lectura, desconexión y rotación.
+- Implementado staging read-only separado de datos nativos, cursores para importar por páginas e idempotencia por origen + ID externo.
+- Pendiente: CI completo y aplicación segura de migración; secreto de cifrado en Vercel, cuenta Fudo de piloto con API Plan Pro habilitada y validación real de permisos, conteos, paginación y aislamiento A/B.
+- **No marcar O1 completo** hasta contar con evidencia E2E real de una cuenta autorizada y dashboard/IA de piloto verificados.
+
 ### Dependencia externa
 La API Pública General de Fudo requiere Plan Pro y credenciales/API habilitadas por el negocio.
 
