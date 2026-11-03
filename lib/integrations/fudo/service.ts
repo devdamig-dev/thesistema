@@ -50,9 +50,12 @@ async function authorize(): Promise<{ actor: Actor; db: any } | null> {
   const ctx = await getCurrentUserContext();
   if (!ctx.isAuthenticated || !ctx.userId || !ctx.businessId || !["owner", "admin"].includes(ctx.role)) return null;
   const db = createSupabaseAdminClient() as any;
-  const membership = await db.from("business_members").select("id")
-    .eq("business_id", ctx.businessId).eq("user_id", ctx.userId).in("role", ["owner", "admin"]).maybeSingle();
-  if (membership.error || !membership.data) return null;
+  const [membership, profile] = await Promise.all([
+    db.from("business_members").select("id")
+      .eq("business_id", ctx.businessId).eq("user_id", ctx.userId).in("role", ["owner", "admin"]).maybeSingle(),
+    db.from("profiles").select("active").eq("id", ctx.userId).maybeSingle(),
+  ]);
+  if (membership.error || !membership.data || profile.error || profile.data?.active !== true) return null;
   return { actor: { businessId: ctx.businessId, userId: ctx.userId }, db };
 }
 
