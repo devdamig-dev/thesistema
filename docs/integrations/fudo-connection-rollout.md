@@ -6,6 +6,7 @@
 - Cifrado AES-256-GCM en servidor usando AAD = `business_id` y clave de 32 bytes.
 - Aislamiento multiempresa: contexto de usuario autenticado, membresía y rol revistos en servidor; las cuatro tablas Fudo no tienen grants ni policies para `anon` o `authenticated`.
 - Importación únicamente GET: products, ingredients, providers, orders y sales. Una página de 100 por recurso por ejecución.
+- RPCs atómicas con lock por negocio para inicio de sync, rotación y desconexión; una invocación abandonada deja de bloquear después de 10 minutos, incluso si cambió la clave de cifrado.
 - JSON:API: `external_id`, `content_hash`, marca de origen, `connection_generation` para no mezclar fuentes tras rotar claves.
 - Resumen de cantidad por recurso, última sync, códigos de error seguros.
 - Tablas de staging privadas: **NO** crean ventas, pedidos, movimientos de caja ni stock en los módulos nativos.
@@ -25,7 +26,8 @@
 5. Probar 2 empresas reales de QA separadas: owner A, empleado A, owner B; A jamás accede a secret/payload/mappings de B.
 6. Repetir importación completa (cursor en página 1) y confirmar unicidad y actualización de `last_seen_at`.
 7. Rotar credenciales (no mientras sincroniza) y confirmar que una nueva `connection_generation` no mezcla los registros previos.
-8. Desconectar y comprobar que no se pueden hacer nuevas lecturas con la clave revocada. El staging histórico permanece privado hasta una política explícita de retención/limpieza.
+8. Desconectar y comprobar que no se pueden iniciar sincronizaciones con la clave revocada. El staging histórico permanece privado hasta una política explícita de retención/limpieza.
+9. Verificar las regresiones SQL `node scripts/run-catalog-sql.mjs fudo-connection` y `--native-docker` (CI), incluyendo bloqueo simultáneo, rotación y recuperación de ejecución abandonada.
 
 ## Limitaciones explícitas
 - **Sin cuenta Fudo autorizada no hay validación E2E de producción.** El contrato del proveedor procede de la documentación oficial y del adapter existente. Se deben contrastar respuesta, permisos, paginación y filtros reales.
