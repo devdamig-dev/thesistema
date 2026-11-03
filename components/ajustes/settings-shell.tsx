@@ -8,6 +8,7 @@ import {
   ChefHat,
   LucideIcon,
   MessageSquareText,
+  PlugZap,
   Settings,
   Users,
 } from "lucide-react";
@@ -19,6 +20,7 @@ const NAV: { href: string; label: string; icon: LucideIcon; description: string 
   { href: "/ajustes/negocio", label: "Negocio", icon: Building2, description: "Datos, sucursales y canales" },
   { href: "/ajustes/rubro", label: "Rubro", icon: ChefHat, description: "Adaptá los módulos a tu rubro" },
   { href: "/ajustes/whatsapp", label: "WhatsApp", icon: MessageSquareText, description: "Conexión y números autorizados" },
+  { href: "/ajustes/integraciones/fudo", label: "Fudo · piloto", icon: PlugZap, description: "Conectar y sincronizar Fudo en lectura" },
   { href: "/ajustes/ia", label: "Preferencias de IA", icon: Bot, description: "Tono, créditos y automatizaciones" },
   { href: "/ajustes/equipo", label: "Equipo y roles", icon: Users, description: "Usuarios, permisos y contador" },
 ];
