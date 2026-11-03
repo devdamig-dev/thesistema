@@ -56,3 +56,13 @@ La primera importación no debe escribir movimientos financieros ni de stock pro
 - Cambios de schema/API requieren adapter versionado.
 - No asumir que un 200 significa datos completos; reconciliar conteos y rangos.
 - No mezclar IDs Fudo con IDs internos.
+
+
+## O1 — Diagnóstico de permisos previo al piloto (03/11/2026)
+- Acción **Revisar permisos de importación**: sólo owner/admin con membresía activa puede ejecutarla; las credenciales se recuperan cifradas del servidor, ligadas al `business_id`.
+- Ejecuta GET de muestra (página 1, tamaño 1) en productos, ingredientes, proveedores, pedidos y ventas, sin persistir datos de proveedor, registrar resultados crudos ni crear movimientos nativos.
+- Para cada recurso indica solamente `available`, `forbidden`, `invalid_credentials`, `api_unavailable`, `rate_limited`, `provider_unavailable` o `invalid_response`. Un HTTP 200 con esquema incompatible no acredita acceso utilizable.
+- La autenticación se inicia una vez por diagnóstico; la consulta de cinco recursos es paralela para respetar límites de duración del servidor.
+- El cliente Fudo usa `redirect: "error"` tanto en el POST de autenticación como en GETs de lectura, para no redirigir secretos/tokens a otro destino.
+- Ningún resultado del diagnóstico equivale a conciliación completa, permisos de otras operaciones o validación con datos reales. La aplicación no realiza ninguna escritura en la API Fudo.
+- QA requerida: owner/admin, denegación por rol y membresía, A/B con distintas claves, caso 403/404/error temporal, redirecciones y esquema inválido. Validar en la cuenta piloto real una vez que se conecte.
