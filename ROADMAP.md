@@ -45,11 +45,12 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### Avance técnico del 03/11/2026 (PR de O1 en revisión)
-- Se incorporó pantalla de conexión Fudo (owner/admin), cifrado AES-256-GCM con separación por business_id y generación de credenciales, prueba real de lectura, desconexión y rotación.
-- Implementado staging read-only separado de datos nativos, cursores para importar por páginas e idempotencia por origen + ID externo.
-- Pendiente: CI completo y aplicación segura de migración; secreto de cifrado en Vercel, cuenta Fudo de piloto con API Plan Pro habilitada y validación real de permisos, conteos, paginación y aislamiento A/B.
-- **No marcar O1 completo** hasta contar con evidencia E2E real de una cuenta autorizada y dashboard/IA de piloto verificados.
+### Avance técnico del 03/11/2026
+- **IMPLEMENTADO / PROBADO (CI) / DESPLEGADO:** PR #166 mergeado a main, Quality #112 verde y Vercel Production READY según evidencia del issue #162. UI owner/admin, cifrado por `business_id`, test de lectura, desconexión/rotación, staging privado read-only, cursores, deduplicación, RPCs de exclusión mutua y recuperación de sync abandonada.
+- **DB/config:** migración `fudo_pilot_read_only_20261103` y clave maestra server-side aplicadas en el entorno de GastroPilot; las ACL verificadas niegan lectura a `authenticated`.
+- **Nueva mejora de O1 (PR posterior en QA):** paginación JSON:API sensible a `links.next` para no truncar importaciones cuando Fudo devuelva menos de 100 registros por página, más totales de staging por recurso y últimas cinco ejecuciones para conciliación del piloto. No marcar PROBADO ni DESPLEGADO hasta que se confirme CI/merge/deploy de ese PR.
+- **VALIDADO CON FUDO REAL: NO.** Falta cuenta Fudo Plan Pro/API habilitada y prueba con conexión real, permisos por recurso, conteos, paginación, renovación de token y aislamiento A/B con sesiones reales. El staging todavía no alimenta dashboard/IA normalizados; eso corresponde a O2.
+- **No marcar O1 completo** hasta evidencia E2E real de una cuenta autorizada y dashboard/IA de piloto verificados.
 
 ### Dependencia externa
 La API Pública General de Fudo requiere Plan Pro y credenciales/API habilitadas por el negocio.
