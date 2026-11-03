@@ -225,7 +225,7 @@ test("Fudo five concurrent probes share one refresh after an expired bearer", as
   let authCount = 0;
   let oldBearerReads = 0;
   let newBearerReads = 0;
-  let releaseOldReads: (() => void) | null = null;
+  let releaseOldReads: () => void = () => {};
   const allOldReads = new Promise<void>((resolve) => { releaseOldReads = resolve; });
 
   const fakeFetch: typeof fetch = async (input, init) => {
@@ -241,7 +241,7 @@ test("Fudo five concurrent probes share one refresh after an expired bearer", as
     const bearer = new Headers(init?.headers).get("authorization");
     if (bearer === "Bearer bearer-1") {
       oldBearerReads++;
-      if (oldBearerReads === resources.length) releaseOldReads?.();
+      if (oldBearerReads === resources.length) releaseOldReads();
       // All first requests reach Fudo before the revoked token is rejected.
       await allOldReads;
       return jsonResponse({ error: "revoked (must not leak)" }, 401);
