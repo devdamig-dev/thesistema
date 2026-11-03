@@ -42,3 +42,45 @@ export function parseFudoPage(value: unknown): FudoSnapshot[] {
     };
   });
 }
+
+
+/**
+ * Resolve page-number progress using the provider's explicit JSON:API next link
+ * when available. A provider may cap page size below our requested 100 records:
+ * a short response alone must not be treated as the end of that resource.
+ *
+ * We NEVER fetch provider-supplied links (which could point off-origin).
+ * Instead, they are only a continuation signal for our allowlisted, fixed
+ * Fudo endpoint and incremented numeric page parameter.
+ */
+export function nextFudoPage(response: unknown, currentPage: number, recordCount: number): number {
+  if (!Number.isSafeInteger(currentPage) || currentPage < 1 || currentPage > 100000
+    || !Number.isSafeInteger(recordCount) || recordCount < 0 || recordCount > FUDO_SYNC_PAGE_SIZE) {
+    throw new Error("invalid_fudo_page");
+  }
+  if (response && typeof response === "object" && !Array.isArray(response)) {
+    const links = (response as Record<string, unknown>).links;
+    if (links !== undefined) {
+      if (!links || typeof links !== "object" || Array.isArray(links)) {
+        throw new Error("invalid_fudo_page");
+      }
+      if (Object.prototype.hasOwnProperty.call(links, "next")) {
+        const next = (links as Record<string, unknown>).next;
+        if (next === null) return 0;
+        const href = typeof next === "string" ? next
+          : next && typeof next === "object" && !Array.isArray(next)
+            ? (next as Record<string, unknown>).href
+            : null;
+        if (typeof href !== "string" || href.trim().length === 0
+          || recordCount === 0 || currentPage === 100000) {
+          throw new Error("invalid_fudo_page");
+        }
+        return currentPage + 1;
+      }
+    }
+  }
+  // Backwards-compatible fallback only when next-link metadata is absent.
+  if (recordCount !== FUDO_SYNC_PAGE_SIZE) return 0;
+  if (currentPage === 100000) throw new Error("invalid_fudo_page");
+  return currentPage + 1;
+}
