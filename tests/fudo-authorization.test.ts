@@ -166,3 +166,30 @@ test("Fudo connection and disconnection both defer to atomic DB lifecycle lock",
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = beforeKey;
   }
 });
+
+test("Fudo connection does not persist credentials when HTTP 200 body is not importable", async () => {
+  role = "owner"; tenant = A; validMembership = true; profileActive = true; syncRunning = false;
+  storedRow = null;
+  const writesBefore = rpcCalls.filter((call) => call === "fudo_replace_connection").length;
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32, 21).toString("base64");
+  globalThis.fetch = async (input) => String(input).includes("auth.fu.do")
+    ? new Response(JSON.stringify({ token: "example-token", exp: Math.floor(Date.now()/1000)+86400 }), { status: 200 })
+    : new Response(JSON.stringify({ secret: "private-data", message: "unusable response" }), { status: 200 });
+
+  try {
+    const result = await connectFudo(credentials);
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.code, "invalid_response");
+      assert.doesNotMatch(result.message, /private-data|example-token|pilot-test/i);
+    }
+    assert.equal(storedRow, null);
+    assert.equal(rpcCalls.filter((call) => call === "fudo_replace_connection").length, writesBefore);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
