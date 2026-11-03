@@ -7,13 +7,13 @@ test("Fudo imports at most three resource pages at once and preserves resource r
   const started: string[] = [];
   let active = 0;
   let peak = 0;
-  let releaseFirst: (() => void) | null = null;
+  let releaseFirst: () => void = () => {};
   const firstWave = new Promise<void>((resolve) => { releaseFirst = resolve; });
   const pending = runFudoReadBatch(resources, async (resource) => {
     active++;
     peak = Math.max(peak, active);
     started.push(resource);
-    if (started.length === 3) releaseFirst?.();
+    if (started.length === 3) releaseFirst();
     await firstWave;
     active--;
     return resource.toUpperCase();
@@ -27,7 +27,7 @@ test("Fudo imports at most three resource pages at once and preserves resource r
 test("Fudo sync drains in-flight page persistence before reporting an unrelated read failure", async () => {
   let startedSlow = false;
   let finishedSlow = false;
-  let releaseSlow: (() => void) | null = null;
+  let releaseSlow: () => void = () => {};
   const slow = new Promise<void>((resolve) => { releaseSlow = resolve; });
   const batch = runFudoReadBatch(["bad", "slow", "another"], async (resource) => {
     if (resource === "bad") throw new Error("sanitized_provider_failure");
@@ -42,7 +42,7 @@ test("Fudo sync drains in-flight page persistence before reporting an unrelated 
   await Promise.resolve();
   assert.equal(startedSlow, true);
   assert.equal(finishedSlow, false);
-  releaseSlow?.();
+  releaseSlow();
   await assert.rejects(batch, /sanitized_provider_failure/);
   assert.equal(finishedSlow, true, "no page write is left running after failure finalization");
 });
