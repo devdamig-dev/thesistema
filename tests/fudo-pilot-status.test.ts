@@ -7,6 +7,8 @@ const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const USER = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const GA = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const GB = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const CYCLE_A = "2026-11-03T09:00:00Z";
+const CYCLE_B = "2026-11-03T08:00:00Z";
 let tenant = A;
 let role = "owner";
 let isMember = true;
@@ -28,25 +30,26 @@ const runs = [
     counts: { products: 12 }, error_code: "another_tenant" },
 ];
 const progress = [
-  { business_id: A, connection_generation: GA, resource_type: "products", next_page: 3 },
-  { business_id: A, connection_generation: GA, resource_type: "ingredients", next_page: 0 },
+  { business_id: A, connection_generation: GA, resource_type: "products", next_page: 3, cycle_started_at: CYCLE_A },
+  { business_id: A, connection_generation: GA, resource_type: "ingredients", next_page: 0, cycle_started_at: CYCLE_A },
   { business_id: A, connection_generation: "ffffffff-ffff-4fff-8fff-ffffffffffff",
     resource_type: "sales", next_page: 99 },
-  { business_id: B, connection_generation: GB, resource_type: "products", next_page: 0 },
+  { business_id: B, connection_generation: GB, resource_type: "products", next_page: 0, cycle_started_at: CYCLE_B },
 ];
 const records = [
-  { business_id: A, connection_generation: GA, resource_type: "products", id: "1", payload: { secret: "PRIVATE_PAYLOAD_A" } },
-  { business_id: A, connection_generation: GA, resource_type: "products", id: "2" },
-  { business_id: A, connection_generation: GA, resource_type: "ingredients", id: "3" },
+  { business_id: A, connection_generation: GA, resource_type: "products", id: "1", last_seen_at: "2026-11-03T09:05:00Z", payload: { secret: "PRIVATE_PAYLOAD_A" } },
+  { business_id: A, connection_generation: GA, resource_type: "products", id: "2", last_seen_at: "2026-11-02T08:00:00Z" },
+  { business_id: A, connection_generation: GA, resource_type: "ingredients", id: "3", last_seen_at: "2026-11-03T09:06:00Z" },
   { business_id: A, connection_generation: "ffffffff-ffff-4fff-8fff-ffffffffffff",
     resource_type: "products", id: "4" },
-  { business_id: B, connection_generation: GB, resource_type: "products", id: "5", payload: { secret: "PRIVATE_PAYLOAD_B" } },
+  { business_id: B, connection_generation: GB, resource_type: "products", id: "5", last_seen_at: "2026-11-03T09:04:00Z", payload: { secret: "PRIVATE_PAYLOAD_B" } },
 ];
 
 function query(table: string) {
   const filters: Record<string, unknown> = {};
   let countOnly = false;
   let max = Infinity;
+  const lowerBounds: Record<string, string> = {};
   const get = () => {
     if (table === "profiles") return [{ active: true }];
     if (table === "business_members") return isMember && filters.business_id === tenant && filters.user_id === USER ? [{ id: "member" }] : [];
@@ -54,12 +57,16 @@ function query(table: string) {
       : table === "fudo_sync_runs" ? runs
         : table === "fudo_sync_progress" ? progress
           : table === "fudo_external_records" ? records : [];
-    const matches = all.filter((row) => Object.entries(filters).every(([key,value]) => (row as any)[key] === value));
+    const matches = all.filter((row) =>
+      Object.entries(filters).every(([key,value]) => (row as any)[key] === value)
+      && Object.entries(lowerBounds).every(([key,value]) =>
+        typeof (row as any)[key] === "string" && (row as any)[key] >= value));
     return matches.slice(0,max);
   };
   const q: any = {
     select(_fields: string, opts?: { count?: string; head?: boolean }) { countOnly = !!opts?.head; return this; },
     eq(key: string, value: unknown) { filters[key] = value; return this; },
+    gte(key: string, value: string) { lowerBounds[key] = value; return this; },
     in(_key: string, _values: unknown[]) { return this; },
     order(_key: string, _value: unknown) { return this; },
     limit(value: number) { max = value; return this; },
@@ -93,6 +100,11 @@ test("Fudo pilot report returns only current tenant/current generation aggregate
   assert.equal(report.importedCounts.products, 2);
   assert.equal(report.importedCounts.ingredients, 1);
   assert.equal(report.importedCounts.sales, 0);
+  assert.equal(report.seenThisCycleCounts.products, 1, "only records from this scan count");
+  assert.equal(report.possiblyMissingCounts.products, null, "partial pages cannot claim removals");
+  assert.equal(report.seenThisCycleCounts.ingredients, 1);
+  assert.equal(report.possiblyMissingCounts.ingredients, 0, "completed current cycle has no missing IDs");
+  assert.equal(report.seenThisCycleCounts.sales, null, "unstarted resource has no cycle");
   assert.equal(report.recentRuns.length, 1);
   assert.equal(report.recentRuns[0].status, "partial");
   assert.deepEqual(report.lastCounts, { products: 20, ingredients: 2 });
@@ -112,10 +124,32 @@ test("Fudo pilot report rejects non-admin and unrelated memberships", async () =
   const report = await getFudoConnectionView();
   assert.ok(report);
   assert.equal(report.importedCounts.products, 1);
+  assert.equal(report.seenThisCycleCounts.products, 1);
+  assert.equal(report.possiblyMissingCounts.products, 0);
   assert.equal(report.recentRuns.length, 1);
   assert.equal(report.recentRuns[0].errorCode, "another_tenant");
   assert.equal(report.nextPages.products, 0);
   assert.equal(report.nextPages.ingredients, null);
   assert.equal(report.nextPages.sales, null);
   assert.doesNotMatch(JSON.stringify(report), /PRIVATE_CIPHERTEXT_A|PRIVATE_PAYLOAD_A/);
+});
+
+
+test("Fudo completed rescans flag possibly removed IDs without deleting staging or crossing tenants", async () => {
+  tenant = A; role = "owner"; isMember = true;
+  const prior = progress[0].next_page;
+  try {
+    // Once the product cursor is complete, the old product is a possible
+    // provider removal; no row deletion or provider mutation occurs here.
+    progress[0].next_page = 0;
+    const report = await getFudoConnectionView();
+    assert.ok(report);
+    assert.equal(report.importedCounts.products, 2);
+    assert.equal(report.seenThisCycleCounts.products, 1);
+    assert.equal(report.possiblyMissingCounts.products, 1);
+    assert.equal(report.possiblyMissingCounts.sales, null);
+    assert.doesNotMatch(JSON.stringify(report), /PRIVATE_|NEVER_SEND|another_tenant/);
+  } finally {
+    progress[0].next_page = prior;
+  }
 });
