@@ -91,9 +91,11 @@ test("Fudo owner connection derives business_id from validated server session an
     const outcome = await connectFudo({ ...credentials, businessId: B } as any);
     assert.equal(outcome.ok, true);
     assert.equal(dataReads, 1);
-    assert.equal(storedRow?.business_id, A);
-    assert.equal(storedRow?.status, "connected");
-    const encoded = String(storedRow?.credentials_ciphertext);
+    const saved = storedRow as Record<string, unknown> | null;
+    assert.ok(saved);
+    assert.equal(saved.business_id, A);
+    assert.equal(saved.status, "connected");
+    const encoded = String(saved.credentials_ciphertext);
     assert.ok(encoded.startsWith("v1."));
     assert.ok(!encoded.includes(credentials.apiKey));
     assert.ok(!encoded.includes(credentials.apiSecret));
