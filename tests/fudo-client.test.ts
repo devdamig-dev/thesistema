@@ -168,3 +168,52 @@ test("Fudo preflight probes each resource without returning private records or p
   ]);
   assert.doesNotMatch(JSON.stringify(results), /private|bearer|secret|example|sensitive value/i);
 });
+
+test("Fudo connection probe rejects an HTTP 200 with incompatible JSON:API payload", async () => {
+  let authCalls = 0;
+  let readCalls = 0;
+  const now = 1_800_000_000_000;
+  const fakeFetch: typeof fetch = async (input) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      authCalls++;
+      return jsonResponse({ token: "private-bearer", exp: Math.floor((now + 86400000) / 1000) });
+    }
+    readCalls++;
+    return jsonResponse({ message: "provider error wrapped in 200", apiKey: "PRIVATE_LEAK" });
+  };
+  const client = new FudoClient(
+    { apiKey: "valid-looking-key", apiSecret: "valid-looking-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+
+  await assert.rejects(
+    () => client.testConnection(),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, "invalid_fudo_page");
+      assert.doesNotMatch(error.message, /PRIVATE_LEAK|valid-looking/);
+      return true;
+    },
+  );
+  assert.equal(authCalls, 1);
+  assert.equal(readCalls, 1);
+});
+
+test("Fudo connection probe accepts compatible empty and one-record JSON:API pages", async () => {
+  let reads = 0;
+  const now = 1_800_000_000_000;
+  const fakeFetch: typeof fetch = async (input) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      return jsonResponse({ token: "test", exp: Math.floor((now + 86400000) / 1000) });
+    }
+    reads++;
+    return jsonResponse(reads === 1 ? { data: [] } : { data: [{ id: "product-1", attributes: { name: "Demo" } }] });
+  };
+  const client = new FudoClient(
+    { apiKey: "valid-looking-key", apiSecret: "valid-looking-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+  assert.deepEqual(await client.testConnection(), { ok: true });
+  assert.deepEqual(await client.testConnection(), { ok: true });
+  assert.equal(reads, 2);
+});
