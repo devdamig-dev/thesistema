@@ -29,6 +29,8 @@ export type FudoConnectionView = {
   lastErrorCode: string | null;
   lastCounts: Record<string, number>;
   importedCounts: Record<string, number>;
+  /** Next read page per resource: null = not started, 0 = completed, >0 = pending. */
+  nextPages: Record<string, number | null>;
   recentRuns: FudoSyncRunView[];
 };
 
@@ -88,23 +90,27 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
     return {
       configured: true, status: "disconnected",
       lastTestedAt: null, lastSyncedAt: null, lastSyncStatus: null, lastErrorCode: null, lastCounts: {},
-      importedCounts: {}, recentRuns: [],
+      importedCounts: {}, nextPages: {}, recentRuns: [],
     };
   }
 
   // Keep the pilot's audit/count summary server-only; never return provider
   // payloads, ciphertext, user IDs or raw authorization metadata to the UI.
-  const [recentResult, ...countResults] = await Promise.all([
+  const [recentResult, progressResult, ...countResults] = await Promise.all([
     db.from("fudo_sync_runs")
       .select("started_at,finished_at,status,counts,error_code")
       .eq("business_id", actor.businessId).eq("connection_generation", row.connection_generation)
       .order("started_at", { ascending: false }).limit(5),
+    db.from("fudo_sync_progress")
+      .select("resource_type,next_page")
+      .eq("business_id", actor.businessId).eq("connection_generation", row.connection_generation),
     ...FUDO_SYNC_RESOURCES.map((resource) =>
       db.from("fudo_external_records").select("id", { count: "exact", head: true })
         .eq("business_id", actor.businessId).eq("connection_generation", row.connection_generation)
         .eq("resource_type", resource)),
   ]);
-  if (recentResult.error || countResults.some((result: { error?: unknown }) => result.error)) return null;
+  if (recentResult.error || progressResult.error
+    || countResults.some((result: { error?: unknown }) => result.error)) return null;
   const safeCounts = (raw: unknown): Record<string, number> => {
     const result: Record<string, number> = {};
     if (raw && typeof raw === "object" && !Array.isArray(raw)) {
@@ -126,6 +132,17 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
     errorCode: run.error_code,
   }));
   const counts = recentRuns[0]?.counts ?? {};
+  const nextPages: Record<string, number | null> = Object.fromEntries(
+    FUDO_SYNC_RESOURCES.map((resource) => [resource, null]),
+  );
+  for (const progress of (progressResult.data ?? []) as Array<{ resource_type: string; next_page: unknown }>) {
+    const page = Number(progress.next_page);
+    if (Object.prototype.hasOwnProperty.call(nextPages, progress.resource_type)
+      && Number.isSafeInteger(page) && page >= 0 && page <= 100000
+      && progress.next_page !== null) {
+      nextPages[progress.resource_type] = page;
+    }
+  }
   const importedCounts: Record<string, number> = {};
   FUDO_SYNC_RESOURCES.forEach((resource, index) => {
     importedCounts[resource] = Math.max(0, Number(countResults[index].count ?? 0));
@@ -139,6 +156,7 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
     lastErrorCode: row.last_error_code ?? null,
     lastCounts: counts,
     importedCounts,
+    nextPages,
     recentRuns,
   };
 }
