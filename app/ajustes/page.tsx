@@ -5,6 +5,7 @@ import {
   ChefHat,
   ChevronRight,
   MessageSquareText,
+  PlugZap,
   Sparkles,
   Users,
 } from "lucide-react";
@@ -34,6 +35,13 @@ const CARDS = [
     title: "WhatsApp Business",
     detail: "Conectá el número del negocio para recibir y procesar mensajes.",
     chip: "Pendiente",
+  },
+  {
+    href: "/ajustes/integraciones/fudo",
+    icon: PlugZap,
+    title: "Fudo · integración piloto",
+    detail: "Conectá tu cuenta para importar datos en modo lectura, sin interrumpir la operación en Fudo.",
+    chip: "Piloto",
   },
   {
     href: "/ajustes/ia",
