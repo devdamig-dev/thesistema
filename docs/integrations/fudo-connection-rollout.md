@@ -49,3 +49,11 @@ https://soporte.fu.do/es/articles/11939789-api-publica-de-proposito-general
 - Los totales de staging **no equivalen a los totales definitivos de Fudo**. Al habilitar piloto real hay que comparar contra cada recurso/rango y registrar discrepancias. Las generaciones anteriores se conservan privadas pero no se agregan a la conexión vigente.
 - Regresiones automáticas: página corta con `links.next`, página llena con `links.next=null`, ausencia/metadatos inválidos, control de rol y separación entre tenants/generaciones en reporte. Pruebas de API real siguen pendientes.
 - No se habilitan escrituras, cron, movimientos de caja ni de stock.
+
+## O1 — Validación semántica del test de conexión (03/11/2026)
+
+- Riesgo identificado: una respuesta HTTP 200 con JSON válido pero sin `data` JSON:API podía marcar la cuenta como conectada y guardar credenciales, aunque la importación posterior fallaría.
+- La prueba inicial y la prueba de credenciales guardadas verifican ahora la misma estructura de registros que el importador (`parseFudoPage`), incluyendo páginas vacías legítimas y registros con identificador válido.
+- Una respuesta 200 incompatible se informa como `invalid_response`; no autoriza persistir nuevas credenciales ni confirma acceso funcional.
+- Cobertura añadida: un falso 200 con payload privado no produce persistencia ni exposición de secretos, mientras que páginas válidas vacías/con un producto siguen habilitando la conexión.
+- Esta prueba sigue siendo **un sondeo de una sola página de productos**, no una conciliación de los cinco recursos ni una prueba de cuenta real. El diagnóstico por recurso y el piloto E2E continúan siendo necesarios.
