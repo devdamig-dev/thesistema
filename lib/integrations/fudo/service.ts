@@ -177,7 +177,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
     const authorized = await authorize();
     if (!authorized) return fail("forbidden", "No tenés permiso para sincronizar Fudo.");
     ({ actor, db } = authorized);
-    const connection = await db.from("fudo_connections").select("credentials_ciphertext")
+    const connection = await db.from("fudo_connections").select("credentials_ciphertext,connection_generation")
       .eq("business_id", actor.businessId).maybeSingle();
     if (connection.error) return fail("storage_unavailable", UNKNOWN);
     if (!connection.data) return fail("not_connected", "Conectá Fudo antes de sincronizar.");
