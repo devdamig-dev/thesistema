@@ -293,12 +293,13 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
         .eq("business_id", actor.businessId).eq("connection_generation", generation);
       if (reset.error) throw new Error("fudo_storage_failed");
     }
+    const syncBusinessId = authorized.actor.businessId;
     // Each Fudo GET may take up to 15s. Five sequential resource reads can
     // time out a 60s function; three bounded workers keep progress resumable.
     // Wait for ALL launched page writes to settle even if one resource fails.
     const pendingPages = await runFudoReadBatch(FUDO_SYNC_RESOURCES, async (resource) => {
       const cursor = await db.from("fudo_sync_progress").select("next_page")
-        .eq("business_id", actor.businessId).eq("connection_generation", generation).eq("resource_type", resource).maybeSingle();
+        .eq("business_id", syncBusinessId).eq("connection_generation", generation).eq("resource_type", resource).maybeSingle();
       if (cursor.error) throw new Error("fudo_storage_failed");
       const page = cursor.data ? Number(cursor.data.next_page) : 1;
       if (page === 0) { counts[resource] = 0; return false; }
@@ -309,7 +310,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       const seenAt = new Date().toISOString();
       if (snapshots.length) {
         const rows = snapshots.map((entry) => ({
-          business_id: actor!.businessId, connection_generation: generation, provider: "fudo", resource_type: resource,
+          business_id: syncBusinessId, connection_generation: generation, provider: "fudo", resource_type: resource,
           external_id: entry.externalId, payload: entry.payload, content_hash: entry.contentHash,
           source_updated_at: entry.sourceUpdatedAt, last_seen_at: seenAt,
         }));
@@ -321,7 +322,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       const nextPage = nextFudoPage(response, page, snapshots.length);
       const partial = nextPage !== 0;
       const progress = await db.from("fudo_sync_progress").upsert({
-        business_id: actor.businessId, connection_generation: generation, resource_type: resource,
+        business_id: syncBusinessId, connection_generation: generation, resource_type: resource,
         next_page: nextPage,
         last_complete_at: partial ? null : seenAt, updated_at: seenAt,
       }, { onConflict: "business_id,connection_generation,resource_type" });
