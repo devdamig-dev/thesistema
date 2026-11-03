@@ -317,9 +317,15 @@ export class FudoClient {
     }));
   }
 
-  /** Minimal harmless probe used by a connection-test route later. */
+  /**
+   * A successful HTTP response alone is not a working integration:
+   * verify the same JSON:API record contract required by the importer before
+   * accepting or storing credentials as "connected". No provider data leaves
+   * this probe and no provider mutation is performed.
+   */
   async testConnection(): Promise<{ ok: true }> {
-    await this.products({ "page[size]": 1, "page[number]": 1 });
+    const response = await this.products({ "page[size]": 1, "page[number]": 1 });
+    parseFudoPage(response);
     return { ok: true };
   }
 }
