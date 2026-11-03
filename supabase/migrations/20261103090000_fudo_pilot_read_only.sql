@@ -2,6 +2,7 @@
 -- Apply before enabling the Fudo UI. Credentials are encrypted in the application with AES-256-GCM.
 create table if not exists public.fudo_connections (
   business_id uuid primary key references public.businesses(id) on delete cascade,
+  connection_generation uuid not null default gen_random_uuid(),
   credentials_ciphertext text not null check (length(credentials_ciphertext) between 50 and 16384),
   status text not null default 'connected' check (status in ('connected','error')),
   last_tested_at timestamptz,
@@ -16,6 +17,7 @@ create table if not exists public.fudo_connections (
 create table if not exists public.fudo_sync_runs (
   id uuid primary key default gen_random_uuid(),
   business_id uuid not null references public.businesses(id) on delete cascade,
+  connection_generation uuid not null,
   status text not null check (status in ('running','completed','partial','failed')),
   counts jsonb not null default '{}'::jsonb check (jsonb_typeof(counts) = 'object'),
   error_code text,
@@ -31,16 +33,18 @@ create unique index if not exists fudo_sync_runs_one_running_per_business_idx
 
 create table if not exists public.fudo_sync_progress (
   business_id uuid not null references public.businesses(id) on delete cascade,
+  connection_generation uuid not null,
   resource_type text not null check (resource_type in ('products','ingredients','providers','orders','sales')),
   next_page integer not null default 1 check (next_page between 1 and 100000),
   last_complete_at timestamptz,
   updated_at timestamptz not null default now(),
-  primary key (business_id, resource_type)
+  primary key (business_id, connection_generation, resource_type)
 );
 
 create table if not exists public.fudo_external_records (
   id uuid primary key default gen_random_uuid(),
   business_id uuid not null references public.businesses(id) on delete cascade,
+  connection_generation uuid not null,
   provider text not null default 'fudo' check (provider = 'fudo'),
   resource_type text not null check (resource_type in ('products','ingredients','providers','orders','sales')),
   external_id text not null check (length(external_id) between 1 and 256),
@@ -49,7 +53,7 @@ create table if not exists public.fudo_external_records (
   source_updated_at timestamptz,
   first_seen_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now(),
-  unique (business_id, resource_type, external_id)
+  unique (business_id, connection_generation, resource_type, external_id)
 );
 create index if not exists fudo_external_records_resource_idx
   on public.fudo_external_records (business_id, resource_type, last_seen_at desc);
