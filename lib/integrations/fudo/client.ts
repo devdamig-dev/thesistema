@@ -140,6 +140,9 @@ export class FudoClient {
   private readonly timeoutMs: number;
   private token: string | null = null;
   private tokenExpiresAt = 0;
+  // Share a single auth/refresh request across concurrent read probes.
+  // Fudo O1 preflight reads five endpoints in parallel.
+  private authenticationInFlight: Promise<void> | null = null;
 
   constructor(
     private readonly credentials: FudoCredentials,
@@ -214,19 +217,37 @@ export class FudoClient {
     this.tokenExpiresAt = normalizeExpiration(payload.exp);
   }
 
+  private async authenticateOnce(): Promise<void> {
+    if (this.authenticationInFlight) {
+      await this.authenticationInFlight;
+      return;
+    }
+    const pending = this.authenticate();
+    this.authenticationInFlight = pending;
+    try {
+      await pending;
+    } finally {
+      // A failed authentication must not poison subsequent manual retries.
+      if (this.authenticationInFlight === pending) this.authenticationInFlight = null;
+    }
+  }
+
   private async ensureAuthenticated(): Promise<void> {
     if (
       !this.token ||
       !this.tokenExpiresAt ||
       this.tokenExpiresAt <= this.now() + TOKEN_SKEW_MS
     ) {
-      await this.authenticate();
+      await this.authenticateOnce();
     }
   }
 
   private async getJson(path: string, params: FudoListParams = {}, retry = true): Promise<unknown> {
     await this.ensureAuthenticated();
 
+    // Snapshot the token used for this request. Another in-flight read may
+    // already have refreshed it when this HTTP response arrives.
+    const attemptedToken = this.token;
     let response: Response;
     try {
       response = await this.fetchImpl(
@@ -235,7 +256,7 @@ export class FudoClient {
           method: "GET",
           headers: {
             Accept: "application/json",
-            Authorization: `Bearer ${this.token}`,
+            Authorization: `Bearer ${attemptedToken}`,
           },
           cache: "no-store",
           // Never follow a provider redirect carrying our bearer token.
@@ -253,9 +274,13 @@ export class FudoClient {
     }
 
     if (response.status === 401 && retry) {
-      this.token = null;
-      this.tokenExpiresAt = 0;
-      await this.authenticate();
+      // Never invalidate a newer token installed by a concurrent read.
+      if (this.token === attemptedToken) {
+        this.token = null;
+        this.tokenExpiresAt = 0;
+      }
+      await this.ensureAuthenticated();
+      // One retry per read only, even if the new token is also rejected.
       return this.getJson(path, params, false);
     }
 

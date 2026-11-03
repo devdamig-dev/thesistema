@@ -217,3 +217,74 @@ test("Fudo connection probe accepts compatible empty and one-record JSON:API pag
   assert.deepEqual(await client.testConnection(), { ok: true });
   assert.equal(reads, 2);
 });
+
+
+test("Fudo five concurrent probes share one refresh after an expired bearer", async () => {
+  const now = 1_800_000_000_000;
+  const resources = ["products", "ingredients", "providers", "orders", "sales"] as const;
+  let authCount = 0;
+  let oldBearerReads = 0;
+  let newBearerReads = 0;
+  let releaseOldReads: () => void = () => {};
+  const allOldReads = new Promise<void>((resolve) => { releaseOldReads = resolve; });
+
+  const fakeFetch: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url === "https://auth.fu.do/api") {
+      authCount++;
+      return jsonResponse({
+        token: `bearer-${authCount}`,
+        exp: Math.floor((now + 86_400_000) / 1000),
+      });
+    }
+    assert.equal(init?.method, "GET");
+    const bearer = new Headers(init?.headers).get("authorization");
+    if (bearer === "Bearer bearer-1") {
+      oldBearerReads++;
+      if (oldBearerReads === resources.length) releaseOldReads();
+      // All first requests reach Fudo before the revoked token is rejected.
+      await allOldReads;
+      return jsonResponse({ error: "revoked (must not leak)" }, 401);
+    }
+    assert.equal(bearer, "Bearer bearer-2");
+    newBearerReads++;
+    return jsonResponse({ data: [] });
+  };
+
+  const client = new FudoClient(
+    { apiKey: "private-test-key", apiSecret: "private-test-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+  const checks = await client.probeReadAccess(resources);
+  assert.deepEqual(checks, resources.map((resource) => ({ resource, code: "available" })));
+  assert.equal(authCount, 2, "initial authentication plus ONE coalesced refresh");
+  assert.equal(oldBearerReads, 5);
+  assert.equal(newBearerReads, 5);
+  assert.doesNotMatch(JSON.stringify(checks), /private-test|bearer|revoked/i);
+});
+
+test("Fudo failed auth single-flight is cleared so a later read can retry", async () => {
+  let authCount = 0;
+  const now = 1_800_000_000_000;
+  const fakeFetch: typeof fetch = async (input) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      authCount++;
+      if (authCount === 1) throw new Error("temporary auth failure");
+      return jsonResponse({ token: "recovered", exp: Math.floor((now + 86_400_000) / 1000) });
+    }
+    return jsonResponse({ data: [] });
+  };
+  const client = new FudoClient(
+    { apiKey: "private-key", apiSecret: "private-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+
+  await assert.rejects(() => client.products(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "provider_unavailable");
+    assert.doesNotMatch(error.message, /temporary auth failure|private-/);
+    return true;
+  });
+  assert.deepEqual(await client.products(), { data: [] });
+  assert.equal(authCount, 2);
+});
