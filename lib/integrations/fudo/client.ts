@@ -12,6 +12,8 @@
  * Mutating verbs are intentionally not exposed in this foundation.
  */
 
+import { parseFudoPage } from "./snapshot";
+
 export type FudoCredentials = {
   apiKey: string;
   apiSecret: string;
@@ -40,6 +42,11 @@ export type FudoResource =
   | "payment-methods"
   | "payments"
   | "kitchens";
+
+export type FudoReadResourceStatus = {
+  resource: FudoResource;
+  code: "available" | FudoApiError["code"];
+};
 
 type AuthPayload = {
   token?: unknown;
@@ -167,6 +174,8 @@ export class FudoClient {
           apiSecret: this.credentials.apiSecret,
         }),
         cache: "no-store",
+        // Never forward API key/secret to an auth-origin redirect (307/308).
+        redirect: "error",
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch {
@@ -229,6 +238,8 @@ export class FudoClient {
             Authorization: `Bearer ${this.token}`,
           },
           cache: "no-store",
+          // Never follow a provider redirect carrying our bearer token.
+          redirect: "error",
           signal: AbortSignal.timeout(this.timeoutMs),
         },
       );
@@ -285,6 +296,25 @@ export class FudoClient {
 
   orders(params: FudoListParams = {}) {
     return this.list("orders", params);
+  }
+
+  /**
+   * Diagnostic read-only probes for the five O1 resources.
+   * Authentication is performed once, before starting resource reads in parallel.
+   * Only sanitized status codes leave this client, never provider payloads/URLs.
+   */
+  async probeReadAccess(resources: readonly FudoResource[]): Promise<FudoReadResourceStatus[]> {
+    await this.ensureAuthenticated();
+    return Promise.all(resources.map(async (resource): Promise<FudoReadResourceStatus> => {
+      try {
+        const response = await this.list(resource, { "page[number]": 1, "page[size]": 1 });
+        // A 200 alone is not enough: invalid JSON:API shape would break a sync.
+        parseFudoPage(response);
+        return { resource, code: "available" };
+      } catch (error) {
+        return { resource, code: error instanceof FudoApiError ? error.code : "invalid_response" };
+      }
+    }));
   }
 
   /** Minimal harmless probe used by a connection-test route later. */
