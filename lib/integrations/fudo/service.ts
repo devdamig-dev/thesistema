@@ -191,23 +191,31 @@ export async function testStoredFudoConnection(): Promise<FudoActionResult> {
     const authorized = await authorize();
     if (!authorized) return fail("forbidden", "No tenés permiso para probar Fudo.");
     const { actor, db } = authorized;
-    const stored = await db.from("fudo_connections").select("credentials_ciphertext")
+    const stored = await db.from("fudo_connections").select("credentials_ciphertext,connection_generation")
       .eq("business_id", actor.businessId).maybeSingle();
     if (stored.error) return fail("storage_unavailable", UNKNOWN);
     if (!stored.data) return fail("not_connected", "Primero conectá Fudo.");
     const credentials = decryptFudoCredentials(actor.businessId, stored.data.credentials_ciphertext);
+    const generation: string = stored.data.connection_generation;
+    // A concurrent rotation can finish while the provider probe is pending.
+    // Fence writes and success messages to the exact connection tested; the
+    // encrypted credentials must never be included in PostgREST URL filters.
+    const recordTest = async (status: "connected" | "error", errorCode: string | null) =>
+      db.from("fudo_connections").update({
+        status, last_error_code: errorCode, last_tested_at: new Date().toISOString(),
+      }).eq("business_id", actor.businessId).eq("connection_generation", generation)
+        .select("business_id").maybeSingle();
     try {
       await new FudoClient(credentials).testConnection();
-      const updated = await db.from("fudo_connections").update({
-        status: "connected", last_error_code: null, last_tested_at: new Date().toISOString(),
-      }).eq("business_id", actor.businessId).eq("credentials_ciphertext", stored.data.credentials_ciphertext);
+      const updated = await recordTest("connected", null);
       if (updated.error) return fail("storage_unavailable", UNKNOWN);
+      if (!updated.data) return fail("connection_changed", "La conexión Fudo cambió durante la prueba. Volvé a probar las credenciales actuales.");
       return { ok: true, message: "La consulta de lectura a productos Fudo respondió correctamente." };
     } catch (error) {
       const failure = safeFailure(error);
-      await db.from("fudo_connections").update({
-        status: "error", last_error_code: failure.ok ? null : failure.code, last_tested_at: new Date().toISOString(),
-      }).eq("business_id", actor.businessId).eq("credentials_ciphertext", stored.data.credentials_ciphertext);
+      const updated = await recordTest("error", failure.ok ? null : failure.code);
+      if (updated.error) return fail("storage_unavailable", UNKNOWN);
+      if (!updated.data) return fail("connection_changed", "La conexión Fudo cambió durante la prueba. Volvé a probar las credenciales actuales.");
       return failure;
     }
   } catch (error) { return safeFailure(error); }
@@ -270,7 +278,6 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
   let runId: string | null = null;
   let actor: Actor | null = null;
   let db: any;
-  let ciphertext: string | null = null;
   let generation: string | null = null;
   const counts: Record<string, number> = {};
   try {
@@ -282,7 +289,6 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
     if (connection.error) return fail("storage_unavailable", UNKNOWN);
     if (!connection.data) return fail("not_connected", "Conectá Fudo antes de sincronizar.");
     const encryptedConnection: string = connection.data.credentials_ciphertext;
-    ciphertext = encryptedConnection;
     generation = connection.data.connection_generation;
     const credentials = decryptFudoCredentials(actor.businessId, encryptedConnection);
     const client = new FudoClient(credentials);
@@ -356,7 +362,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       }).eq("business_id", actor.businessId).eq("id", runId),
       db.from("fudo_connections").update({
         status: "connected", last_sync_status: status, last_synced_at: completed, last_error_code: null,
-      }).eq("business_id", actor.businessId).eq("credentials_ciphertext", ciphertext),
+      }).eq("business_id", actor.businessId).eq("connection_generation", generation),
     ]);
     if (runUpdate.error || connUpdate.error) return fail("storage_unavailable", UNKNOWN);
     const total = Object.values(counts).reduce((sum, value) => sum + value, 0);
@@ -369,9 +375,9 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       await db.from("fudo_sync_runs").update({
         status: "failed", counts, error_code: failure.ok ? null : failure.code, finished_at: new Date().toISOString(),
       }).eq("business_id", actor.businessId).eq("id", runId);
-      if (ciphertext) await db.from("fudo_connections").update({
+      if (generation) await db.from("fudo_connections").update({
         last_sync_status: "failed", last_error_code: failure.ok ? null : failure.code,
-      }).eq("business_id", actor.businessId).eq("credentials_ciphertext", ciphertext);
+      }).eq("business_id", actor.businessId).eq("connection_generation", generation);
     }
     return failure;
   }
