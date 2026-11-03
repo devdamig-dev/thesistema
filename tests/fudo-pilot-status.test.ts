@@ -27,6 +27,13 @@ const runs = [
     finished_at: "2026-11-03T08:01:00Z", status: "completed",
     counts: { products: 12 }, error_code: "another_tenant" },
 ];
+const progress = [
+  { business_id: A, connection_generation: GA, resource_type: "products", next_page: 3 },
+  { business_id: A, connection_generation: GA, resource_type: "ingredients", next_page: 0 },
+  { business_id: A, connection_generation: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+    resource_type: "sales", next_page: 99 },
+  { business_id: B, connection_generation: GB, resource_type: "products", next_page: 0 },
+];
 const records = [
   { business_id: A, connection_generation: GA, resource_type: "products", id: "1", payload: { secret: "PRIVATE_PAYLOAD_A" } },
   { business_id: A, connection_generation: GA, resource_type: "products", id: "2" },
@@ -43,7 +50,10 @@ function query(table: string) {
   const get = () => {
     if (table === "profiles") return [{ active: true }];
     if (table === "business_members") return isMember && filters.business_id === tenant && filters.user_id === USER ? [{ id: "member" }] : [];
-    const all = table === "fudo_connections" ? connections : table === "fudo_sync_runs" ? runs : table === "fudo_external_records" ? records : [];
+    const all = table === "fudo_connections" ? connections
+      : table === "fudo_sync_runs" ? runs
+        : table === "fudo_sync_progress" ? progress
+          : table === "fudo_external_records" ? records : [];
     const matches = all.filter((row) => Object.entries(filters).every(([key,value]) => (row as any)[key] === value));
     return matches.slice(0,max);
   };
@@ -86,6 +96,10 @@ test("Fudo pilot report returns only current tenant/current generation aggregate
   assert.equal(report.recentRuns.length, 1);
   assert.equal(report.recentRuns[0].status, "partial");
   assert.deepEqual(report.lastCounts, { products: 20, ingredients: 2 });
+  assert.equal(report.nextPages.products, 3);
+  assert.equal(report.nextPages.ingredients, 0);
+  assert.equal(report.nextPages.sales, null, "old-generation cursor must never leak");
+  assert.equal(report.nextPages.providers, null);
   assert.doesNotMatch(JSON.stringify(report), /PRIVATE_|NEVER_SEND|another_tenant|payload|credentials_ciphertext/i);
 });
 
@@ -100,5 +114,8 @@ test("Fudo pilot report rejects non-admin and unrelated memberships", async () =
   assert.equal(report.importedCounts.products, 1);
   assert.equal(report.recentRuns.length, 1);
   assert.equal(report.recentRuns[0].errorCode, "another_tenant");
+  assert.equal(report.nextPages.products, 0);
+  assert.equal(report.nextPages.ingredients, null);
+  assert.equal(report.nextPages.sales, null);
   assert.doesNotMatch(JSON.stringify(report), /PRIVATE_CIPHERTEXT_A|PRIVATE_PAYLOAD_A/);
 });
