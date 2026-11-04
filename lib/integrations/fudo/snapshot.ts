@@ -121,7 +121,7 @@ export function nextFudoPage(response: unknown, currentPage: number, recordCount
         }
         const sizes = nextUrl.searchParams.getAll("page[size]");
         if (sizes.length > 1 || (sizes.length === 1
-          && (!/^[1-9]\\d*$/.test(sizes[0]) || Number(sizes[0]) > FUDO_SYNC_PAGE_SIZE))) {
+          && (!/^[1-9]\d*$/.test(sizes[0]) || Number(sizes[0]) > FUDO_SYNC_PAGE_SIZE))) {
           throw new Error("invalid_fudo_page");
         }
         const numbered = nextUrl.searchParams.getAll("page[number]");
