@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { evaluateFudoPilotReadiness } from "../lib/integrations/fudo/readiness";
+import { evaluateFudoPilotReadiness, fudoConnectionRevision, selectCurrentFudoPreflight } from "../lib/integrations/fudo/readiness";
 import { FUDO_SYNC_RESOURCES } from "../lib/integrations/fudo/snapshot";
 import type { FudoConnectionView, FudoResourcePreflight } from "../lib/integrations/fudo/service";
 
@@ -69,4 +69,19 @@ test("pilot readiness never accepts stale green permissions for a disconnected o
     "a failed retest cannot borrow an earlier successful permission probe");
   result.status = "connected";
   assert.equal(evaluateFudoPilotReadiness(result, allAvailable)[1].state, "done");
+});
+
+
+test("permission probes are scoped to the current rendered connection revision", () => {
+  const status = view();
+  status.status = "connected";
+  status.lastTestedAt = "2026-11-04T14:00:00Z";
+  const previous = { revision: fudoConnectionRevision(status), result: allAvailable };
+  assert.equal(selectCurrentFudoPreflight(status, previous), allAvailable);
+  status.lastTestedAt = "2026-11-04T14:01:00Z";
+  assert.equal(selectCurrentFudoPreflight(status, previous), null,
+    "a second admin's rotation/retest must invalidate older results on refresh");
+  status.status = "disconnected";
+  status.lastTestedAt = null;
+  assert.equal(selectCurrentFudoPreflight(status, previous), null);
 });
