@@ -118,7 +118,7 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
   // payloads, ciphertext, user IDs or raw authorization metadata to the UI.
   const [recentResult, progressResult, ...countResults] = await Promise.all([
     db.from("fudo_sync_runs")
-      .select("started_at,finished_at,status,counts,error_code")
+      .select("id,started_at,finished_at,status,counts,error_code")
       .eq("business_id", actor.businessId).eq("connection_generation", generation)
       .order("started_at", { ascending: false }).limit(5),
     db.from("fudo_sync_progress")
@@ -141,6 +141,18 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
     }
     return result;
   };
+  // Keep the newest run identity in a private snapshot. A second admin may
+  // start (or finish) a run while counts and cursors are being read, even
+  // though fudo_connections metadata has not yet changed.
+  const firstRun = ((recentResult.data ?? []) as Array<{
+    id: string; started_at: string; finished_at: string | null; status: FudoSyncRunView["status"];
+  }>)[0] ?? null;
+  // Copy primitives; a synthetic DB and concurrent writes must never mutate
+  // the baseline we compare against at the end of this async aggregation.
+  const latestRunRevision = firstRun ? {
+    id: firstRun.id, started_at: firstRun.started_at,
+    finished_at: firstRun.finished_at, status: firstRun.status,
+  } : null;
   const recentRuns: FudoSyncRunView[] = ((recentResult.data ?? []) as Array<{
     started_at: string; finished_at: string | null; status: FudoSyncRunView["status"];
     counts: Record<string, unknown>; error_code: string | null;
@@ -209,6 +221,22 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
     || current.data.last_synced_at !== revision.lastSyncedAt
     || current.data.last_sync_status !== revision.lastSyncStatus
     || current.data.last_error_code !== revision.lastErrorCode) return null;
+  // A new sync can start and alter progress without updating the connection
+  // row until it settles. Never present mixed old-run/new-cursor readiness.
+  // Read metadata only; run IDs remain server-side.
+  const latestRunNow = await db.from("fudo_sync_runs")
+    .select("id,started_at,finished_at,status")
+    .eq("business_id", actor.businessId).eq("connection_generation", generation)
+    .order("started_at", { ascending: false }).limit(1).maybeSingle();
+  if (latestRunNow.error) return null;
+  const nowRun = latestRunNow.data;
+  if (Boolean(latestRunRevision) !== Boolean(nowRun)
+    || (latestRunRevision && (
+      nowRun.id !== latestRunRevision.id
+      || nowRun.started_at !== latestRunRevision.started_at
+      || nowRun.finished_at !== latestRunRevision.finished_at
+      || nowRun.status !== latestRunRevision.status
+    ))) return null;
   return {
     configured: true,
     status: revision.status === "connected" ? "connected" : "error",

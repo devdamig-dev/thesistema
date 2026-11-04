@@ -22,11 +22,11 @@ const connections = [
     last_synced_at: null, last_sync_status: "completed", last_error_code: null,
     credentials_ciphertext: "PRIVATE_CIPHERTEXT_B" },
 ];
-const runs = [
-  { business_id: A, connection_generation: GA, started_at: "2026-11-03T09:00:00Z",
+const runs: Array<Record<string, any>> = [
+  { id: "run-a", business_id: A, connection_generation: GA, started_at: "2026-11-03T09:00:00Z",
     finished_at: "2026-11-03T09:01:00Z", status: "partial",
     counts: { products: 20, ingredients: 2 }, error_code: null, raw_secret: "NEVER_SEND" },
-  { business_id: B, connection_generation: GB, started_at: "2026-11-03T08:00:00Z",
+  { id: "run-b", business_id: B, connection_generation: GB, started_at: "2026-11-03T08:00:00Z",
     finished_at: "2026-11-03T08:01:00Z", status: "completed",
     counts: { products: 12 }, error_code: "another_tenant" },
 ];
@@ -69,7 +69,9 @@ function query(table: string) {
     limit(value: number) { max = value; return this; },
     async maybeSingle() { return { data: get()[0] ?? null, error: null }; },
     then(resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) {
-      const data = get();
+      // PostgREST returns independent JSON snapshots; do not let a simulated
+      // concurrent write mutate data already returned by a previous query.
+      const data = get().map((row) => table === "fudo_sync_runs" ? { ...row } : row);
       if (table === "fudo_sync_progress") duringProgressRead?.();
       return Promise.resolve({ data: countOnly ? null : data, count: countOnly ? data.length : null, error: null }).then(resolve,reject);
     },
@@ -252,5 +254,45 @@ test("Fudo pilot report rejects a concurrent sync status change without credenti
   } finally {
     duringProgressRead = null;
     connections[0].last_sync_status = original;
+  }
+});
+
+test("Fudo report discards a completed run replaced by a new running sync during reads", async () => {
+  tenant = A; role = "owner"; isMember = true;
+  const newRun = {
+    id: "run-new", business_id: A, connection_generation: GA,
+    started_at: "2026-11-04T22:00:00Z", finished_at: null, status: "running",
+    counts: {}, error_code: null,
+  };
+  try {
+    // fudo_begin_sync inserts a run before updating fudo_connections. A view
+    // must not combine the previous completed run with the newer cursors.
+    duringProgressRead = () => {
+      duringProgressRead = null;
+      runs.unshift(newRun);
+    };
+    assert.equal(await getFudoConnectionView(), null,
+      "new run identity invalidates the prior readiness snapshot");
+  } finally {
+    duringProgressRead = null;
+    const index = runs.indexOf(newRun);
+    if (index >= 0) runs.splice(index, 1);
+  }
+});
+
+test("Fudo report discards a run which settles while progress is being read", async () => {
+  tenant = A; role = "owner"; isMember = true;
+  const before = { status: runs[0].status, finished_at: runs[0].finished_at };
+  try {
+    duringProgressRead = () => {
+      duringProgressRead = null;
+      runs[0].status = "failed";
+      runs[0].finished_at = "2026-11-04T22:01:00Z";
+    };
+    assert.equal(await getFudoConnectionView(), null,
+      "a changed run status must not be reported as an earlier settled run");
+  } finally {
+    duringProgressRead = null;
+    Object.assign(runs[0], before);
   }
 });
