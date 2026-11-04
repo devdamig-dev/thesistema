@@ -71,10 +71,11 @@ test("Fudo keeps paging a short provider-capped page when JSON:API links.next ex
   const rows = parseFudoPage(shortPage);
   assert.equal(rows.length, 2);
   assert.equal(nextFudoPage(shortPage, 1, rows.length), 2);
-  // A supplied URL is a signal only. The adapter still uses its fixed,
-  // allowlisted GET endpoint with numeric page parameters.
+  // Only a compatible page-number link can signal continuation.
+  // Reject a foreign URL rather than hiding the provider mismatch.
+  // We never fetch links supplied in provider response bodies.
   const offOrigin = { ...shortPage, links: { next: "https://malicious.invalid/exfiltrate" } };
-  assert.equal(nextFudoPage(offOrigin, 1, rows.length), 2);
+  assert.throws(() => nextFudoPage(offOrigin, 1, rows.length), /invalid_fudo_page/);
 });
 
 test("Fudo pagination honors explicit end, even on a full page", () => {

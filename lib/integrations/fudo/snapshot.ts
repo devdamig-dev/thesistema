@@ -80,6 +80,33 @@ export function nextFudoPage(response: unknown, currentPage: number, recordCount
           || recordCount === 0 || currentPage === 100000) {
           throw new Error("invalid_fudo_page");
         }
+
+        // Only numbered next-page links can be resumed by this adapter.
+        // A merely non-empty href could be a cursor, an old page, an
+        // unrelated host or malformed data: silently incrementing would
+        // import duplicate or missing records while reporting a full scan.
+        // Never fetch this URL or include it in a returned error/log.
+        let nextUrl: URL;
+        try {
+          const link = href.trim();
+          if (!/^(https?:\/\/|\/|\?)/i.test(link) || /\s/.test(link)) {
+            throw new Error("invalid_fudo_page");
+          }
+          nextUrl = new URL(link, "https://api.fu.do/v1alpha1/products");
+        } catch {
+          throw new Error("invalid_fudo_page");
+        }
+        if (nextUrl.protocol !== "https:" || nextUrl.origin !== "https://api.fu.do"
+          || nextUrl.username || nextUrl.password) {
+          throw new Error("invalid_fudo_page");
+        }
+        const numbered = nextUrl.searchParams.getAll("page[number]");
+        const simple = nextUrl.searchParams.getAll("page");
+        if (numbered.length + simple.length !== 1) throw new Error("invalid_fudo_page");
+        const nextNumber = (numbered[0] ?? simple[0]).trim();
+        if (!/^[1-9]\d*$/.test(nextNumber) || Number(nextNumber) !== currentPage + 1) {
+          throw new Error("invalid_fudo_page");
+        }
         return currentPage + 1;
       }
     }
