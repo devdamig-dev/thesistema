@@ -181,6 +181,12 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
     possiblyMissingCounts[resource] = latestRunSettled && nextPages[resource] === 0 && seenThisCycleCounts[resource] !== null
       ? Math.max(0, importedCounts[resource] - seenThisCycleCounts[resource]!) : null;
   });
+  // The connection can be rotated or disconnected by a second owner while
+  // aggregate reads are in flight. Never render a stale generation as the
+  // currently connected account. This final reread contains no ciphertext.
+  const current = await db.from("fudo_connections").select("connection_generation")
+    .eq("business_id", actor.businessId).maybeSingle();
+  if (current.error || !current.data || current.data.connection_generation !== row.connection_generation) return null;
   return {
     configured: true,
     status: row.status === "connected" ? "connected" : "error",
