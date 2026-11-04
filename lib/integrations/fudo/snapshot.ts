@@ -62,7 +62,9 @@ export function nextFudoPage(response: unknown, currentPage: number, recordCount
   if (!Number.isSafeInteger(requestedPageSize) || requestedPageSize < 1 || requestedPageSize > FUDO_SYNC_PAGE_SIZE) {
     throw new Error("invalid_fudo_page");
   }
-  // A provider returning more rows than requested breaks numbered offsets.\n  // Reject the page during connect/preflight (page size 1) as well as sync.\n  if (!Number.isSafeInteger(currentPage) || currentPage < 1 || currentPage > 100000
+  // A provider returning more rows than requested breaks numbered offsets.
+  // Reject the page during connect/preflight (page size 1) as well as sync.
+  if (!Number.isSafeInteger(currentPage) || currentPage < 1 || currentPage > 100000
     || !Number.isSafeInteger(recordCount) || recordCount < 0 || recordCount > requestedPageSize) {
     throw new Error("invalid_fudo_page");
   }
