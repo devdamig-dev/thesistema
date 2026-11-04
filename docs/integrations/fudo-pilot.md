@@ -63,6 +63,12 @@ La primera importación no debe escribir movimientos financieros ni de stock pro
 
 Una respuesta HTTP 200 no es una página importable por sí sola. El test inicial de conexión y el diagnóstico por recurso también verifican el `links.next` de la primera página, para no reportar un falso positivo que falle al importar. Antes de insertar snapshots o actualizar `last_seen_cycle_id`, el importador valida tanto los registros e IDs como los metadatos JSON:API de paginación (`links.next`, página actual, límites). Si el proveedor devuelve una página con registros válidos pero un siguiente enlace malformado, el recurso falla sin añadir staging ni avanzar su cursor. El resto de recursos puede cerrar sus lecturas iniciadas; la ejecución global queda en estado fallido con un código sanitizado y **no modifica el proveedor ni ventas/stock nativos**. Repetir el intento no debe duplicar datos. Esta garantía se verifica con fixtures y aún necesita contraste en el piloto con Fudo real.
 
+## O1 — Integridad del enlace de continuación de paginación
+
+El importador continúa usando **únicamente GET al endpoint Fudo permitido**, sin seguir links del proveedor. Un `links.next` no vacío no es suficiente para acreditar continuidad: el adaptador solo soporta paginación por número, por lo que verifica que el enlace use HTTPS de `api.fu.do`, indique exactamente un parámetro `page[number]` (o `page`) y apunte a la página inmediatamente siguiente. Rechaza links malformados, de otra procedencia, de cursor, repetidos, saltos de página y credenciales embebidas; el error es fijo/sanitizado y no incluye la URL. Esta validación ocurre junto con la del cuerpo **antes** de modificar staging o cursor. Cuando Fudo use otro contrato de paginación, debe adaptarse expresamente y verificarse con una cuenta autorizada: no asumir una importación completa por un link no interpretable.
+
+Pruebas del contrato: links absolutos/relativos válidos, salto/repetición, duplicados, cursor y origen ajeno. **No validado todavía contra una conexión Fudo real.**
+
 ## O1 — Diagnóstico de permisos previo al piloto (03/11/2026)
 - Acción **Revisar permisos de importación**: sólo owner/admin con membresía activa puede ejecutarla; las credenciales se recuperan cifradas del servidor, ligadas al `business_id`.
 - Ejecuta GET de muestra (página 1, tamaño 1) en productos, ingredientes, proveedores, pedidos y ventas, sin persistir datos de proveedor, registrar resultados crudos ni crear movimientos nativos.
