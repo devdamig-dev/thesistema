@@ -69,9 +69,12 @@ El importador continúa usando **únicamente GET al endpoint Fudo permitido**, s
 
 Pruebas del contrato: links absolutos/relativos válidos, salto/repetición, duplicados, cursor y origen ajeno. **No validado todavía contra una conexión Fudo real.**
 
-### Continuación vinculada al recurso (pendiente de Quality / piloto real)
+### Continuación vinculada al recurso (CI aprobado; despliegue pendiente por cuota)
 
 Los enlaces `links.next` de un recurso solo pueden apuntar a **ese mismo recurso**. Estar en `api.fu.do` no es suficiente: un enlace de productos a pedidos, aunque contenga la siguiente página numérica, se rechaza como `invalid_fudo_page` **antes de guardar staging o cursor**. El cliente sigue leyendo únicamente la URL fija del recurso solicitado; jamás sigue el enlace externo. La comprobación se aplica a conexión, preflight y sincronización. Soporta rutas `/v1alpha1/<recurso>` o `/<recurso>` (y continuaciones relativas `?page=`). Otros formatos deben evaluarse con una cuenta real y un cambio de adaptador explícito, sin desactivar el modo fail-closed.
+
+Estado a 04/11/2026: [PR #192](https://github.com/devdamig-dev/thesistema/pull/192) fusionado a `main` (squash `93bb5269056f7d09059659ab00137be05b9afae4`). [Quality #41816442684](https://github.com/devdamig-dev/thesistema/actions/runs/41816442684) completo y verde en `verify`, `postgres17` y `postgrest`. **No desplegado en producción**: el check Vercel del commit fusionado falló por cuota gratuita (HTTP 402 `api-deployments-free-per-day`, límite de más de 100 despliegues/24 h). Sigue `4b884b9c` como producción `READY` confirmada. No se modifican secretos, datos de cliente, API Fudo ni esquema SQL. Volver a verificar deploy/alias y smoke autenticado al recuperar cuota; no declarar validación real sin cuenta Fudo autorizada.
+
 
 
 ## O1 — Diagnóstico de permisos previo al piloto (03/11/2026)
