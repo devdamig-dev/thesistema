@@ -8,6 +8,18 @@ export type FudoReadinessStep = {
   state: "done" | "pending" | "blocked";
 };
 
+/** A probe is only valid for the server-rendered connection test revision. */
+export function fudoConnectionRevision(view: Pick<FudoConnectionView, "status" | "lastTestedAt">): string {
+  return `${view.status}:${view.lastTestedAt ?? ""}`;
+}
+
+export function selectCurrentFudoPreflight(
+  view: Pick<FudoConnectionView, "status" | "lastTestedAt">,
+  stored: { revision: string; result: FudoResourcePreflight } | null,
+): FudoResourcePreflight | null {
+  return stored?.revision === fudoConnectionRevision(view) ? stored.result : null;
+}
+
 /**
  * Advisory readiness only: never turn a product probe or synthetic CI run into
  * a claim that a real Fudo account, tenant isolation or counts were validated.
