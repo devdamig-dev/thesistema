@@ -18,7 +18,9 @@ export function evaluateFudoPilotReadiness(
   preflight: FudoResourcePreflight | null = null,
 ): FudoReadinessStep[] {
   const connectionOk = view.status === "connected";
-  const permissionsOk = preflight?.ok === true
+  // A successful probe belongs to the connection that was active when it ran.
+  // Never show a green permission check if the connection is now disconnected or invalid.
+  const permissionsOk = connectionOk && preflight?.ok === true
     && FUDO_SYNC_RESOURCES.every((resource) =>
       preflight.checks.some((check) => check.resource === resource && check.code === "available"));
   const cycleComplete = connectionOk && view.lastSyncStatus === "completed"
