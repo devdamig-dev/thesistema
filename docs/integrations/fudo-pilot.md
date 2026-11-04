@@ -69,6 +69,11 @@ El importador continúa usando **únicamente GET al endpoint Fudo permitido**, s
 
 Pruebas del contrato: links absolutos/relativos válidos, salto/repetición, duplicados, cursor y origen ajeno. **No validado todavía contra una conexión Fudo real.**
 
+### Continuación vinculada al recurso (pendiente de Quality / piloto real)
+
+Los enlaces `links.next` de un recurso solo pueden apuntar a **ese mismo recurso**. Estar en `api.fu.do` no es suficiente: un enlace de productos a pedidos, aunque contenga la siguiente página numérica, se rechaza como `invalid_fudo_page` **antes de guardar staging o cursor**. El cliente sigue leyendo únicamente la URL fija del recurso solicitado; jamás sigue el enlace externo. La comprobación se aplica a conexión, preflight y sincronización. Soporta rutas `/v1alpha1/<recurso>` o `/<recurso>` (y continuaciones relativas `?page=`). Otros formatos deben evaluarse con una cuenta real y un cambio de adaptador explícito, sin desactivar el modo fail-closed.
+
+
 ## O1 — Diagnóstico de permisos previo al piloto (03/11/2026)
 - Acción **Revisar permisos de importación**: sólo owner/admin con membresía activa puede ejecutarla; las credenciales se recuperan cifradas del servidor, ligadas al `business_id`.
 - Ejecuta GET de muestra (página 1, tamaño 1) en productos, ingredientes, proveedores, pedidos y ventas, sin persistir datos de proveedor, registrar resultados crudos ni crear movimientos nativos.
