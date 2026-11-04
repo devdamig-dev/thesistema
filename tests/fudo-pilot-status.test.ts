@@ -7,6 +7,8 @@ const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const USER = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const GA = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const GB = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const CYCLE_A = "a1111111-1111-4111-8111-111111111111";
+const CYCLE_B = "b2222222-2222-4222-8222-222222222222";
 let tenant = A;
 let role = "owner";
 let isMember = true;
@@ -28,19 +30,19 @@ const runs = [
     counts: { products: 12 }, error_code: "another_tenant" },
 ];
 const progress = [
-  { business_id: A, connection_generation: GA, resource_type: "products", next_page: 3 },
-  { business_id: A, connection_generation: GA, resource_type: "ingredients", next_page: 0 },
+  { business_id: A, connection_generation: GA, resource_type: "products", next_page: 3, cycle_id: CYCLE_A },
+  { business_id: A, connection_generation: GA, resource_type: "ingredients", next_page: 0, cycle_id: CYCLE_A },
   { business_id: A, connection_generation: "ffffffff-ffff-4fff-8fff-ffffffffffff",
     resource_type: "sales", next_page: 99 },
-  { business_id: B, connection_generation: GB, resource_type: "products", next_page: 0 },
+  { business_id: B, connection_generation: GB, resource_type: "products", next_page: 0, cycle_id: CYCLE_B },
 ];
 const records = [
-  { business_id: A, connection_generation: GA, resource_type: "products", id: "1", payload: { secret: "PRIVATE_PAYLOAD_A" } },
-  { business_id: A, connection_generation: GA, resource_type: "products", id: "2" },
-  { business_id: A, connection_generation: GA, resource_type: "ingredients", id: "3" },
+  { business_id: A, connection_generation: GA, resource_type: "products", id: "1", last_seen_cycle_id: CYCLE_A, payload: { secret: "PRIVATE_PAYLOAD_A" } },
+  { business_id: A, connection_generation: GA, resource_type: "products", id: "2", last_seen_cycle_id: CYCLE_B },
+  { business_id: A, connection_generation: GA, resource_type: "ingredients", id: "3", last_seen_cycle_id: CYCLE_A },
   { business_id: A, connection_generation: "ffffffff-ffff-4fff-8fff-ffffffffffff",
     resource_type: "products", id: "4" },
-  { business_id: B, connection_generation: GB, resource_type: "products", id: "5", payload: { secret: "PRIVATE_PAYLOAD_B" } },
+  { business_id: B, connection_generation: GB, resource_type: "products", id: "5", last_seen_cycle_id: CYCLE_B, payload: { secret: "PRIVATE_PAYLOAD_B" } },
 ];
 
 function query(table: string) {
@@ -54,7 +56,8 @@ function query(table: string) {
       : table === "fudo_sync_runs" ? runs
         : table === "fudo_sync_progress" ? progress
           : table === "fudo_external_records" ? records : [];
-    const matches = all.filter((row) => Object.entries(filters).every(([key,value]) => (row as any)[key] === value));
+    const matches = all.filter((row) =>
+      Object.entries(filters).every(([key,value]) => (row as any)[key] === value));
     return matches.slice(0,max);
   };
   const q: any = {
@@ -93,6 +96,11 @@ test("Fudo pilot report returns only current tenant/current generation aggregate
   assert.equal(report.importedCounts.products, 2);
   assert.equal(report.importedCounts.ingredients, 1);
   assert.equal(report.importedCounts.sales, 0);
+  assert.equal(report.seenThisCycleCounts.products, 1, "only records from this scan count");
+  assert.equal(report.possiblyMissingCounts.products, null, "partial pages cannot claim removals");
+  assert.equal(report.seenThisCycleCounts.ingredients, 1);
+  assert.equal(report.possiblyMissingCounts.ingredients, 0, "completed current cycle has no missing IDs");
+  assert.equal(report.seenThisCycleCounts.sales, null, "unstarted resource has no cycle");
   assert.equal(report.recentRuns.length, 1);
   assert.equal(report.recentRuns[0].status, "partial");
   assert.deepEqual(report.lastCounts, { products: 20, ingredients: 2 });
@@ -112,10 +120,58 @@ test("Fudo pilot report rejects non-admin and unrelated memberships", async () =
   const report = await getFudoConnectionView();
   assert.ok(report);
   assert.equal(report.importedCounts.products, 1);
+  assert.equal(report.seenThisCycleCounts.products, 1);
+  assert.equal(report.possiblyMissingCounts.products, 0);
   assert.equal(report.recentRuns.length, 1);
   assert.equal(report.recentRuns[0].errorCode, "another_tenant");
   assert.equal(report.nextPages.products, 0);
   assert.equal(report.nextPages.ingredients, null);
   assert.equal(report.nextPages.sales, null);
   assert.doesNotMatch(JSON.stringify(report), /PRIVATE_CIPHERTEXT_A|PRIVATE_PAYLOAD_A/);
+});
+
+
+test("Fudo completed rescans flag possibly removed IDs without deleting staging or crossing tenants", async () => {
+  tenant = A; role = "owner"; isMember = true;
+  const prior = progress[0].next_page;
+  try {
+    // Once the product cursor is complete, the old product is a possible
+    // provider removal; no row deletion or provider mutation occurs here.
+    progress[0].next_page = 0;
+    const report = await getFudoConnectionView();
+    assert.ok(report);
+    assert.equal(report.importedCounts.products, 2);
+    assert.equal(report.seenThisCycleCounts.products, 1);
+    assert.equal(report.possiblyMissingCounts.products, 1);
+    assert.equal(report.possiblyMissingCounts.sales, null);
+    assert.doesNotMatch(JSON.stringify(report), /PRIVATE_|NEVER_SEND|another_tenant/);
+  } finally {
+    progress[0].next_page = prior;
+  }
+});
+
+
+test("Fudo reconciliation never claims absences while a run is active or failed", async () => {
+  tenant = A; role = "owner"; isMember = true;
+  const previousPage = progress[0].next_page;
+  const previousStatus = runs[0].status;
+  try {
+    progress[0].next_page = 0;
+    for (const status of ["running", "failed"]) {
+      runs[0].status = status;
+      const report = await getFudoConnectionView();
+      assert.ok(report);
+      assert.equal(report.importedCounts.products, 2, "historical records remain");
+      assert.equal(report.seenThisCycleCounts.products, 1, "cycle records remain visible");
+      assert.equal(report.possiblyMissingCounts.products, null, "no absence claims before a successful run");
+      assert.equal(report.possiblyMissingCounts.ingredients, null, "failure must also suppress completed-cursor claims");
+    }
+    runs[0].status = "partial";
+    const settled = await getFudoConnectionView();
+    assert.ok(settled);
+    assert.equal(settled.possiblyMissingCounts.products, 1, "a settled batch may report possible absences");
+  } finally {
+    progress[0].next_page = previousPage;
+    runs[0].status = previousStatus;
+  }
 });

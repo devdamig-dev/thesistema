@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { getCurrentUserContext } from "@/lib/data/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isDatabaseMode } from "@/lib/env";
@@ -29,6 +30,10 @@ export type FudoConnectionView = {
   lastErrorCode: string | null;
   lastCounts: Record<string, number>;
   importedCounts: Record<string, number>;
+  /** Counts marked with the resource's current stable cycle UUID (null for legacy progress). */
+  seenThisCycleCounts: Record<string, number | null>;
+  /** Only populated after the resource's full scan is complete; these are POSSIBLE provider removals. */
+  possiblyMissingCounts: Record<string, number | null>;
   /** Next read page per resource: null = not started, 0 = completed, >0 = pending. */
   nextPages: Record<string, number | null>;
   recentRuns: FudoSyncRunView[];
@@ -90,7 +95,7 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
     return {
       configured: true, status: "disconnected",
       lastTestedAt: null, lastSyncedAt: null, lastSyncStatus: null, lastErrorCode: null, lastCounts: {},
-      importedCounts: {}, nextPages: {}, recentRuns: [],
+      importedCounts: {}, seenThisCycleCounts: {}, possiblyMissingCounts: {}, nextPages: {}, recentRuns: [],
     };
   }
 
@@ -102,7 +107,7 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
       .eq("business_id", actor.businessId).eq("connection_generation", row.connection_generation)
       .order("started_at", { ascending: false }).limit(5),
     db.from("fudo_sync_progress")
-      .select("resource_type,next_page")
+      .select("resource_type,next_page,cycle_id,cycle_started_at")
       .eq("business_id", actor.businessId).eq("connection_generation", row.connection_generation),
     ...FUDO_SYNC_RESOURCES.map((resource) =>
       db.from("fudo_external_records").select("id", { count: "exact", head: true })
@@ -147,6 +152,35 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
   FUDO_SYNC_RESOURCES.forEach((resource, index) => {
     importedCounts[resource] = Math.max(0, Number(countResults[index].count ?? 0));
   });
+  // Historical staging IDs remain for audit; only the same immutable scan
+  // UUID counts as present in a resource's current full-scan cycle. This is
+  // robust to clock skew and serverless restarts across successive pages.
+  const progressRows = (progressResult.data ?? []) as Array<{
+    resource_type: string; next_page: number; cycle_id: string | null;
+  }>;
+  const seenResults = await Promise.all(FUDO_SYNC_RESOURCES.map((resource) => {
+    const progress = progressRows.find((item) => item.resource_type === resource);
+    if (!progress?.cycle_id) {
+      return Promise.resolve({ count: null as number | null, error: null });
+    }
+    return db.from("fudo_external_records").select("id", { count: "exact", head: true })
+      .eq("business_id", actor.businessId).eq("connection_generation", row.connection_generation)
+      .eq("resource_type", resource).eq("last_seen_cycle_id", progress.cycle_id);
+  }));
+  if (seenResults.some((result: { error?: unknown }) => result.error)) return null;
+  const seenThisCycleCounts: Record<string, number | null> = {};
+  const possiblyMissingCounts: Record<string, number | null> = {};
+  // Cursor completion alone is not a committed reconciliation: a serverless
+  // invocation can stop after persisting a cursor but before finalizing its run.
+  // Never report absences while the newest run is running, failed or missing.
+  const latestRunSettled = recentRuns[0]?.status === "completed" || recentRuns[0]?.status === "partial";
+  FUDO_SYNC_RESOURCES.forEach((resource, index) => {
+    const seen = seenResults[index].count;
+    seenThisCycleCounts[resource] = typeof seen === "number" && Number.isFinite(seen) ? Math.max(0, seen) : null;
+    // A partial/failed scan does not prove a provider ID has been removed.
+    possiblyMissingCounts[resource] = latestRunSettled && nextPages[resource] === 0 && seenThisCycleCounts[resource] !== null
+      ? Math.max(0, importedCounts[resource] - seenThisCycleCounts[resource]!) : null;
+  });
   return {
     configured: true,
     status: row.status === "connected" ? "connected" : "error",
@@ -156,6 +190,8 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
     lastErrorCode: row.last_error_code ?? null,
     lastCounts: counts,
     importedCounts,
+    seenThisCycleCounts,
+    possiblyMissingCounts,
     nextPages,
     recentRuns,
   };
@@ -339,11 +375,18 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
     // time out a 60s function; three bounded workers keep progress resumable.
     // Wait for ALL launched page writes to settle even if one resource fails.
     const pendingPages = await runFudoReadBatch(FUDO_SYNC_RESOURCES, async (resource) => {
-      const cursor = await db.from("fudo_sync_progress").select("next_page")
+      const cursor = await db.from("fudo_sync_progress").select("next_page,cycle_id,cycle_started_at")
         .eq("business_id", syncBusinessId).eq("connection_generation", generation).eq("resource_type", resource).maybeSingle();
       if (cursor.error) throw new Error("fudo_storage_failed");
       const page = cursor.data ? Number(cursor.data.next_page) : 1;
       if (page === 0) { counts[resource] = 0; return false; }
+      // A UUID, not timestamps, defines membership in the same full-scan cycle.
+      // Retry/resume preserves it; a first page starts a fresh cycle. Legacy
+      // in-flight page >1 remains unknown rather than falsely reconciled.
+      const cycleId: string | null = typeof cursor.data?.cycle_id === "string" && cursor.data.cycle_id
+        ? cursor.data.cycle_id : page === 1 ? randomUUID() : null;
+      const cycleStartedAt = typeof cursor.data?.cycle_started_at === "string"
+        ? cursor.data.cycle_started_at : page === 1 ? new Date().toISOString() : null;
       const response = await client.list(resource, {
         "page[number]": page, "page[size]": FUDO_SYNC_PAGE_SIZE,
       });
@@ -353,6 +396,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
         const rows = snapshots.map((entry) => ({
           business_id: syncBusinessId, connection_generation: generation, provider: "fudo", resource_type: resource,
           external_id: entry.externalId, payload: entry.payload, content_hash: entry.contentHash,
+          last_seen_cycle_id: cycleId,
           source_updated_at: entry.sourceUpdatedAt, last_seen_at: seenAt,
         }));
         const saved = await db.from("fudo_external_records")
@@ -364,7 +408,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       const partial = nextPage !== 0;
       const progress = await db.from("fudo_sync_progress").upsert({
         business_id: syncBusinessId, connection_generation: generation, resource_type: resource,
-        next_page: nextPage,
+        next_page: nextPage, cycle_id: cycleId, cycle_started_at: cycleStartedAt,
         last_complete_at: partial ? null : seenAt, updated_at: seenAt,
       }, { onConflict: "business_id,connection_generation,resource_type" });
       if (progress.error) throw new Error("fudo_storage_failed");
