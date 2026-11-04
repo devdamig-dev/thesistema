@@ -58,7 +58,10 @@ export function parseFudoPage(value: unknown): FudoSnapshot[] {
  * Instead, they are only a continuation signal for our allowlisted, fixed
  * Fudo endpoint and incremented numeric page parameter.
  */
-export function nextFudoPage(response: unknown, currentPage: number, recordCount: number, expectedResource?: string): number {
+export function nextFudoPage(response: unknown, currentPage: number, recordCount: number, expectedResource?: string, requestedPageSize = FUDO_SYNC_PAGE_SIZE): number {
+  if (!Number.isSafeInteger(requestedPageSize) || requestedPageSize < 1 || requestedPageSize > FUDO_SYNC_PAGE_SIZE) {
+    throw new Error("invalid_fudo_page");
+  }
   if (!Number.isSafeInteger(currentPage) || currentPage < 1 || currentPage > 100000
     || !Number.isSafeInteger(recordCount) || recordCount < 0 || recordCount > FUDO_SYNC_PAGE_SIZE) {
     throw new Error("invalid_fudo_page");
@@ -120,8 +123,11 @@ export function nextFudoPage(response: unknown, currentPage: number, recordCount
           }
         }
         const sizes = nextUrl.searchParams.getAll("page[size]");
-        if (sizes.length > 1 || (sizes.length === 1
-          && (!/^[1-9]\d*$/.test(sizes[0]) || Number(sizes[0]) > FUDO_SYNC_PAGE_SIZE))) {
+        // The next GET repeats the caller's requested size, not the link's
+        // query string. A different size would change page offsets and could
+        // silently skip records, so fail closed until a durable per-resource
+        // effective-size cursor is implemented and verified with Fudo.
+        if (sizes.length > 1 || (sizes.length === 1 && sizes[0] !== String(requestedPageSize))) {
           throw new Error("invalid_fudo_page");
         }
         const numbered = nextUrl.searchParams.getAll("page[number]");

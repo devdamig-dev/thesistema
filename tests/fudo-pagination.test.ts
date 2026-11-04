@@ -6,12 +6,12 @@ test("Fudo O1 numbered links continue to the actual next page without following 
   assert.equal(nextFudoPage({ data: [], links: { next: null } }, 1, 0), 0);
   assert.equal(nextFudoPage({
     links: { next: "/v1alpha1/products?page%5Bnumber%5D=2&page%5Bsize%5D=20" },
-  }, 1, 20), 2);
+  }, 1, 20, "products", 20), 2);
   assert.equal(nextFudoPage({ data: [] }, 1, 0), 0);
   assert.equal(nextFudoPage({ links: { next: "/v1alpha1/products?page=2" } }, 1, 1), 2);
   assert.equal(nextFudoPage({
     links: { next: "https://api.fu.do/v1alpha1/orders?page%5Bnumber%5D=13&page%5Bsize%5D=20" },
-  }, 12, 20), 13);
+  }, 12, 20, "orders", 20), 13);
   assert.equal(nextFudoPage({
     links: { next: { href: "?page[number]=3&page[size]=100" } },
   }, 2, 12), 3);
@@ -35,6 +35,7 @@ test("Fudo O1 refuses malformed, non-numbered, skipped or external next links", 
     "/v1alpha1/products?page=2&cursor=opaque",
     "/v1alpha1/products?page=2&page[size]=not-a-number",
     "/v1alpha1/products?page=2&page[size]=101",
+    "/v1alpha1/products?page=2&page[size]=20", // Valid size, but NOT the requested size of 100.
     "/v1alpha1/products?page=2&page[size]=20&page[size]=20",
     "/v1alpha1/products?page=2#unexpected-fragment",
     "/v1alpha1/products?page[number]=NaN",
@@ -54,6 +55,13 @@ test("Fudo O1 refuses malformed, non-numbered, skipped or external next links", 
   }
   assert.throws(() => nextFudoPage({ links: { next: "/v1alpha1/products?page=2" } }, 1, 0), /invalid_fudo_page/);
   assert.throws(() => nextFudoPage({ links: { next: "/v1alpha1/products?page=100001" } }, 100000, 1), /invalid_fudo_page/);
+});
+
+test("Fudo O1 rejects size mismatch in a test-connection probe without leaking the provider URL", () => {
+  const response = { links: { next: "/v1alpha1/products?page[number]=2&page[size]=100" } };
+  assert.throws(() => nextFudoPage(response, 1, 1, "products", 1), /invalid_fudo_page/);
+  assert.equal(nextFudoPage({ links: { next: "/v1alpha1/products?page[number]=2&page[size]=1" } },
+    1, 1, "products", 1), 2);
 });
 
 test("Fudo O1 continuation metadata must refer to the resource being imported", () => {
