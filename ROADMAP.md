@@ -61,6 +61,8 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 
 - **IMPLEMENTADO / PROBADO (CI) / DESPLEGADO (04/11/2026):** PR [#181](https://github.com/devdamig-dev/thesistema/pull/181) fusionado a main (`79977f9aec752a6bcf4858768e990be142030c52`); [Quality](https://github.com/devdamig-dev/thesistema/actions/runs/41758111534) completo/success (verify, PostgreSQL17 y PostgREST), [Vercel Production](https://vercel.com/damians-projects-a45d01bf/thesistema/DgsjpVyP9amJ2FZtiZa4XRuJa7BA) READY con alias `gastropilot.nexodg.com`. Migración aditiva de ciclos aplicada previamente en Supabase `thesistema` y columnas/ACL verificadas por SQL de sólo lectura; 0 conexiones, 0 sync, 0 registros y 0 cursores. El panel diferencia guardados históricos, vistos en ciclo UUID y posibles ausencias sólo con cursor completo y última ejecución cerrada; sin borrar staging. **VALIDADO CON FUDO REAL: NO**; mantener O1 activo y issue [#180](https://github.com/devdamig-dev/thesistema/issues/180) abierto para conciliación real.
 
+- **EN REVISIÓN (04/11/2026, NO DESPLEGADO):** protección adicional del resumen Fudo frente a rotación/desconexión concurrente mientras se leen conteos y cursores; revalidación final de `connection_generation` sin ciphertext. Regresiones sintéticas de dos administradores. PR/Quality pendientes de certificar; sin cambios SQL ni escritura a Fudo. La validación real sigue bloqueada por falta de cuenta autorizada.
+
 - **No marcar O1 completo** hasta evidencia E2E real de una cuenta autorizada y dashboard/IA de piloto verificados.
 
 ### Dependencia externa
