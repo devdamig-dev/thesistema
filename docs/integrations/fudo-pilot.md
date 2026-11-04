@@ -75,7 +75,7 @@ La primera importación no debe escribir movimientos financieros ni de stock pro
 - **Ciclo leído** sólo indica que el cursor de esa importación llegó al final; todavía se deben comparar totales, integridad y permisos con la cuenta Fudo del piloto.
 - La interfaz no hace nuevas llamadas al proveedor ni modifica Fudo; el reporte ayuda a detectar cuál de los cinco recursos necesita otra tanda.
 
-## O1 — Conciliación de presencia por ciclo (pendiente de QA y despliegue)
+## O1 — Conciliación de presencia por ciclo (publicada; pendiente de piloto real)
 
 La tabla de staging conserva IDs vistos en importaciones anteriores. Un nuevo escaneo de Fudo no demuestra que los registros históricos sigan presentes en origen; tampoco permite concluir que hayan sido eliminados si un recurso sólo se leyó parcialmente.
 
@@ -83,7 +83,7 @@ La tabla de staging conserva IDs vistos en importaciones anteriores. Un nuevo es
 - La pantalla separa **Guardados** (histórico), **Vistos en ciclo** y **Posibles ausencias**. Una ausencia sólo se informa cuando el recurso tiene cursor completo (`next_page=0`) **y la última ejecución finalizó como `completed` o `partial`**. Si sigue `running`, terminó `failed` o no existe una ejecución verificable, la comparación queda **Pendiente** aunque exista un cursor en página 0 (por ejemplo, ante un cierre serverless incompleto). Significa *no fue visto en ese escaneo*, NO una baja definitiva del proveedor.
 - No se borra staging, ni se ejecutan escrituras sobre Fudo, ventas, stock o pedidos de GastroPilot. Los conteos sirven para preparar una conciliación manual con el negocio piloto, no para certificar paridad.
 - Al iniciar un nuevo ciclo, la comparación debe volver a estar pendiente hasta completar la paginación. La primera sincronización real del piloto debe contrastar fuente, ventana, permisos y conteos por recurso.
-- Requiere migración aditiva `20261103230000_fudo_cycle_reconciliation.sql` **antes** del despliegue de la app. Sin migración no habilitar esta nueva interfaz.
+- La migración aditiva `20261103230000_fudo_cycle_reconciliation.sql` fue aplicada a Supabase antes del despliegue de la app el 04/11/2026; columnas y ACL verificadas. El importador necesita este esquema para habilitar los nuevos conteos.
 - Rollback: revert de la app; conservar columna nullable e índice hasta una migración de rollback separada y revisada. No efectuar cambios sobre datos de cliente durante el rollback.
 
-Estado: **IMPLEMENTADO EN RAMA / QA Y DESPLIEGUE PENDIENTES / FUDO REAL NO VALIDADO**. Ver issue O1 [#180](https://github.com/devdamig-dev/thesistema/issues/180).
+Estado: **IMPLEMENTADO / PROBADO EN CI / DESPLEGADO EN PRODUCCIÓN / FUDO REAL NO VALIDADO**. PR [#181](https://github.com/devdamig-dev/thesistema/pull/181); [Quality](https://github.com/devdamig-dev/thesistema/actions/runs/41758111534) y [Vercel READY](https://vercel.com/damians-projects-a45d01bf/thesistema/DgsjpVyP9amJ2FZtiZa4XRuJa7BA). Ver issue O1 [#180](https://github.com/devdamig-dev/thesistema/issues/180).
