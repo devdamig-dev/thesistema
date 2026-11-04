@@ -69,7 +69,9 @@ function query(table: string) {
     limit(value: number) { max = value; return this; },
     async maybeSingle() { return { data: get()[0] ?? null, error: null }; },
     then(resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) {
-      const data = get();
+      // PostgREST returns independent JSON snapshots; do not let a simulated
+      // concurrent write mutate data already returned by a previous query.
+      const data = get().map((row) => table === "fudo_sync_runs" ? { ...row } : row);
       if (table === "fudo_sync_progress") duringProgressRead?.();
       return Promise.resolve({ data: countOnly ? null : data, count: countOnly ? data.length : null, error: null }).then(resolve,reject);
     },

@@ -144,9 +144,15 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
   // Keep the newest run identity in a private snapshot. A second admin may
   // start (or finish) a run while counts and cursors are being read, even
   // though fudo_connections metadata has not yet changed.
-  const latestRunRevision = ((recentResult.data ?? []) as Array<{
+  const firstRun = ((recentResult.data ?? []) as Array<{
     id: string; started_at: string; finished_at: string | null; status: FudoSyncRunView["status"];
   }>)[0] ?? null;
+  // Copy primitives; a synthetic DB and concurrent writes must never mutate
+  // the baseline we compare against at the end of this async aggregation.
+  const latestRunRevision = firstRun ? {
+    id: firstRun.id, started_at: firstRun.started_at,
+    finished_at: firstRun.finished_at, status: firstRun.status,
+  } : null;
   const recentRuns: FudoSyncRunView[] = ((recentResult.data ?? []) as Array<{
     started_at: string; finished_at: string | null; status: FudoSyncRunView["status"];
     counts: Record<string, unknown>; error_code: string | null;
