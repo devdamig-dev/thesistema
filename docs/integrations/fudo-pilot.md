@@ -84,6 +84,12 @@ Esto es conservador: si Fudo limita el tamaño efectivo y devuelve un enlace con
 No afirmar compatibilidad real hasta importar una cuenta autorizada; si Fudo emite parámetros legítimos adicionales, extender expresamente el adaptador y sus pruebas.
 
 
+### Tamaño efectivamente devuelto por Fudo (PR #198; publicado)
+
+El test de conexión y el diagnóstico read-only solicitan `page[size]=1`. Una respuesta HTTP 200 con **más registros que los solicitados**, aunque contenga `links.next: null`, incumple el contrato del probe: la conexión **no se debe acreditar como utilizable**. El mismo control se aplica al proceso de sincronización con tamaño 100; `nextFudoPage` rechaza la página antes de persistir staging o cursor. Los errores son fijos/sanitizados; ni las credenciales ni el payload del proveedor se incorporan al resultado del diagnóstico.
+
+La regresión utiliza exclusivamente datos sintéticos. [PR #198](https://github.com/devdamig-dev/thesistema/pull/198) integrado a main (squash `3f8716ac0e07876415cc47e16a48ad12c4460c34`); [Quality #41864719700](https://github.com/devdamig-dev/thesistema/actions/runs/41864719700) `completed/success` (verify con Playwright, postgres17 y postgrest); [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/9W92bJ7L9AT248nTzx135nvU6d3T) para ese commit, alias `gastropilot.nexodg.com` confirmado. **No probado aún con la API de un cliente real**: la activación del piloto depende de autorización, cinco recursos, conciliación y pruebas con sesiones de dos negocios. Sin migraciones SQL ni escrituras hacia Fudo.
+
 ### Continuación vinculada al recurso (CI y despliegue publicados; piloto real pendiente)
 
 Los enlaces `links.next` de un recurso solo pueden apuntar a **ese mismo recurso**. Estar en `api.fu.do` no es suficiente: un enlace de productos a pedidos, aunque contenga la siguiente página numérica, se rechaza como `invalid_fudo_page` **antes de guardar staging o cursor**. El cliente sigue leyendo únicamente la URL fija del recurso solicitado; jamás sigue el enlace externo. La comprobación se aplica a conexión, preflight y sincronización. Soporta rutas `/v1alpha1/<recurso>` o `/<recurso>` (y continuaciones relativas `?page=`). Otros formatos deben evaluarse con una cuenta real y un cambio de adaptador explícito, sin desactivar el modo fail-closed.
