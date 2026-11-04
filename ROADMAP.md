@@ -63,6 +63,8 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 
 - **IMPLEMENTADO / PROBADO EN CI / DESPLEGADO (04/11/2026):** PR [#184](https://github.com/devdamig-dev/thesistema/pull/184) integrado a `main` (SHA `04d212edaeb6118d511870248e01d90b65d1265a`); [Quality](https://github.com/devdamig-dev/thesistema/actions/runs/41771404982) `completed/success` (verify, PostgreSQL 17 y PostgREST) para el HEAD del PR y [Vercel Production](https://vercel.com/damians-projects-a45d01bf/thesistema/6uzLDUNh4vgwf3Hsh47hCQCpLTGc) `READY` con alias `gastropilot.nexodg.com`. El resumen Fudo revalida `business_id + connection_generation` tras leer conteos y cursores; descarta lecturas obsoletas por rotación/desconexión concurrente (regresiones sintéticas), sin leer ciphertext en la revalidación. Sin migración SQL ni escrituras a Fudo. **VALIDADO CON FUDO REAL: NO**; falta conexión autorizada y conciliación E2E.
 
+- **EN REVISIÓN (04/11/2026):** control de integridad de external_id: el importador debe rechazar IDs numéricos no seguros o fraccionarios (que podrían colisionar por redondeo JS), preservando IDs largos como strings. Fixture de regresión read-only y manual actualizados en rama; pendiente CI/PR y prueba con Fudo real. Sin migraciones ni escrituras a Fudo.
+
 - **No marcar O1 completo** hasta evidencia E2E real de una cuenta autorizada y dashboard/IA de piloto verificados.
 
 ### Dependencia externa
