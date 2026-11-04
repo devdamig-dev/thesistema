@@ -12,6 +12,7 @@ const CYCLE_B = "b2222222-2222-4222-8222-222222222222";
 let tenant = A;
 let role = "owner";
 let isMember = true;
+let duringProgressRead: (() => void) | null = null;
 
 const connections = [
   { business_id: A, connection_generation: GA, status: "connected", last_tested_at: null,
@@ -69,6 +70,7 @@ function query(table: string) {
     async maybeSingle() { return { data: get()[0] ?? null, error: null }; },
     then(resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) {
       const data = get();
+      if (table === "fudo_sync_progress") duringProgressRead?.();
       return Promise.resolve({ data: countOnly ? null : data, count: countOnly ? data.length : null, error: null }).then(resolve,reject);
     },
   };
@@ -173,5 +175,38 @@ test("Fudo reconciliation never claims absences while a run is active or failed"
   } finally {
     progress[0].next_page = previousPage;
     runs[0].status = previousStatus;
+  }
+});
+
+test("Fudo status rejects a stale connection generation rotated during aggregate reads", async () => {
+  tenant = A; role = "owner"; isMember = true;
+  const originalGeneration = connections[0].connection_generation;
+  const rotatedGeneration = "77777777-7777-4777-8777-777777777777";
+  try {
+    duringProgressRead = () => {
+      duringProgressRead = null;
+      connections[0].connection_generation = rotatedGeneration;
+    };
+    const result = await getFudoConnectionView();
+    assert.equal(result, null, "the report must not claim a rotated connection is current");
+  } finally {
+    duringProgressRead = null;
+    connections[0].connection_generation = originalGeneration;
+  }
+});
+
+test("Fudo status rejects a connection disconnected during aggregate reads", async () => {
+  tenant = A; role = "owner"; isMember = true;
+  const original = connections[0];
+  try {
+    duringProgressRead = () => {
+      duringProgressRead = null;
+      connections.splice(0, 1);
+    };
+    const result = await getFudoConnectionView();
+    assert.equal(result, null, "the report must not expose results from a disconnected generation");
+  } finally {
+    duringProgressRead = null;
+    if (!connections.some((row) => row.business_id === A)) connections.unshift(original);
   }
 });
