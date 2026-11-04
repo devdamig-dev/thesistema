@@ -404,7 +404,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       // A malformed next-link invalidates the entire page. Validate provider
       // pagination BEFORE any staging upsert so the failed page cannot leave
       // new records or cycle presence markers without a matching cursor.
-      const nextPage = nextFudoPage(response, page, snapshots.length);
+      const nextPage = nextFudoPage(response, page, snapshots.length, resource);
       const partial = nextPage !== 0;
       const seenAt = new Date().toISOString();
       if (snapshots.length) {
