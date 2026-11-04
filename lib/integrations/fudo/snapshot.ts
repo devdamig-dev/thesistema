@@ -23,7 +23,12 @@ export function parseFudoPage(value: unknown): FudoSnapshot[] {
   return raw.map((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("invalid_fudo_record");
     const body = item as Record<string, unknown>;
-    const id = typeof body.id === "string" || typeof body.id === "number" ? String(body.id).trim() : "";
+    // JavaScript JSON parsing rounds integers beyond MAX_SAFE_INTEGER. Never
+    // persist a rounded external_id: two distinct Fudo records could otherwise
+    // collide in the tenant's upsert key. Providers must send large IDs as strings.
+    const rawId = body.id;
+    const id = typeof rawId === "string" ? rawId.trim()
+      : typeof rawId === "number" && Number.isSafeInteger(rawId) ? String(rawId) : "";
     if (!id || id.length > 256 || seen.has(id)) throw new Error("invalid_fudo_record");
     seen.add(id);
 
