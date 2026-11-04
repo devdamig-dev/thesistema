@@ -170,11 +170,15 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
   if (seenResults.some((result: { error?: unknown }) => result.error)) return null;
   const seenThisCycleCounts: Record<string, number | null> = {};
   const possiblyMissingCounts: Record<string, number | null> = {};
+  // Cursor completion alone is not a committed reconciliation: a serverless
+  // invocation can stop after persisting a cursor but before finalizing its run.
+  // Never report absences while the newest run is running, failed or missing.
+  const latestRunSettled = recentRuns[0]?.status === "completed" || recentRuns[0]?.status === "partial";
   FUDO_SYNC_RESOURCES.forEach((resource, index) => {
     const seen = seenResults[index].count;
     seenThisCycleCounts[resource] = typeof seen === "number" && Number.isFinite(seen) ? Math.max(0, seen) : null;
     // A partial/failed scan does not prove a provider ID has been removed.
-    possiblyMissingCounts[resource] = nextPages[resource] === 0 && seenThisCycleCounts[resource] !== null
+    possiblyMissingCounts[resource] = latestRunSettled && nextPages[resource] === 0 && seenThisCycleCounts[resource] !== null
       ? Math.max(0, importedCounts[resource] - seenThisCycleCounts[resource]!) : null;
   });
   return {
