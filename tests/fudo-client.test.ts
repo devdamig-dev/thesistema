@@ -352,3 +352,32 @@ test("Fudo preflight rejects a same-origin next link for another resource", asyn
   assert.deepEqual(methods, ["GET", "GET", "GET"]);
   assert.doesNotMatch(JSON.stringify(checks), /private-|synthetic-|bearer|secret/);
 });
+
+test("Fudo connection and permission probes reject overfilled HTTP 200 pages without exposing provider records", async () => {
+  const methods: string[] = [];
+  const now = 1_800_000_000_000;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      return jsonResponse({ token: "private-probe-token", exp: Math.floor((now + 86_400_000) / 1000) });
+    }
+    methods.push(String(init?.method));
+    assert.equal(new URL(String(input)).searchParams.get("page[size]"), "1");
+    // The response is syntactically JSON:API, but ignores the requested page size.
+    return jsonResponse({ data: [
+      { id: "private-A", attributes: { name: "do-not-leak-A" } },
+      { id: "private-B", attributes: { name: "do-not-leak-B" } },
+    ], links: { next: null } });
+  };
+  const client = new FudoClient(
+    { apiKey: "synthetic-probe-key", apiSecret: "synthetic-probe-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+  await assert.rejects(() => client.testConnection(), /invalid_fudo_page/);
+  const checks = await client.probeReadAccess(["products", "sales"]);
+  assert.deepEqual(checks, [
+    { resource: "products", code: "invalid_response" },
+    { resource: "sales", code: "invalid_response" },
+  ]);
+  assert.deepEqual(methods, ["GET", "GET", "GET"]);
+  assert.doesNotMatch(JSON.stringify(checks), /private-|synthetic-|do-not-leak|token|secret/);
+});
