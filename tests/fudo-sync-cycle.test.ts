@@ -258,11 +258,12 @@ test("Fudo O1 rejects malformed pagination before changing staging or cursor", a
     }
     providerVerbs.push(String(init?.method));
     if (new URL(url).pathname.endsWith("/products")) {
-      // The record itself is valid, but a non-URL next value makes the
-      // entire provider page invalid. No new staging row should survive.
+      // The record is valid and the link stays on Fudo's host, but it
+      // points to a DIFFERENT resource. The whole page must be rejected
+      // before staging or cursor changes.
       return new Response(JSON.stringify({
         data: [{ id: "uncommitted-product", attributes: { name: "must-not-import" } }],
-        links: { next: true },
+        links: { next: "/v1alpha1/orders?page[number]=2" },
       }), { status: 200 });
     }
     return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
