@@ -233,12 +233,29 @@ export async function inspectFudoReadPermissions(): Promise<FudoResourcePrefligh
       return { ok: false, message: "Necesitás ser owner o administrador del negocio.", checks: [] };
     }
     const { actor, db } = authorized;
-    const stored = await db.from("fudo_connections").select("credentials_ciphertext")
+    const stored = await db.from("fudo_connections").select("credentials_ciphertext,connection_generation")
       .eq("business_id", actor.businessId).maybeSingle();
     if (stored.error) return { ok: false, message: UNKNOWN, checks: [] };
     if (!stored.data) return { ok: false, message: "Primero conectá Fudo.", checks: [] };
+    const generation: unknown = stored.data.connection_generation;
+    if (typeof generation !== "string" || !generation) {
+      return { ok: false, message: UNKNOWN, checks: [] };
+    }
     const credentials = decryptFudoCredentials(actor.businessId, stored.data.credentials_ciphertext);
     const checks = await new FudoClient(credentials).probeReadAccess(FUDO_SYNC_RESOURCES);
+    // A second owner can rotate or disconnect while the five external probes
+    // are running. Never report old credentials as currently authorized.
+    // This status-only reread does not expose ciphertext to the browser.
+    const current = await db.from("fudo_connections").select("connection_generation")
+      .eq("business_id", actor.businessId).maybeSingle();
+    if (current.error) return { ok: false, message: UNKNOWN, checks: [] };
+    if (!current.data || current.data.connection_generation !== generation) {
+      return {
+        ok: false,
+        message: "La conexión Fudo cambió durante la revisión. Volvé a comprobar los permisos de la conexión actual.",
+        checks: [],
+      };
+    }
     const available = checks.filter((item) => item.code === "available").length;
     return {
       ok: available === FUDO_SYNC_RESOURCES.length,

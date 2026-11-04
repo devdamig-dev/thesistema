@@ -9,6 +9,11 @@ const USER = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const SECRET_KEY = Buffer.alloc(32, 19).toString("base64");
 const ciphertextA = encryptFudoCredentials(A, { apiKey: "pilot-key-business-A", apiSecret: "pilot-secret-business-A" }, SECRET_KEY);
 const ciphertextB = encryptFudoCredentials(B, { apiKey: "pilot-key-business-B", apiSecret: "pilot-secret-business-B" }, SECRET_KEY);
+const ORIGINAL_GENERATION = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const ROTATED_GENERATION = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const GENERATION_B = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+let currentGenerationA = ORIGINAL_GENERATION;
+let connectedA = true;
 
 let tenant = A;
 let role = "owner";
@@ -27,9 +32,12 @@ const query = (table: string) => {
         isMember && filters.business_id === tenant && filters.user_id === USER ? { id: "member" } : null };
       if (table === "fudo_connections") {
         readsOfConnections++;
-        const stored = filters.business_id === A ? ciphertextA :
-          filters.business_id === B ? ciphertextB : null;
-        return { error: null, data: stored ? { credentials_ciphertext: stored } : null };
+        const stored = filters.business_id === A && connectedA
+          ? { credentials_ciphertext: ciphertextA, connection_generation: currentGenerationA }
+          : filters.business_id === B
+            ? { credentials_ciphertext: ciphertextB, connection_generation: GENERATION_B }
+            : null;
+        return { error: null, data: stored };
       }
       return { error: { code: "unexpected_table" }, data: null };
     },
@@ -103,6 +111,58 @@ test("Fudo readiness isolates each business and only returns sanitized resource 
     assert.equal(resourceCalls, 10);
     assert.doesNotMatch(JSON.stringify(a) + JSON.stringify(b), /SECRET|private-id|customer|token-[AB]|pilot-key/i);
   } finally {
+    globalThis.fetch = oldFetch;
+    if (oldKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = oldKey;
+  }
+});
+
+test("Fudo preflight rejects resource checks from a rotated or disconnected connection", async () => {
+  const oldKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const oldFetch = globalThis.fetch;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = SECRET_KEY;
+  tenant = A; role = "owner"; isMember = true; active = true;
+  try {
+    for (const change of ["rotation", "disconnection"] as const) {
+      currentGenerationA = ORIGINAL_GENERATION;
+      connectedA = true;
+      let resourceReads = 0;
+      globalThis.fetch = async (input) => {
+        if (String(input) === "https://auth.fu.do/api") {
+          return new Response(JSON.stringify({
+            token: "private-fixture-token", exp: Math.floor(Date.now() / 1000) + 86400,
+          }), { status: 200 });
+        }
+        resourceReads++;
+        // Another admin changes the connection during an external read.
+        if (change === "rotation") currentGenerationA = ROTATED_GENERATION;
+        else connectedA = false;
+        return new Response(JSON.stringify({
+          data: [{ id: "private-provider-id", attributes: { name: "private-provider-record" } }],
+        }), { status: 200 });
+      };
+      const result = await inspectFudoReadPermissions();
+      assert.equal(resourceReads, 5, "all read probes settled before the generation check");
+      assert.equal(result.ok, false);
+      assert.deepEqual(result.checks, [], "stale provider permissions must not be shown");
+      assert.match(result.message, /conexión Fudo cambió/i);
+      assert.doesNotMatch(JSON.stringify(result), /private-provider|private-fixture-token|pilot-secret/i);
+    }
+
+    currentGenerationA = ORIGINAL_GENERATION;
+    connectedA = true;
+    globalThis.fetch = async (input) => String(input) === "https://auth.fu.do/api"
+      ? new Response(JSON.stringify({
+          token: "private-fixture-token", exp: Math.floor(Date.now() / 1000) + 86400,
+        }), { status: 200 })
+      : new Response(JSON.stringify({ data: [] }), { status: 200 });
+    const unchanged = await inspectFudoReadPermissions();
+    assert.equal(unchanged.ok, true);
+    assert.equal(unchanged.checks.length, 5);
+    assert.ok(unchanged.checks.every((check) => check.code === "available"));
+  } finally {
+    currentGenerationA = ORIGINAL_GENERATION;
+    connectedA = true;
     globalThis.fetch = oldFetch;
     if (oldKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = oldKey;
