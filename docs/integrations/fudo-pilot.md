@@ -88,10 +88,10 @@ La tabla de staging conserva IDs vistos en importaciones anteriores. Un nuevo es
 
 Estado: **IMPLEMENTADO / PROBADO EN CI / DESPLEGADO EN PRODUCCIÓN / FUDO REAL NO VALIDADO**. PR [#181](https://github.com/devdamig-dev/thesistema/pull/181); [Quality](https://github.com/devdamig-dev/thesistema/actions/runs/41758111534) y [Vercel READY](https://vercel.com/damians-projects-a45d01bf/thesistema/DgsjpVyP9amJ2FZtiZa4XRuJa7BA). Ver issue O1 [#180](https://github.com/devdamig-dev/thesistema/issues/180).
 
-## O1 — Protección del reporte ante rotación concurrente (en revisión; 04/11/2026)
+## O1 — Protección del reporte ante rotación concurrente (publicada; 04/11/2026)
 
 Un segundo owner/admin puede rotar o desconectar Fudo mientras se consultan el historial y los conteos de staging. Una lectura inicial de `connection_generation` no basta para garantizar que el resumen mostrado corresponde a la conexión todavía vigente.
 
 El resumen revalida `business_id + connection_generation` al terminar las consultas de agregados. Si cambió la generación, desapareció la conexión o falló la revalidación, devuelve un estado no verificable en lugar de presentar historial de credenciales anteriores como actual. No consulta ciphertext en la revalidación, no altera datos, no invoca Fudo y conserva el alcance owner/admin.
 
-Pruebas sintéticas agregadas: rotación y desconexión durante la lectura de cursores, además de los casos existentes de datos del tenant y generación actual. Estado: **IMPLEMENTADO EN RAMA, QA CI PENDIENTE, NO DESPLEGADO, NO VALIDADO CON FUDO REAL**. El gate de O1 sigue pendiente de cuenta autorizada y conciliación E2E.
+Pruebas sintéticas agregadas: rotación y desconexión durante la lectura de cursores, además de los casos existentes de datos del tenant y generación actual. Estado: **IMPLEMENTADO / PROBADO EN CI / DESPLEGADO / NO VALIDADO CON FUDO REAL**. [PR #184](https://github.com/devdamig-dev/thesistema/pull/184) integrado a main `04d212edaeb6118d511870248e01d90b65d1265a`; [Quality](https://github.com/devdamig-dev/thesistema/actions/runs/41771404982) completo en verde (verify, PostgreSQL 17 y PostgREST), [Vercel Production](https://vercel.com/damians-projects-a45d01bf/thesistema/6uzLDUNh4vgwf3Hsh47hCQCpLTGc) READY con alias `gastropilot.nexodg.com`. Sin migración, sin escrituras hacia Fudo. Sigue pendiente la cuenta autorizada y la conciliación E2E.
