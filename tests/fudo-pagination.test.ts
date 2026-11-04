@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { nextFudoPage } from "../lib/integrations/fudo/snapshot";
+import { nextFudoPage, parseFudoPage } from "../lib/integrations/fudo/snapshot";
 
 test("Fudo O1 numbered links continue to the actual next page without following the URL", () => {
   assert.equal(nextFudoPage({ data: [], links: { next: null } }, 1, 0), 0);
@@ -86,4 +86,14 @@ test("Fudo O1 continuation metadata must refer to the resource being imported", 
     assert.throws(() => nextFudoPage({ links: { next } }, 1, 1, "orders"),
       /invalid_fudo_page/, next);
   }
+});
+
+test("Fudo O1 refuses an overfilled page even when links.next is null", () => {
+  const overfilled = { data: [{ id: "sample-1" }, { id: "sample-2" }], links: { next: null } };
+  const rows = parseFudoPage(overfilled);
+  assert.equal(rows.length, 2);
+  assert.throws(() => nextFudoPage(overfilled, 1, rows.length, "products", 1),
+    /invalid_fudo_page/, "provider did not honor the requested one-record probe size");
+  assert.equal(nextFudoPage(overfilled, 1, rows.length, "products", 2), 0,
+    "the same data is valid if the caller explicitly requested two records");
 });
