@@ -64,6 +64,7 @@ La primera importación no debe escribir movimientos financieros ni de stock pro
 - Para cada recurso indica solamente `available`, `forbidden`, `invalid_credentials`, `api_unavailable`, `rate_limited`, `provider_unavailable` o `invalid_response`. Un HTTP 200 con esquema incompatible no acredita acceso utilizable.
 - La autenticación se inicia una vez por diagnóstico; la consulta de cinco recursos es paralela para respetar límites de duración del servidor.
 - El cliente Fudo usa `redirect: "error"` tanto en el POST de autenticación como en GETs de lectura, para no redirigir secretos/tokens a otro destino.
+- Si un segundo administrador rota o desconecta Fudo durante las cinco lecturas, la comprobación del `connection_generation` actual invalida el diagnóstico anterior, devuelve cero checks y pide repetirlo sobre la conexión vigente. No se leen secretos para verificar la generación ni se reportan permisos obsoletos. Esto requiere QA de regresión y todavía no prueba un proveedor real.
 - Ningún resultado del diagnóstico equivale a conciliación completa, permisos de otras operaciones o validación con datos reales. La aplicación no realiza ninguna escritura en la API Fudo.
 - QA requerida: owner/admin, denegación por rol y membresía, A/B con distintas claves, caso 403/404/error temporal, redirecciones y esquema inválido. Validar en la cuenta piloto real una vez que se conecte.
 
