@@ -103,6 +103,17 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
   // rotate credentials during asynchronous reads. Do not rely on a mutable
   // connection object reference when checking that our report is still current.
   const generation: string = row.connection_generation;
+  // Snapshot every connection field used by the readiness panel before
+  // asynchronous aggregation. A retest or sync can change status without
+  // rotating connection_generation, so comparing the generation alone is not
+  // a sufficient consistency fence.
+  const revision = {
+    status: row.status,
+    lastTestedAt: row.last_tested_at,
+    lastSyncedAt: row.last_synced_at,
+    lastSyncStatus: row.last_sync_status,
+    lastErrorCode: row.last_error_code,
+  };
   // Keep the pilot's audit/count summary server-only; never return provider
   // payloads, ciphertext, user IDs or raw authorization metadata to the UI.
   const [recentResult, progressResult, ...countResults] = await Promise.all([
@@ -185,19 +196,26 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
     possiblyMissingCounts[resource] = latestRunSettled && nextPages[resource] === 0 && seenThisCycleCounts[resource] !== null
       ? Math.max(0, importedCounts[resource] - seenThisCycleCounts[resource]!) : null;
   });
-  // The connection can be rotated or disconnected by a second owner while
-  // aggregate reads are in flight. Never render a stale generation as the
-  // currently connected account. This final reread contains no ciphertext.
-  const current = await db.from("fudo_connections").select("connection_generation")
+  // A second owner can also retest credentials or finish a sync WITHOUT
+  // changing the generation. A stale connected/complete status must not be
+  // returned alongside aggregation from an earlier revision.
+  // Final read is metadata only: no ciphertext, provider payload or secret.
+  const current = await db.from("fudo_connections")
+    .select("connection_generation,status,last_tested_at,last_synced_at,last_sync_status,last_error_code")
     .eq("business_id", actor.businessId).maybeSingle();
-  if (current.error || !current.data || current.data.connection_generation !== generation) return null;
+  if (current.error || !current.data || current.data.connection_generation !== generation
+    || current.data.status !== revision.status
+    || current.data.last_tested_at !== revision.lastTestedAt
+    || current.data.last_synced_at !== revision.lastSyncedAt
+    || current.data.last_sync_status !== revision.lastSyncStatus
+    || current.data.last_error_code !== revision.lastErrorCode) return null;
   return {
     configured: true,
-    status: row.status === "connected" ? "connected" : "error",
-    lastTestedAt: row.last_tested_at ?? null,
-    lastSyncedAt: row.last_synced_at ?? null,
-    lastSyncStatus: row.last_sync_status ?? null,
-    lastErrorCode: row.last_error_code ?? null,
+    status: revision.status === "connected" ? "connected" : "error",
+    lastTestedAt: revision.lastTestedAt ?? null,
+    lastSyncedAt: revision.lastSyncedAt ?? null,
+    lastSyncStatus: revision.lastSyncStatus ?? null,
+    lastErrorCode: revision.lastErrorCode ?? null,
     lastCounts: counts,
     importedCounts,
     seenThisCycleCounts,
