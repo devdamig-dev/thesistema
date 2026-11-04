@@ -322,3 +322,33 @@ test("Fudo connection and readiness probes reject malformed first-page paginatio
   assert.deepEqual(methods, ["GET", "GET", "GET"]);
   assert.doesNotMatch(JSON.stringify(checks), /private|sensitive-product|bearer/);
 });
+
+test("Fudo preflight rejects a same-origin next link for another resource", async () => {
+  const methods: string[] = [];
+  const now = 1_800_000_000_000;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      return jsonResponse({ token: "synthetic-bearer", exp: Math.floor((now + 86400000) / 1000) });
+    }
+    methods.push(String(init?.method));
+    const resource = new URL(String(input)).pathname.split("/").at(-1);
+    if (resource === "products") {
+      return jsonResponse({ data: [{ id: "private-product" }],
+        links: { next: "/v1alpha1/orders?page[number]=2" } });
+    }
+    return jsonResponse({ data: [{ id: "private-ingredient" }],
+      links: { next: "/v1alpha1/ingredients?page[number]=2" } });
+  };
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+  await assert.rejects(() => client.testConnection(), /invalid_fudo_page/);
+  const checks = await client.probeReadAccess(["products", "ingredients"]);
+  assert.deepEqual(checks, [
+    { resource: "products", code: "invalid_response" },
+    { resource: "ingredients", code: "available" },
+  ]);
+  assert.deepEqual(methods, ["GET", "GET", "GET"]);
+  assert.doesNotMatch(JSON.stringify(checks), /private-|synthetic-|bearer|secret/);
+});
