@@ -200,3 +200,43 @@ test("Fudo O1 pagination keeps one cycle UUID then flags a provider ID absent on
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = prevKey;
   }
 });
+
+
+test("Fudo O1 never advances the invalid resource cursor for a rounded numeric provider ID", async () => {
+  const prevFetch = globalThis.fetch;
+  const prevKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  const priorProducts = records.filter((row) => row.resource_type === "products").map((row) => row.external_id).sort();
+  const providerVerbs: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      return new Response(JSON.stringify({
+        token: "synthetic-token", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    providerVerbs.push(String(init?.method));
+    if (new URL(String(input)).pathname.endsWith("/products")) {
+      return new Response(JSON.stringify({ data: [{ id: Number.MAX_SAFE_INTEGER + 1 }] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+  };
+  try {
+    // The previous test finishes a complete cycle: starting this new one
+    // clears cursors only, never the historical records.
+    const outcome = await syncFudoReadOnly();
+    assert.equal(outcome.ok, false);
+    if (!outcome.ok) assert.equal(outcome.code, "invalid_response");
+    assert.equal(runs.at(-1)?.status, "failed");
+    assert.equal(progress.find((row) => row.resource_type === "products"), undefined,
+      "an invalid products page must not commit a cursor");
+    assert.deepEqual(records.filter((row) => row.resource_type === "products")
+      .map((row) => row.external_id).sort(), priorProducts,
+      "the failed scan must not corrupt the old external_id mapping");
+    assert.ok(providerVerbs.length > 0 && providerVerbs.every((method) => method === "GET"));
+    assert.doesNotMatch(JSON.stringify(outcome), /synthetic-token|synthetic-pilot-secret/);
+  } finally {
+    globalThis.fetch = prevFetch;
+    if (prevKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = prevKey;
+  }
+});

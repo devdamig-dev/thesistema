@@ -56,6 +56,7 @@ La primera importación no debe escribir movimientos financieros ni de stock pro
 - Cambios de schema/API requieren adapter versionado.
 - No asumir que un 200 significa datos completos; reconciliar conteos y rangos.
 - No mezclar IDs Fudo con IDs internos.
+- Integridad de IDs: si Fudo devuelve un ID numérico JSON fuera del rango entero seguro de JavaScript o fraccionario, rechazar la página con error sanitizado antes de hacer upsert o avanzar el cursor. Los IDs largos son válidos **como strings**. Sin esto, dos IDs distintos podrían colisionar por redondeo. Requiere contraste con datos reales del piloto.
 
 
 ## O1 — Diagnóstico de permisos previo al piloto (03/11/2026)
