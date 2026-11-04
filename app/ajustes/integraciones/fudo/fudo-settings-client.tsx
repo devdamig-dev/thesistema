@@ -6,6 +6,7 @@ import { DatabaseZap, PlugZap, RefreshCcw, ShieldCheck, Unplug } from "lucide-re
 import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/ajustes/setting-row";
 import type { FudoConnectionView, FudoResourcePreflight } from "@/lib/integrations/fudo/service";
+import { evaluateFudoPilotReadiness } from "@/lib/integrations/fudo/readiness";
 import {
   connectFudoAction, testFudoConnectionAction, inspectFudoPermissionsAction, disconnectFudoAction, syncFudoAction,
 } from "@/app/actions/fudo";
@@ -34,6 +35,7 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
   const [preflight, setPreflight] = useState<FudoResourcePreflight | null>(null);
   const connected = status.status === "connected";
   const hasCredentials = status.status !== "disconnected";
+  const readiness = evaluateFudoPilotReadiness(status, preflight);
 
   const execute = (action: () => Promise<{ ok: boolean; message: string }>, clear = false) => {
     setNotice(null);
@@ -134,6 +136,29 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
             target="_blank" rel="noreferrer" className="text-brand-400 underline">
             Cómo habilitar la API Pública General en Fudo
           </a>
+        </p>
+      </SettingsCard>
+
+      <SettingsCard title="Preparación del piloto Fudo" description="Control de avance para probar GastroPilot sin modificar la operación actual.">
+        <p className="mb-3 rounded-lg border border-warn-500/30 px-3 py-2 text-xs font-semibold text-warn-400">
+          Piloto NO-GO hasta conciliar datos reales y aprobar el aislamiento multiempresa.
+        </p>
+        <div className="space-y-2" aria-label="Checklist del piloto Fudo">
+          {readiness.map((step) => (
+            <div key={step.id} className="rounded-lg border border-line p-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-ink">{step.title}</p>
+                <span className={`text-xs font-semibold ${step.state === "done" ? "text-success-400" : step.state === "blocked" ? "text-warn-400" : "text-ink-muted"}`}>
+                  {step.state === "done" ? "Comprobación parcial" : step.state === "blocked" ? "Requiere revisión" : "Pendiente"}
+                </span>
+              </div>
+              <p className="mt-1 text-xs leading-relaxed text-ink-muted">{step.description}</p>
+            </div>
+          ))}
+        </div>
+        <p className="mt-3 text-xs text-ink-muted">
+          Los pasos técnicos son orientativos. Ningún indicador automático certifica por sí mismo
+          la prueba con Fudo real, los conteos conciliados ni la autorización para reemplazar Fudo.
         </p>
       </SettingsCard>
 
