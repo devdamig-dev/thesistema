@@ -52,6 +52,19 @@ test("Fudo staging rejects ambiguous records and oversized provider pages", () =
 });
 
 
+test("Fudo preserves numeric safe IDs but refuses rounded or fractional external IDs", () => {
+  assert.equal(parseFudoPage({ data: [{ id: Number.MAX_SAFE_INTEGER }] })[0].externalId,
+    String(Number.MAX_SAFE_INTEGER));
+  // A 64-bit provider ID is safe when transmitted as text, never as a JSON number.
+  assert.equal(parseFudoPage({ data: [{ id: "9007199254740993" }] })[0].externalId,
+    "9007199254740993");
+  assert.throws(() => parseFudoPage({ data: [{ id: Number.MAX_SAFE_INTEGER + 1 }] }),
+    /invalid_fudo_record/);
+  assert.throws(() => parseFudoPage({ data: [{ id: 42.5 }] }), /invalid_fudo_record/);
+  assert.throws(() => parseFudoPage({ data: [{ id: -Infinity }] }), /invalid_fudo_record/);
+  assert.throws(() => parseFudoPage({ data: [{ id: " " }] }), /invalid_fudo_record/);
+});
+
 test("Fudo keeps paging a short provider-capped page when JSON:API links.next exists", () => {
   const shortPage = { data: [{ id: "x1" }, { id: "x2" }],
     links: { next: "https://api.fu.do/v1alpha1/products?page%5Bnumber%5D=2" } };
