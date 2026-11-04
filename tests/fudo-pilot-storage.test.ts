@@ -24,7 +24,14 @@ test("Fudo encryption fails closed on missing or malformed server key", () => {
   assert.throws(() => encryptFudoCredentials(businessA, credentials, ""), /fudo_encryption_unavailable/);
   assert.throws(() => encryptFudoCredentials(businessA, credentials, "wrong"), /fudo_encryption_unavailable/);
   const encrypted = encryptFudoCredentials(businessA, credentials, key);
-  const tampered = encrypted.slice(0, -2) + (encrypted.endsWith("aa") ? "bb" : "aa");
+  // Mutate an actual authentication-tag byte; changing the last base64url characters
+  // can alter only unused padding bits and leave the decoded ciphertext unchanged.
+  const parts = encrypted.split(".");
+  const tag = Buffer.from(parts[2], "base64url");
+  assert.equal(tag.length, 16);
+  tag[0] ^= 0x01;
+  parts[2] = tag.toString("base64url");
+  const tampered = parts.join(".");
   assert.throws(() => decryptFudoCredentials(businessA, tampered, key), /fudo_ciphertext_invalid/);
 });
 
