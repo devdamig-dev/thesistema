@@ -6,7 +6,7 @@ import { DatabaseZap, PlugZap, RefreshCcw, ShieldCheck, Unplug } from "lucide-re
 import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/ajustes/setting-row";
 import type { FudoConnectionView, FudoResourcePreflight } from "@/lib/integrations/fudo/service";
-import { evaluateFudoPilotReadiness } from "@/lib/integrations/fudo/readiness";
+import { evaluateFudoPilotReadiness, fudoConnectionRevision, selectCurrentFudoPreflight } from "@/lib/integrations/fudo/readiness";
 import {
   connectFudoAction, testFudoConnectionAction, inspectFudoPermissionsAction, disconnectFudoAction, syncFudoAction,
 } from "@/app/actions/fudo";
@@ -32,14 +32,20 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
   const [secret, setSecret] = useState("");
   const [working, startTransition] = useTransition();
   const [notice, setNotice] = useState<{ ok: boolean; message: string } | null>(null);
-  const [preflight, setPreflight] = useState<FudoResourcePreflight | null>(null);
+  // The permission probe is advisory and applies only to the tested connection.
+  // A server refresh after retest/rotation must not re-use old green checks.
+  const connectionRevision = fudoConnectionRevision(status);
+  const [preflightState, setPreflightState] = useState<{
+    revision: string; result: FudoResourcePreflight;
+  } | null>(null);
+  const preflight = selectCurrentFudoPreflight(status, preflightState);
   const connected = status.status === "connected";
   const hasCredentials = status.status !== "disconnected";
   const readiness = evaluateFudoPilotReadiness(status, preflight);
 
   const execute = (action: () => Promise<{ ok: boolean; message: string }>, clear = false) => {
     setNotice(null);
-    setPreflight(null);
+    setPreflightState(null);
     startTransition(async () => {
       const result = await action();
       setNotice({ ok: result.ok, message: result.message });
@@ -100,7 +106,7 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
             </Button>}
             {hasCredentials && <Button disabled={working} onClick={() => execute(async () => {
               const result = await inspectFudoPermissionsAction();
-              setPreflight(result);
+              setPreflightState({ revision: connectionRevision, result });
               return result;
             })}>
               <ShieldCheck className="h-4 w-4" /> Revisar permisos de importación
