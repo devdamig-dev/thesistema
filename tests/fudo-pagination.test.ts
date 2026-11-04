@@ -44,3 +44,27 @@ test("Fudo O1 refuses malformed, non-numbered, skipped or external next links", 
   assert.throws(() => nextFudoPage({ links: { next: "/v1alpha1/products?page=2" } }, 1, 0), /invalid_fudo_page/);
   assert.throws(() => nextFudoPage({ links: { next: "/v1alpha1/products?page=100001" } }, 100000, 1), /invalid_fudo_page/);
 });
+
+test("Fudo O1 continuation metadata must refer to the resource being imported", () => {
+  const valid = [
+    "?page[number]=2",
+    "/v1alpha1/orders?page=2",
+    "/orders?page[number]=2",
+    "https://api.fu.do/v1alpha1/orders?page%5Bnumber%5D=2",
+  ];
+  for (const next of valid) {
+    assert.equal(nextFudoPage({ links: { next } }, 1, 1, "orders"), 2, next);
+  }
+
+  const wrongResource = [
+    "/v1alpha1/products?page=2",
+    "/products?page[number]=2",
+    "https://api.fu.do/v1alpha1/sales?page=2",
+    "/v1alpha1/orders/123?page=2",
+    "/v1alpha1/orders/../products?page=2",
+  ];
+  for (const next of wrongResource) {
+    assert.throws(() => nextFudoPage({ links: { next } }, 1, 1, "orders"),
+      /invalid_fudo_page/, next);
+  }
+});

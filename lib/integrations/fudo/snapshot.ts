@@ -58,7 +58,7 @@ export function parseFudoPage(value: unknown): FudoSnapshot[] {
  * Instead, they are only a continuation signal for our allowlisted, fixed
  * Fudo endpoint and incremented numeric page parameter.
  */
-export function nextFudoPage(response: unknown, currentPage: number, recordCount: number): number {
+export function nextFudoPage(response: unknown, currentPage: number, recordCount: number, expectedResource?: string): number {
   if (!Number.isSafeInteger(currentPage) || currentPage < 1 || currentPage > 100000
     || !Number.isSafeInteger(recordCount) || recordCount < 0 || recordCount > FUDO_SYNC_PAGE_SIZE) {
     throw new Error("invalid_fudo_page");
@@ -92,13 +92,23 @@ export function nextFudoPage(response: unknown, currentPage: number, recordCount
           if (!/^(https?:\/\/|\/|\?)/i.test(link) || /\s/.test(link)) {
             throw new Error("invalid_fudo_page");
           }
-          nextUrl = new URL(link, "https://api.fu.do/v1alpha1/products");
+          nextUrl = new URL(link, `https://api.fu.do/v1alpha1/${expectedResource ?? "products"}`);
         } catch {
           throw new Error("invalid_fudo_page");
         }
         if (nextUrl.protocol !== "https:" || nextUrl.origin !== "https://api.fu.do"
           || nextUrl.username || nextUrl.password) {
           throw new Error("invalid_fudo_page");
+        }
+        // A same-origin link can still point to another Fudo resource. Since
+        // the adapter only follows its fixed allowlisted endpoint, accepting
+        // that metadata would silently scan the wrong page and misstate
+        // reconciliation. Bind the hint to the resource actually requested.
+        if (expectedResource) {
+          const path = nextUrl.pathname.replace(/\/$/, "");
+          if (path !== `/v1alpha1/${expectedResource}` && path !== `/${expectedResource}`) {
+            throw new Error("invalid_fudo_page");
+          }
         }
         const numbered = nextUrl.searchParams.getAll("page[number]");
         const simple = nextUrl.searchParams.getAll("page");
