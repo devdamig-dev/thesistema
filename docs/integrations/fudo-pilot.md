@@ -40,6 +40,17 @@ Crear mapeos externos con:
 
 La primera importación no debe escribir movimientos financieros ni de stock propios. Debe poder repetirse sin duplicar.
 
+## O1 — Checklist de preparación del piloto (publicado 04/11/2026)
+
+Ajustes > Integraciones > Fudo muestra ahora el avance por pasos **informativos**, no un permiso automático para operar sin Fudo:
+
+1. **Conexión segura:** la prueba de productos confirma una lectura compatible, pero no acredita permisos en los otros cuatro recursos.
+2. **Diagnóstico de recursos:** ejecutar `Revisar permisos de importación` comprueba cinco GET read-only; los checks solo viven en la sesión de interfaz y se deben repetir al recargar/rotar.
+3. **Ciclo de lectura:** los cinco cursores deben estar en `0`, `lastSyncStatus` y la última corrida deben indicar `completed`. Un cursor finalizado no confirma paridad con Fudo.
+4. **Conciliación / multiempresa:** **siempre pendiente de evidencia manual** de conteos/IDs por recurso, sesiones owner/empleado y separación real negocio A/B; ninguna UI ni test sintético puede habilitar GO.
+
+El aviso **Piloto NO-GO** permanece mientras falte esa validación operativa. No se almacena un resultado GO ni un nuevo secreto en la interfaz. [PR #200](https://github.com/devdamig-dev/thesistema/pull/200) (merge `d6781a2b`) pasó [Quality](https://github.com/devdamig-dev/thesistema/actions/runs/41883782458), y su compilación se publicó [en Vercel Production](https://vercel.com/damians-projects-a45d01bf/thesistema/DgXEtWqQazaSEYnao7fbjm131fo3) con alias `gastropilot.nexodg.com`. **Fudo real: NO VALIDADO.** Sin escrituras al proveedor, a ventas/stock nativos ni nuevas migraciones.
+
 ## Fase 4 — piloto
 1. El cliente habilita API Pública General en Fudo (Plan Pro).
 2. Crea usuario API de permisos mínimos.
