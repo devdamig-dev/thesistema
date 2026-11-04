@@ -99,19 +99,23 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
     };
   }
 
+  // Snapshot the generation as an immutable primitive: a second session may
+  // rotate credentials during asynchronous reads. Do not rely on a mutable
+  // connection object reference when checking that our report is still current.
+  const generation: string = row.connection_generation;
   // Keep the pilot's audit/count summary server-only; never return provider
   // payloads, ciphertext, user IDs or raw authorization metadata to the UI.
   const [recentResult, progressResult, ...countResults] = await Promise.all([
     db.from("fudo_sync_runs")
       .select("started_at,finished_at,status,counts,error_code")
-      .eq("business_id", actor.businessId).eq("connection_generation", row.connection_generation)
+      .eq("business_id", actor.businessId).eq("connection_generation", generation)
       .order("started_at", { ascending: false }).limit(5),
     db.from("fudo_sync_progress")
       .select("resource_type,next_page,cycle_id,cycle_started_at")
-      .eq("business_id", actor.businessId).eq("connection_generation", row.connection_generation),
+      .eq("business_id", actor.businessId).eq("connection_generation", generation),
     ...FUDO_SYNC_RESOURCES.map((resource) =>
       db.from("fudo_external_records").select("id", { count: "exact", head: true })
-        .eq("business_id", actor.businessId).eq("connection_generation", row.connection_generation)
+        .eq("business_id", actor.businessId).eq("connection_generation", generation)
         .eq("resource_type", resource)),
   ]);
   if (recentResult.error || progressResult.error
@@ -164,7 +168,7 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
       return Promise.resolve({ count: null as number | null, error: null });
     }
     return db.from("fudo_external_records").select("id", { count: "exact", head: true })
-      .eq("business_id", actor.businessId).eq("connection_generation", row.connection_generation)
+      .eq("business_id", actor.businessId).eq("connection_generation", generation)
       .eq("resource_type", resource).eq("last_seen_cycle_id", progress.cycle_id);
   }));
   if (seenResults.some((result: { error?: unknown }) => result.error)) return null;
@@ -186,7 +190,7 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
   // currently connected account. This final reread contains no ciphertext.
   const current = await db.from("fudo_connections").select("connection_generation")
     .eq("business_id", actor.businessId).maybeSingle();
-  if (current.error || !current.data || current.data.connection_generation !== row.connection_generation) return null;
+  if (current.error || !current.data || current.data.connection_generation !== generation) return null;
   return {
     configured: true,
     status: row.status === "connected" ? "connected" : "error",
