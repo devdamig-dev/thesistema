@@ -59,3 +59,14 @@ test("pilot readiness is fail-closed for incomplete data, failed sync and partia
   assert.equal(evaluateFudoPilotReadiness(result, allAvailable)[0].state, "blocked");
   assert.equal(evaluateFudoPilotReadiness(result, allAvailable)[2].state, "pending");
 });
+
+test("pilot readiness never accepts stale green permissions for a disconnected or failed connection", () => {
+  const result = view();
+  assert.equal(evaluateFudoPilotReadiness(result, allAvailable)[1].state, "pending",
+    "a stale success must not pass when there are no stored credentials");
+  result.status = "error";
+  assert.equal(evaluateFudoPilotReadiness(result, allAvailable)[1].state, "pending",
+    "a failed retest cannot borrow an earlier successful permission probe");
+  result.status = "connected";
+  assert.equal(evaluateFudoPilotReadiness(result, allAvailable)[1].state, "done");
+});
