@@ -149,3 +149,29 @@ test("Fudo completed rescans flag possibly removed IDs without deleting staging 
     progress[0].next_page = prior;
   }
 });
+
+
+test("Fudo reconciliation never claims absences while a run is active or failed", async () => {
+  tenant = A; role = "owner"; isMember = true;
+  const previousPage = progress[0].next_page;
+  const previousStatus = runs[0].status;
+  try {
+    progress[0].next_page = 0;
+    for (const status of ["running", "failed"]) {
+      runs[0].status = status;
+      const report = await getFudoConnectionView();
+      assert.ok(report);
+      assert.equal(report.importedCounts.products, 2, "historical records remain");
+      assert.equal(report.seenThisCycleCounts.products, 1, "cycle records remain visible");
+      assert.equal(report.possiblyMissingCounts.products, null, "no absence claims before a successful run");
+      assert.equal(report.possiblyMissingCounts.ingredients, null, "failure must also suppress completed-cursor claims");
+    }
+    runs[0].status = "partial";
+    const settled = await getFudoConnectionView();
+    assert.ok(settled);
+    assert.equal(settled.possiblyMissingCounts.products, 1, "a settled batch may report possible absences");
+  } finally {
+    progress[0].next_page = previousPage;
+    runs[0].status = previousStatus;
+  }
+});
