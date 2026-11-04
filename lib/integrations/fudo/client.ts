@@ -12,7 +12,7 @@
  * Mutating verbs are intentionally not exposed in this foundation.
  */
 
-import { parseFudoPage } from "./snapshot";
+import { nextFudoPage, parseFudoPage } from "./snapshot";
 
 export type FudoCredentials = {
   apiKey: string;
@@ -334,7 +334,10 @@ export class FudoClient {
       try {
         const response = await this.list(resource, { "page[number]": 1, "page[size]": 1 });
         // A 200 alone is not enough: invalid JSON:API shape would break a sync.
-        parseFudoPage(response);
+        const snapshots = parseFudoPage(response);
+        // The first page must also have usable pagination metadata; otherwise
+        // the importer would fail immediately after a misleading green probe.
+        nextFudoPage(response, 1, snapshots.length);
         return { resource, code: "available" };
       } catch (error) {
         return { resource, code: error instanceof FudoApiError ? error.code : "invalid_response" };
@@ -350,7 +353,8 @@ export class FudoClient {
    */
   async testConnection(): Promise<{ ok: true }> {
     const response = await this.products({ "page[size]": 1, "page[number]": 1 });
-    parseFudoPage(response);
+    const snapshots = parseFudoPage(response);
+    nextFudoPage(response, 1, snapshots.length);
     return { ok: true };
   }
 }

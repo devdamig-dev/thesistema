@@ -65,6 +65,8 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 
 - **IMPLEMENTADO / PROBADO (CI) / DESPLEGADO (04/11/2026):** [PR #186](https://github.com/devdamig-dev/thesistema/pull/186) integrado a `main` (squash `e771a511e0477224758b420ef2afdb0fad82e666`); [Quality #41790250586](https://github.com/devdamig-dev/thesistema/actions/runs/41790250586) `completed/success` (verify, PostgreSQL 17 y PostgREST, incluyendo Playwright), [Vercel Production](https://vercel.com/damians-projects-a45d01bf/thesistema/39SXzTaWUh3wWm31yYHkoJ3kqDYu) `READY` con alias `gastropilot.nexodg.com`. El importador rechaza `external_id` JSON numéricos inseguros/fraccionarios antes de upsert y cursor, preserva IDs grandes cuando son strings; regresión read-only comprueba histórico intacto y cursor no avanzado ante página inválida. Sin migraciones SQL ni escrituras hacia Fudo. SQL agregada sólo lectura (04/11): 0 conexiones, 0 sync, 0 registros importados y 0 cursores. **VALIDADO EN PRODUCCIÓN CON FUDO REAL: NO**; faltan credenciales autorizadas Plan Pro/API, sync real, conciliación y aislamiento E2E.
 
+- **EN REVISIÓN (04/11/2026):** endurecimiento de importación O1: validar `links.next` tanto en test de conexión/diagnóstico como antes de escribir staging; una página con metadatos de paginación inválidos no debe insertar registros ni marcar presencia del ciclo ni mover su cursor. Regresión sintética de fallo, sin cambios SQL ni escrituras a Fudo. Pendiente Quality, integración y verificación del despliegue; **Fudo real todavía no validado**.
+
 - **No marcar O1 completo** hasta evidencia E2E real de una cuenta autorizada y dashboard/IA de piloto verificados.
 
 ### Dependencia externa

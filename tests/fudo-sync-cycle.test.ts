@@ -240,3 +240,48 @@ test("Fudo O1 never advances the invalid resource cursor for a rounded numeric p
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = prevKey;
   }
 });
+
+test("Fudo O1 rejects malformed pagination before changing staging or cursor", async () => {
+  const prevFetch = globalThis.fetch;
+  const prevKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  const productRecordsBefore = JSON.stringify(records.filter((row) => row.resource_type === "products"));
+  const productProgressBefore = JSON.stringify(progress.filter((row) => row.resource_type === "products"));
+  const providerVerbs: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST", "only bearer authentication may use POST");
+      return new Response(JSON.stringify({
+        token: "synthetic-token", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    providerVerbs.push(String(init?.method));
+    if (new URL(url).pathname.endsWith("/products")) {
+      // The record itself is valid, but a non-URL next value makes the
+      // entire provider page invalid. No new staging row should survive.
+      return new Response(JSON.stringify({
+        data: [{ id: "uncommitted-product", attributes: { name: "must-not-import" } }],
+        links: { next: true },
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+  };
+  try {
+    const outcome = await syncFudoReadOnly();
+    assert.equal(outcome.ok, false);
+    if (!outcome.ok) assert.equal(outcome.code, "invalid_response");
+    assert.equal(runs.at(-1)?.status, "failed");
+    assert.equal(JSON.stringify(records.filter((row) => row.resource_type === "products")),
+      productRecordsBefore, "an invalid page must not insert or remark provider records");
+    assert.equal(JSON.stringify(progress.filter((row) => row.resource_type === "products")),
+      productProgressBefore, "an invalid page must not advance its cursor");
+    assert.ok(providerVerbs.length > 0 && providerVerbs.every((method) => method === "GET"),
+      "no mutations to Fudo");
+    assert.doesNotMatch(JSON.stringify(outcome), /synthetic-token|synthetic-pilot-secret|must-not-import/);
+  } finally {
+    globalThis.fetch = prevFetch;
+    if (prevKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = prevKey;
+  }
+});

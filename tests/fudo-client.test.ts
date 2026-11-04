@@ -288,3 +288,37 @@ test("Fudo failed auth single-flight is cleared so a later read can retry", asyn
   assert.deepEqual(await client.products(), { data: [] });
   assert.equal(authCount, 2);
 });
+
+test("Fudo connection and readiness probes reject malformed first-page pagination", async () => {
+  const methods: string[] = [];
+  let authCalls = 0;
+  const now = 1_800_000_000_000;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url === "https://auth.fu.do/api") {
+      authCalls++;
+      return jsonResponse({ token: "private-bearer", exp: Math.floor((now + 86400000) / 1000) });
+    }
+    methods.push(String(init?.method));
+    if (new URL(url).pathname.endsWith("/products")) {
+      // Valid record body, invalid JSON:API links. A green connection or
+      // preflight would be misleading because the full import must fail.
+      return jsonResponse({ data: [{ id: "sensitive-product" }], links: { next: true } });
+    }
+    return jsonResponse({ data: [], links: { next: null } });
+  };
+  const client = new FudoClient(
+    { apiKey: "private-key", apiSecret: "private-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+
+  await assert.rejects(() => client.testConnection(), /invalid_fudo_page/);
+  const checks = await client.probeReadAccess(["products", "ingredients"]);
+  assert.deepEqual(checks, [
+    { resource: "products", code: "invalid_response" },
+    { resource: "ingredients", code: "available" },
+  ]);
+  assert.equal(authCalls, 1);
+  assert.deepEqual(methods, ["GET", "GET", "GET"]);
+  assert.doesNotMatch(JSON.stringify(checks), /private|sensitive-product|bearer/);
+});

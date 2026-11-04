@@ -401,6 +401,11 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
         "page[number]": page, "page[size]": FUDO_SYNC_PAGE_SIZE,
       });
       const snapshots = parseFudoPage(response);
+      // A malformed next-link invalidates the entire page. Validate provider
+      // pagination BEFORE any staging upsert so the failed page cannot leave
+      // new records or cycle presence markers without a matching cursor.
+      const nextPage = nextFudoPage(response, page, snapshots.length);
+      const partial = nextPage !== 0;
       const seenAt = new Date().toISOString();
       if (snapshots.length) {
         const rows = snapshots.map((entry) => ({
@@ -414,8 +419,6 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
         if (saved.error) throw new Error("fudo_storage_failed");
       }
       counts[resource] = snapshots.length;
-      const nextPage = nextFudoPage(response, page, snapshots.length);
-      const partial = nextPage !== 0;
       const progress = await db.from("fudo_sync_progress").upsert({
         business_id: syncBusinessId, connection_generation: generation, resource_type: resource,
         next_page: nextPage, cycle_id: cycleId, cycle_started_at: cycleStartedAt,
