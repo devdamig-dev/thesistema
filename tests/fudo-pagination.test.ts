@@ -37,7 +37,7 @@ test("Fudo O1 refuses malformed, non-numbered, skipped or external next links", 
     assert.throws(() => nextFudoPage({ links: { next } }, 1, 1), (error: unknown) => {
       assert.ok(error instanceof Error);
       assert.equal(error.message, "invalid_fudo_page");
-      assert.doesNotMatch(error.message, /untrusted|cursor|user|pass|page/);
+      assert.doesNotMatch(error.message, /untrusted|cursor|user|pass/);
       return true;
     }, JSON.stringify(next));
   }
