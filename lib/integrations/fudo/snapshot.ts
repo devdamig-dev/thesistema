@@ -110,6 +110,20 @@ export function nextFudoPage(response: unknown, currentPage: number, recordCount
             throw new Error("invalid_fudo_page");
           }
         }
+        // The importer constructs its own fixed GET with numbered pagination.
+        // Unknown next-link parameters (filters, offsets, cursors, etc.) would
+        // silently be dropped, so never claim that the scan is complete.
+        if (nextUrl.hash) throw new Error("invalid_fudo_page");
+        for (const key of nextUrl.searchParams.keys()) {
+          if (key !== "page[number]" && key !== "page" && key !== "page[size]") {
+            throw new Error("invalid_fudo_page");
+          }
+        }
+        const sizes = nextUrl.searchParams.getAll("page[size]");
+        if (sizes.length > 1 || (sizes.length === 1
+          && (!/^[1-9]\\d*$/.test(sizes[0]) || Number(sizes[0]) > FUDO_SYNC_PAGE_SIZE))) {
+          throw new Error("invalid_fudo_page");
+        }
         const numbered = nextUrl.searchParams.getAll("page[number]");
         const simple = nextUrl.searchParams.getAll("page");
         if (numbered.length + simple.length !== 1) throw new Error("invalid_fudo_page");
