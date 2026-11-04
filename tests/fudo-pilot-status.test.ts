@@ -210,3 +210,47 @@ test("Fudo status rejects a connection disconnected during aggregate reads", asy
     if (!connections.some((row) => row.business_id === A)) connections.unshift(original);
   }
 });
+
+
+test("Fudo pilot report rejects a concurrent retest within the SAME credential generation", async () => {
+  tenant = A; role = "owner"; isMember = true;
+  const original = { status: connections[0].status, lastTestedAt: connections[0].last_tested_at };
+  try {
+    // A successful retest can update its timestamp while leaving credentials
+    // and connection_generation unchanged. Do not return an obsolete revision.
+    duringProgressRead = () => {
+      duringProgressRead = null;
+      Object.assign(connections[0], { last_tested_at: "2026-11-04T21:01:00Z" });
+    };
+    assert.equal(await getFudoConnectionView(), null,
+      "report must be discarded after a same-generation retest");
+
+    // An invalid retest can also mark the connection as error without rotating it.
+    Object.assign(connections[0], { last_tested_at: original.lastTestedAt });
+    duringProgressRead = () => {
+      duringProgressRead = null;
+      connections[0].status = "error";
+    };
+    assert.equal(await getFudoConnectionView(), null,
+      "report must not keep a green connected state after an invalid retest");
+  } finally {
+    duringProgressRead = null;
+    Object.assign(connections[0], { status: original.status, last_tested_at: original.lastTestedAt });
+  }
+});
+
+test("Fudo pilot report rejects a concurrent sync status change without credential rotation", async () => {
+  tenant = A; role = "owner"; isMember = true;
+  const original = connections[0].last_sync_status;
+  try {
+    duringProgressRead = () => {
+      duringProgressRead = null;
+      connections[0].last_sync_status = "failed";
+    };
+    assert.equal(await getFudoConnectionView(), null,
+      "report must not combine old successful cursors with newly failed sync state");
+  } finally {
+    duringProgressRead = null;
+    connections[0].last_sync_status = original;
+  }
+});
