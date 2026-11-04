@@ -69,6 +69,13 @@ El importador continúa usando **únicamente GET al endpoint Fudo permitido**, s
 
 Pruebas del contrato: links absolutos/relativos válidos, salto/repetición, duplicados, cursor y origen ajeno. **No validado todavía contra una conexión Fudo real.**
 
+### Parámetros de continuación no reproducibles (PR #195; CI pendiente)
+
+La sincronización construye su propio GET con `page[number]` y `page[size]`; no sigue la URL provista por Fudo. Un enlace `links.next` con filtros, cursores, offsets, fragmentos o cualquier parámetro extra no soportado **no puede interpretarse como continuidad válida**: esos criterios se perderían al pedir la siguiente página. El parser sólo admite `page[number]` o `page` y un `page[size]` opcional (entero positivo hasta 100, sin duplicados). De lo contrario rechaza la página con error sanitizado antes de upsert de staging o avance de cursor. Se preservan enlaces válidos con tamaño de página declarado, incluso si es menor al solicitado por una limitación del proveedor.
+
+Esta regla está cubierta por fixtures sintéticos en [PR #195](https://github.com/devdamig-dev/thesistema/pull/195). No afirmar compatibilidad real con el proveedor hasta importar una cuenta autorizada; si Fudo emite parámetros legítimos adicionales, extender explícitamente el adaptador y su QA, no ignorarlos.
+
+
 ### Continuación vinculada al recurso (CI y despliegue publicados; piloto real pendiente)
 
 Los enlaces `links.next` de un recurso solo pueden apuntar a **ese mismo recurso**. Estar en `api.fu.do` no es suficiente: un enlace de productos a pedidos, aunque contenga la siguiente página numérica, se rechaza como `invalid_fudo_page` **antes de guardar staging o cursor**. El cliente sigue leyendo únicamente la URL fija del recurso solicitado; jamás sigue el enlace externo. La comprobación se aplica a conexión, preflight y sincronización. Soporta rutas `/v1alpha1/<recurso>` o `/<recurso>` (y continuaciones relativas `?page=`). Otros formatos deben evaluarse con una cuenta real y un cambio de adaptador explícito, sin desactivar el modo fail-closed.
