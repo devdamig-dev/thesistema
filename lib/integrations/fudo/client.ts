@@ -337,7 +337,7 @@ export class FudoClient {
         const snapshots = parseFudoPage(response);
         // The first page must also have usable pagination metadata; otherwise
         // the importer would fail immediately after a misleading green probe.
-        nextFudoPage(response, 1, snapshots.length, resource);
+        nextFudoPage(response, 1, snapshots.length, resource, 1);
         return { resource, code: "available" };
       } catch (error) {
         return { resource, code: error instanceof FudoApiError ? error.code : "invalid_response" };
@@ -354,7 +354,7 @@ export class FudoClient {
   async testConnection(): Promise<{ ok: true }> {
     const response = await this.products({ "page[size]": 1, "page[number]": 1 });
     const snapshots = parseFudoPage(response);
-    nextFudoPage(response, 1, snapshots.length, "products");
+    nextFudoPage(response, 1, snapshots.length, "products", 1);
     return { ok: true };
   }
 }

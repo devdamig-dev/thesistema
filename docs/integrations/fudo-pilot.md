@@ -69,11 +69,19 @@ El importador continúa usando **únicamente GET al endpoint Fudo permitido**, s
 
 Pruebas del contrato: links absolutos/relativos válidos, salto/repetición, duplicados, cursor y origen ajeno. **No validado todavía contra una conexión Fudo real.**
 
-### Parámetros de continuación no reproducibles (PR #195; CI pendiente)
+### Parámetros de continuación no reproducibles (PR #195; publicado)
 
-La sincronización construye su propio GET con `page[number]` y `page[size]`; no sigue la URL provista por Fudo. Un enlace `links.next` con filtros, cursores, offsets, fragmentos o cualquier parámetro extra no soportado **no puede interpretarse como continuidad válida**: esos criterios se perderían al pedir la siguiente página. El parser sólo admite `page[number]` o `page` y un `page[size]` opcional (entero positivo hasta 100, sin duplicados). De lo contrario rechaza la página con error sanitizado antes de upsert de staging o avance de cursor. Se preservan enlaces válidos con tamaño de página declarado, incluso si es menor al solicitado por una limitación del proveedor.
+La sincronización construye su propio GET con `page[number]` y `page[size]`; no sigue la URL provista por Fudo. Un enlace `links.next` con filtros, cursores, offsets, fragmentos o cualquier parámetro extra no soportado **no puede interpretarse como continuidad válida**: esos criterios se perderían al pedir la siguiente página. El parser sólo admite `page[number]` o `page` y un `page[size]` opcional, sin duplicados. De lo contrario rechaza la página con error sanitizado antes de upsert de staging o avance de cursor. El control inicial de #195 aceptaba tamaños menores al solicitado aunque el importador seguía consultando con su tamaño fijo; el PR posterior de consistencia cierra esa brecha.
 
-Esta regla está cubierta por fixtures sintéticos en [PR #195](https://github.com/devdamig-dev/thesistema/pull/195). No afirmar compatibilidad real con el proveedor hasta importar una cuenta autorizada; si Fudo emite parámetros legítimos adicionales, extender explícitamente el adaptador y su QA, no ignorarlos.
+La regla inicial está cubierta por fixtures sintéticos en [PR #195](https://github.com/devdamig-dev/thesistema/pull/195), integrado a main (`86d02e10`) con [Quality #41835366420](https://github.com/devdamig-dev/thesistema/actions/runs/41835366420) verde (verify/Playwright, PostgreSQL 17 y PostgREST), [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/2WT9buSBnxLRFVMKvh4auiis9VJe) y alias `gastropilot.nexodg.com` confirmado. No se validó con Fudo real.
+
+### Consistencia de `page[size]` entre páginas (PR de seguimiento; QUALITY pendiente)
+
+El adaptador solicita un tamaño fijo de 100 para la sincronización y 1 para el test y el diagnóstico. No basta con que el `page[size]` de `links.next` sea numérico y menor que 100: si ese tamaño es distinto al solicitado, la siguiente petición con el tamaño fijo podría saltear registros o afirmar una importación completa falsa. El parser lo rechaza **antes de persistir la página o el cursor**, comparándolo con el tamaño realmente solicitado en cada flujo. El error es sanitizado y no incluye el enlace.
+
+Esto es conservador: si Fudo limita el tamaño efectivo y devuelve un enlace con tamaño menor al solicitado, la sincronización quedará bloqueada para ese recurso hasta implementar, persistir y probar un tamaño efectivo estable por ciclo y por `business_id`. No normalizar ni aceptar silenciosamente hints de tamaño contradictorio. Pruebas sintéticas positivas/negativas; CI y proveedor real aún pendientes.
+
+No afirmar compatibilidad real hasta importar una cuenta autorizada; si Fudo emite parámetros legítimos adicionales, extender expresamente el adaptador y sus pruebas.
 
 
 ### Continuación vinculada al recurso (CI y despliegue publicados; piloto real pendiente)
