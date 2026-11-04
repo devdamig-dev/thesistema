@@ -89,7 +89,7 @@ export function nextFudoPage(response: unknown, currentPage: number, recordCount
         let nextUrl: URL;
         try {
           const link = href.trim();
-          if (!/^(https?:\\/\\/|\\/|\\?)/i.test(link) || /\\s/.test(link)) {
+          if (!/^(https?:\/\/|\/|\?)/i.test(link) || /\s/.test(link)) {
             throw new Error("invalid_fudo_page");
           }
           nextUrl = new URL(link, "https://api.fu.do/v1alpha1/products");
@@ -104,7 +104,7 @@ export function nextFudoPage(response: unknown, currentPage: number, recordCount
         const simple = nextUrl.searchParams.getAll("page");
         if (numbered.length + simple.length !== 1) throw new Error("invalid_fudo_page");
         const nextNumber = (numbered[0] ?? simple[0]).trim();
-        if (!/^[1-9]\\d*$/.test(nextNumber) || Number(nextNumber) !== currentPage + 1) {
+        if (!/^[1-9]\d*$/.test(nextNumber) || Number(nextNumber) !== currentPage + 1) {
           throw new Error("invalid_fudo_page");
         }
         return currentPage + 1;
