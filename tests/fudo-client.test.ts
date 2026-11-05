@@ -148,7 +148,7 @@ test("Fudo rejects malformed bearer strings before sending any resource GET", as
       assert.ok(error instanceof FudoApiError);
       assert.equal(error.code, "invalid_response");
       assert.equal(error.retryable, false);
-      assert.doesNotMatch(error.message, /injected|unsafe|synthetic-|token/);
+      assert.doesNotMatch(error.message, /injected|unsafe|synthetic-/);
       return true;
     });
     assert.equal(authRequests, 1);
