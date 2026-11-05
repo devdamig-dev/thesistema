@@ -507,3 +507,66 @@ test("Fudo connection and permission probes reject overfilled HTTP 200 pages wit
   assert.deepEqual(methods, ["GET", "GET", "GET"]);
   assert.doesNotMatch(JSON.stringify(checks), /private-|synthetic-|do-not-leak|token|secret/);
 });
+
+
+test("Fudo rejects an oversized authentication JSON response before any provider read", async () => {
+  let authCalls = 0;
+  let readCalls = 0;
+  const fakeFetch: typeof fetch = async (input) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      authCalls++;
+      // A malicious/misconfigured upstream can advertise a huge body.
+      // No private body or oversized response may reach the resource adapter.
+      return new Response(JSON.stringify({ token: "not-forwarded" }), {
+        headers: { "content-length": String(64 * 1024 + 1) },
+      });
+    }
+    readCalls++;
+    return jsonResponse({ data: [] });
+  };
+  const client = new FudoClient(
+    { apiKey: "private-test-key", apiSecret: "private-test-secret" },
+    { fetchImpl: fakeFetch },
+  );
+  await assert.rejects(() => client.testConnection(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "invalid_response");
+    assert.doesNotMatch(error.message, /private-test|not-forwarded|content-length/i);
+    return true;
+  });
+  assert.equal(authCalls, 1);
+  assert.equal(readCalls, 0);
+});
+
+test("Fudo aborts a streamed GET larger than its safe JSON bound even with a false short content-length", async () => {
+  const chunk = new Uint8Array(1024 * 1024).fill(65);
+  let readCalls = 0;
+  let emitted = 0;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      return jsonResponse({ token: "synthetic-only", exp: 2_000_000_000 });
+    }
+    readCalls++;
+    assert.equal(init?.method, "GET");
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(chunk);
+        emitted++;
+        if (emitted >= 17) controller.close();
+      },
+    });
+    return new Response(stream, { headers: { "content-length": "1" } });
+  };
+  const client = new FudoClient(
+    { apiKey: "private-test-key", apiSecret: "private-test-secret" },
+    { fetchImpl: fakeFetch, now: () => 1_800_000_000_000 },
+  );
+  await assert.rejects(() => client.testConnection(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "invalid_response");
+    assert.doesNotMatch(error.message, /private-test|synthetic-only|AAAAAA/i);
+    return true;
+  });
+  assert.equal(readCalls, 1, "never follow additional resource pages after an oversized body");
+  assert.equal(emitted, 17, "stop immediately when the 16 MiB cap is exceeded");
+});

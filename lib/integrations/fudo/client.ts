@@ -137,6 +137,55 @@ function toQuery(params: FudoListParams): string {
   return encoded ? `?${encoded}` : "";
 }
 
+
+/**
+ * Bound provider JSON BEFORE parsing it. Snapshot size checks happen after
+ * JSON.parse and cannot prevent an unexpectedly large upstream response from
+ * exhausting serverless memory. Keep this limit generous enough for 100 records
+ * of up to 128 KiB each, but reject oversized/misreported streams fail-closed.
+ *
+ * Errors from here are mapped to fixed, non-sensitive invalid_response codes
+ * by the caller. Never log or return provider body bytes.
+ */
+const MAX_AUTH_JSON_BYTES = 64 * 1024;
+const MAX_READ_JSON_BYTES = 16 * 1024 * 1024;
+
+async function readBoundedJson(response: Response, maxBytes: number): Promise<unknown> {
+  const lengthHeader = response.headers.get("content-length");
+  if (lengthHeader && /^\d+$/.test(lengthHeader) && Number(lengthHeader) > maxBytes) {
+    throw new Error("fudo_response_too_large");
+  }
+  if (!response.body) throw new Error("fudo_response_missing_body");
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let finished = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) { finished = true; break; }
+      total += value.byteLength;
+      if (total > maxBytes) throw new Error("fudo_response_too_large");
+      chunks.push(value);
+    }
+  } finally {
+    // Stop downloading once a bound or network error is detected.
+    if (!finished) {
+      try { await reader.cancel(); } catch { /* Transport already closed. */ }
+    }
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+}
+
 export class FudoClient {
   private readonly apiUrl: string;
   private readonly authUrl: string;
@@ -199,7 +248,7 @@ export class FudoClient {
 
     let payload: AuthPayload;
     try {
-      payload = (await response.json()) as AuthPayload;
+      payload = (await readBoundedJson(response, MAX_AUTH_JSON_BYTES)) as AuthPayload;
     } catch {
       throw new FudoApiError(
         "invalid_response",
@@ -318,7 +367,7 @@ export class FudoClient {
     if (!response.ok) throw safeError(response.status);
 
     try {
-      return await response.json();
+      return await readBoundedJson(response, MAX_READ_JSON_BYTES);
     } catch {
       throw new FudoApiError(
         "invalid_response",
