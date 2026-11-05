@@ -124,6 +124,19 @@ test("Fudo retest fences stale results after credential rotation, without cipher
     assert.equal(success.ok, true);
     assert.equal(writes, 1);
     assert.equal(connection.status, "connected");
+
+    // A timestamp-based CAS loses its protection if the new timestamp equals
+    // the previous revision. Clock skew reproduces the same regression as two
+    // probes completing within one millisecond, without relying on timing.
+    const futureRevision = new Date(Date.now() + 60_000).toISOString();
+    connection = { ...connection, last_tested_at: futureRevision };
+    writes = 0;
+    const skewedClockRetest = await testStoredFudoConnection();
+    assert.equal(skewedClockRetest.ok, true);
+    assert.equal(writes, 1);
+    assert.ok(connection.last_tested_at);
+    assert.ok(Date.parse(connection.last_tested_at!) > Date.parse(futureRevision),
+      "the persisted revision must advance beyond the previously stored timestamp");
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
