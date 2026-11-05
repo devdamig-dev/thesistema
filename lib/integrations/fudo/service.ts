@@ -283,20 +283,29 @@ export async function testStoredFudoConnection(): Promise<FudoActionResult> {
     const authorized = await authorize();
     if (!authorized) return fail("forbidden", "No tenés permiso para probar Fudo.");
     const { actor, db } = authorized;
-    const stored = await db.from("fudo_connections").select("credentials_ciphertext,connection_generation")
+    const stored = await db.from("fudo_connections").select("credentials_ciphertext,connection_generation,last_tested_at")
       .eq("business_id", actor.businessId).maybeSingle();
     if (stored.error) return fail("storage_unavailable", UNKNOWN);
     if (!stored.data) return fail("not_connected", "Primero conectá Fudo.");
     const credentials = decryptFudoCredentials(actor.businessId, stored.data.credentials_ciphertext);
     const generation: string = stored.data.connection_generation;
-    // A concurrent rotation can finish while the provider probe is pending.
+    const testedAtStart: string | null = stored.data.last_tested_at ?? null;
+    // A concurrent rotation or retest can finish while our provider probe is pending.
     // Fence writes and success messages to the exact connection tested; the
     // encrypted credentials must never be included in PostgREST URL filters.
-    const recordTest = async (status: "connected" | "error", errorCode: string | null) =>
-      db.from("fudo_connections").update({
+    // Compare-and-set the previous test revision as well as the generation.
+    // Two owners can retest the same credentials concurrently; the slower
+    // response must not overwrite a newer result with stale health metadata.
+    // This filters only on a timestamp, never on encrypted credentials.
+    const recordTest = async (status: "connected" | "error", errorCode: string | null) => {
+      const update = db.from("fudo_connections").update({
         status, last_error_code: errorCode, last_tested_at: new Date().toISOString(),
-      }).eq("business_id", actor.businessId).eq("connection_generation", generation)
+      }).eq("business_id", actor.businessId).eq("connection_generation", generation);
+      return (testedAtStart === null
+        ? update.is("last_tested_at", null)
+        : update.eq("last_tested_at", testedAtStart))
         .select("business_id").maybeSingle();
+    };
     try {
       await new FudoClient(credentials).testConnection();
       const updated = await recordTest("connected", null);
