@@ -106,7 +106,7 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
             </Button>}
             {hasCredentials && <Button disabled={working} onClick={() => execute(async () => {
               const result = await inspectFudoPermissionsAction();
-              setPreflightState({ revision: connectionRevision, result });
+              if (connectionRevision) setPreflightState({ revision: connectionRevision, result });
               return result;
             })}>
               <ShieldCheck className="h-4 w-4" /> Revisar permisos de importación
