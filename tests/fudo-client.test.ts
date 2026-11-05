@@ -126,6 +126,36 @@ test("Fudo auth rejects JSON null, arrays and primitives as sanitized invalid re
   }
 });
 
+test("Fudo rejects malformed bearer strings before sending any resource GET", async () => {
+  const malformedTokens = [" ", "\r\ninjected", "token\nunsafe", "token\tbad", "a".repeat(8193)];
+  for (const token of malformedTokens) {
+    let authRequests = 0;
+    let apiReads = 0;
+    const fakeFetch: typeof fetch = async (input, init) => {
+      assert.equal(init?.redirect, "error");
+      if (String(input) === "https://auth.fu.do/api") {
+        authRequests++;
+        return jsonResponse({ token, exp: 2_000_000_000 });
+      }
+      apiReads++;
+      return jsonResponse({ data: [] });
+    };
+    const client = new FudoClient(
+      { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+      { fetchImpl: fakeFetch },
+    );
+    await assert.rejects(() => client.testConnection(), (error: unknown) => {
+      assert.ok(error instanceof FudoApiError);
+      assert.equal(error.code, "invalid_response");
+      assert.equal(error.retryable, false);
+      assert.doesNotMatch(error.message, /injected|unsafe|synthetic-|token/);
+      return true;
+    });
+    assert.equal(authRequests, 1);
+    assert.equal(apiReads, 0, "invalid bearer must never be forwarded to a GET");
+  }
+});
+
 test("Fudo foundation exposes only GET/list helpers and no mutation methods", () => {
   const client = new FudoClient(
     { apiKey: "key", apiSecret: "secret" },
