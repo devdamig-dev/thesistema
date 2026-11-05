@@ -40,6 +40,72 @@ test("Fudo client authenticates with apiKey/apiSecret and sends bearer token onl
   assert.doesNotMatch(JSON.stringify(calls[1]), /secret-value|key-value/);
 });
 
+test("Fudo missing exp reuses one short-lived bearer for all five read-only probes", async () => {
+  let now = 1_800_000_000_000;
+  let authCalls = 0;
+  let reads = 0;
+  const methods: string[] = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      authCalls++;
+      assert.equal(init?.method, "POST");
+      return jsonResponse({ token: `short-lease-${authCalls}` }); // No exp supplied.
+    }
+    methods.push(String(init?.method));
+    assert.equal(new Headers(init?.headers).get("authorization"), `Bearer short-lease-${authCalls}`);
+    reads++;
+    return jsonResponse({ data: [], links: { next: null } });
+  };
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+  const resources = ["products", "ingredients", "providers", "orders", "sales"] as const;
+  const results = await client.probeReadAccess(resources);
+  assert.deepEqual(results, resources.map((resource) => ({ resource, code: "available" })));
+  assert.equal(authCalls, 1, "missing exp must not cause per-resource reauthentication");
+  await client.testConnection();
+  assert.equal(authCalls, 1, "sequential reads must share the bounded token lease");
+  assert.equal(reads, 6);
+  // With five-minute skew, the conservative ten-minute lease forces refresh
+  // after six minutes, never treating an unknown expiry as indefinite.
+  now += 6 * 60 * 1000;
+  await client.testConnection();
+  assert.equal(authCalls, 2);
+  assert.equal(reads, 7);
+  assert.ok(methods.every((method) => method === "GET"));
+  assert.doesNotMatch(JSON.stringify(results), /synthetic-|short-lease-/);
+});
+
+test("Fudo rejects malformed or expired explicit auth expiry without any resource GET", async () => {
+  const now = 1_800_000_000_000;
+  for (const exp of ["not-a-timestamp", 0, -1, Math.floor((now - 1000) / 1000)]) {
+    let authCalls = 0;
+    let reads = 0;
+    const fakeFetch: typeof fetch = async (input) => {
+      if (String(input) === "https://auth.fu.do/api") {
+        authCalls++;
+        return jsonResponse({ token: "synthetic-expiry-bearer", exp });
+      }
+      reads++;
+      return jsonResponse({ data: [] });
+    };
+    const client = new FudoClient(
+      { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+      { fetchImpl: fakeFetch, now: () => now },
+    );
+    await assert.rejects(() => client.testConnection(), (error: unknown) => {
+      assert.ok(error instanceof FudoApiError);
+      assert.equal(error.code, "invalid_response");
+      assert.equal(error.retryable, false);
+      assert.doesNotMatch(error.message, /synthetic-|bearer|not-a-timestamp/i);
+      return true;
+    });
+    assert.equal(authCalls, 1);
+    assert.equal(reads, 0, "a stale or malformed explicit expiry cannot authorize GET");
+  }
+});
+
 test("Fudo client refreshes once after a 401 and retries the same read", async () => {
   let authCount = 0;
   let apiCount = 0;
