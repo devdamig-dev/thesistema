@@ -96,6 +96,36 @@ test("Fudo errors remain sanitized and distinguish permission failures", async (
   );
 });
 
+test("Fudo auth rejects JSON null, arrays and primitives as sanitized invalid responses", async () => {
+  const invalidPayloads = [null, [], "not-an-object", false, 42, { token: null }];
+  for (const payload of invalidPayloads) {
+    let authRequests = 0;
+    let apiReads = 0;
+    const fakeFetch: typeof fetch = async (input, init) => {
+      assert.equal(init?.redirect, "error");
+      if (String(input) === "https://auth.fu.do/api") {
+        authRequests++;
+        return jsonResponse(payload);
+      }
+      apiReads++;
+      return jsonResponse({ data: [{ id: "never-read" }] });
+    };
+    const client = new FudoClient(
+      { apiKey: "private-key", apiSecret: "private-secret" },
+      { fetchImpl: fakeFetch },
+    );
+    await assert.rejects(() => client.testConnection(), (error: unknown) => {
+      assert.ok(error instanceof FudoApiError);
+      assert.equal(error.code, "invalid_response");
+      assert.equal(error.retryable, false);
+      assert.doesNotMatch(error.message, /private-key|private-secret|not-an-object/);
+      return true;
+    }, JSON.stringify(payload));
+    assert.equal(authRequests, 1);
+    assert.equal(apiReads, 0, "invalid auth must never trigger a resource GET");
+  }
+});
+
 test("Fudo foundation exposes only GET/list helpers and no mutation methods", () => {
   const client = new FudoClient(
     { apiKey: "key", apiSecret: "secret" },

@@ -204,7 +204,10 @@ export class FudoClient {
       );
     }
 
-    if (typeof payload.token !== "string" || !payload.token) {
+    // A syntactically valid JSON response can still be null, an array, or a
+    // primitive. Treat it as a provider contract error, never a generic crash.
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)
+      || typeof payload.token !== "string" || !payload.token) {
       throw new FudoApiError(
         "invalid_response",
         "Fudo no devolvió un token utilizable.",
