@@ -512,12 +512,16 @@ test("Fudo connection and permission probes reject overfilled HTTP 200 pages wit
 test("Fudo rejects an oversized authentication JSON response before any provider read", async () => {
   let authCalls = 0;
   let readCalls = 0;
+  let authBodyCancelled = false;
   const fakeFetch: typeof fetch = async (input) => {
     if (String(input) === "https://auth.fu.do/api") {
       authCalls++;
       // A malicious/misconfigured upstream can advertise a huge body.
-      // No private body or oversized response may reach the resource adapter.
-      return new Response(JSON.stringify({ token: "not-forwarded" }), {
+      // The body must be cancelled, not just left unread until fetch timeout.
+      const untrustedBody = new ReadableStream<Uint8Array>({
+        cancel() { authBodyCancelled = true; },
+      });
+      return new Response(untrustedBody, {
         headers: { "content-length": String(64 * 1024 + 1) },
       });
     }
@@ -535,6 +539,7 @@ test("Fudo rejects an oversized authentication JSON response before any provider
     return true;
   });
   assert.equal(authCalls, 1);
+  assert.equal(authBodyCancelled, true, "oversized header must cancel the response body");
   assert.equal(readCalls, 0);
 });
 
