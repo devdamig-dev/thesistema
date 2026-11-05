@@ -251,7 +251,7 @@ function ProductForm({ product, ingredients, pending, canEdit, saveError, onCanc
     if (!form.price.trim() || !Number.isFinite(price) || price < 0) return setError("Ingresá un precio válido.");
 
     const recipeItems: ProductRecipeItemInput[] = [];
-    if (!product && recipeRows.length) {
+    if (!product && costMode === "auto" && recipeRows.length) {
       const seen = new Set<string>();
       for (const row of recipeRows) {
         const quantity = Number(row.quantity.replace(",", "."));
@@ -275,7 +275,7 @@ function ProductForm({ product, ingredients, pending, canEdit, saveError, onCanc
     });
   }
 
-  const inlineRecipe = !product && recipeRows.length > 0;
+  const inlineRecipe = !product && costMode === "auto" && recipeRows.length > 0;
   const autoCost = !product && costMode === "auto";
   const shownCost = inlineRecipe ? (recipePreview.cost === null ? "" : String(recipePreview.cost)) : form.cost;
 
@@ -293,7 +293,7 @@ function ProductForm({ product, ingredients, pending, canEdit, saveError, onCanc
       </div>
 
       {!product && <label className="block space-y-1.5 text-xs text-ink-muted">Cómo obtener el costo<select aria-label="Cómo obtener el costo" className={inputClass} value={costMode} onChange={event => { setCostMode(event.target.value as typeof costMode); setError(""); }}><option value="auto">Calcular con receta e insumos</option><option value="manual">Ya conozco el costo (carga manual)</option></select></label>}
-      {!product && <div className="space-y-4 rounded-2xl border border-line bg-bg-subtle/40 p-4">
+      {!product && costMode === "auto" && <div className="space-y-4 rounded-2xl border border-line bg-bg-subtle/40 p-4">
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold text-ink">Receta e insumos</h3>
