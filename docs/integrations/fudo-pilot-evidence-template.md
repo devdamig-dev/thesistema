@@ -48,6 +48,7 @@
 
 - [ ] Iniciar ciclo completo read-only para los cinco recursos; estado final `completed`, cinco cursores completos y sin errores sanitizados. Si algún recurso queda parcial/fallido, **no** declarar paridad.
 - [ ] Confirmar `business_id + connection_generation + resource_type + external_id` en staging/provenance de forma agregada; nunca publicar payloads o IDs de clientes.
+- [ ] Confirmar con el proveedor que los `external_id` de los cinco recursos tienen formato estable: un ID con espacios/tabulaciones periféricos debe generar error controlado sin avanzar cursor (no normalizar ni corregir datos reales en silencio); comparar IDs sólo dentro de evidencia privada, sin exponerlos.
 - [ ] Repetir el mismo ciclo: no se duplican registros; las cantidades/importados y resúmenes son consistentes.
 - [ ] Documentar registros históricos/no vistos al finalizar un ciclo posterior; distinguir posibles bajas sin borrarlas automáticamente. El error o interrupción no convierte un ciclo parcial en reconciliado.
 - [ ] Registrar última sincronización, errores y diferencias sólo con metadatos seguros; contrastar cantidades por recurso con Fudo.
