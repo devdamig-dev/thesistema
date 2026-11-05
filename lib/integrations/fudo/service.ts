@@ -298,8 +298,13 @@ export async function testStoredFudoConnection(): Promise<FudoActionResult> {
     // response must not overwrite a newer result with stale health metadata.
     // This filters only on a timestamp, never on encrypted credentials.
     const recordTest = async (status: "connected" | "error", errorCode: string | null) => {
+      // The CAS revision must actually advance, including two retests in the
+      // same millisecond or when an app server's clock lags the stored timestamp.
+      const nextTestedAt = new Date(Math.max(
+        Date.now(), testedAtStart ? Date.parse(testedAtStart) + 1 : 0,
+      )).toISOString();
       const update = db.from("fudo_connections").update({
-        status, last_error_code: errorCode, last_tested_at: new Date().toISOString(),
+        status, last_error_code: errorCode, last_tested_at: nextTestedAt,
       }).eq("business_id", actor.businessId).eq("connection_generation", generation);
       return (testedAtStart === null
         ? update.is("last_tested_at", null)
