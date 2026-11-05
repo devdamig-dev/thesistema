@@ -39,7 +39,7 @@ type Snapshot = {
   pagosDeudaMes: number;
   stockValorizado: number;
   cajaEstimada: number;
-  margenBrutoPct: number;
+  margenBrutoPct: number | null;
   resultadoOperativo: number;
   resultadoNeto: number;
 };
@@ -100,7 +100,7 @@ export default function BalancesClient({
           <div>
             <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-success-500/30 bg-success-500/10 px-2.5 py-1 text-[11px] font-medium text-success-400">
               <span className="h-1.5 w-1.5 animate-pulseDot rounded-full bg-success-500" />
-              Mes en curso · datos en vivo
+              Balance mensual · datos guardados
             </div>
             <h2 className="text-balance text-2xl font-semibold tracking-tight text-ink md:text-3xl">
               Resultado neto estimado:{" "}
@@ -109,7 +109,7 @@ export default function BalancesClient({
               </span>
             </h2>
             <p className="mt-3 max-w-xl text-sm text-ink-muted">
-              Después de pagar compras, gastos, sueldos, retiros y deuda. Tu margen bruto promedio del mes está en {formatPercent(snapshot.margenBrutoPct, 1)}.
+              Después de pagar compras, gastos, sueldos, retiros y deuda. {snapshot.margenBrutoPct === null ? "El margen bruto del mes no está confirmado." : `Tu margen bruto promedio del mes está en ${formatPercent(snapshot.margenBrutoPct, 1)}.`}
             </p>
             <div className="mt-5 grid grid-cols-3 gap-3 text-xs">
               <ResultMicro label="Resultado operativo" value={snapshot.resultadoOperativo} positive={positivoOperativo} />
@@ -170,15 +170,12 @@ export default function BalancesClient({
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <div className="text-[10px] uppercase tracking-wider text-ink-subtle">Saldo total</div>
+              <div className="text-[10px] uppercase tracking-wider text-ink-subtle">Saldo informado por el balance</div>
               <div className="mt-1 text-3xl font-semibold tracking-tight text-ink tabular-nums">
                 {formatARS(snapshot.deudasPendientes)}
               </div>
               <div className="mt-1 text-xs text-ink-muted">
-                Representa el {formatPercent(
-                  (snapshot.deudasPendientes / Math.max(snapshot.ventasMes, 1)) * 100,
-                  1,
-                )} de la facturación mensual.
+                {snapshot.ventasMes > 0 ? `Representa el ${formatPercent((snapshot.deudasPendientes / snapshot.ventasMes) * 100, 1)} de la facturación mensual.` : "Sin facturación mensual para calcular una proporción."}
               </div>
             </div>
 
@@ -281,11 +278,11 @@ function ResultMicro({
   percent,
 }: {
   label: string;
-  value: number;
+  value: number | null;
   positive?: boolean;
   percent?: boolean;
 }) {
-  const isNeg = !percent && value < 0;
+  const isNeg = !percent && value !== null && value < 0;
   const color = percent
     ? "text-ink"
     : positive === undefined
@@ -299,7 +296,7 @@ function ResultMicro({
     <div className="card-quiet p-3">
       <div className="text-[10px] uppercase tracking-wider text-ink-subtle">{label}</div>
       <div className={cn("mt-1 text-base font-semibold tabular-nums", color)}>
-        {percent ? formatPercent(value, 1) : formatARS(value, { compact: true })}
+        {value === null ? "Sin confirmar" : percent ? formatPercent(value, 1) : formatARS(value, { compact: true })}
       </div>
     </div>
   );
