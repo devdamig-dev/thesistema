@@ -575,3 +575,76 @@ test("Fudo aborts a streamed GET larger than its safe JSON bound even with a fal
   assert.equal(readCalls, 1, "never follow additional resource pages after an oversized body");
   assert.equal(emitted, 17, "stop immediately when the 16 MiB cap is exceeded");
 });
+
+
+test("Fudo cancels unread error bodies for rejected auth and forbidden resource reads", async () => {
+  const now = 1_800_000_000_000;
+  for (const scenario of ["auth-401", "read-403"] as const) {
+    let canceled = false;
+    let authCalls = 0;
+    let readCalls = 0;
+    const rejectedResponse = (status: number) => new Response(
+      new ReadableStream<Uint8Array>({
+        // Deliberately never close: an error page must not be left streaming.
+        cancel() { canceled = true; },
+      }),
+      { status },
+    );
+    const fakeFetch: typeof fetch = async (input, init) => {
+      if (String(input) === "https://auth.fu.do/api") {
+        authCalls++;
+        assert.equal(init?.method, "POST");
+        return scenario === "auth-401"
+          ? rejectedResponse(401)
+          : jsonResponse({ token: "synthetic-lease", exp: 2_000_000_000 });
+      }
+      readCalls++;
+      assert.equal(init?.method, "GET");
+      return rejectedResponse(403);
+    };
+    const client = new FudoClient(
+      { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+      { fetchImpl: fakeFetch, now: () => now },
+    );
+    await assert.rejects(() => client.products(), (error: unknown) => {
+      assert.ok(error instanceof FudoApiError);
+      assert.equal(error.code, scenario === "auth-401" ? "invalid_credentials" : "forbidden");
+      assert.doesNotMatch(error.message, /synthetic-|lease|secret/i);
+      return true;
+    });
+    assert.equal(canceled, true, `${scenario} must cancel its unread response body`);
+    assert.equal(authCalls, 1);
+    assert.equal(readCalls, scenario === "auth-401" ? 0 : 1);
+  }
+});
+
+test("Fudo cancels a rejected 401 read body before refreshing and retrying", async () => {
+  const now = 1_800_000_000_000;
+  let canceled = false;
+  let authCalls = 0;
+  let apiCalls = 0;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      authCalls++;
+      if (authCalls === 2) assert.equal(canceled, true, "release first HTTP 401 before reauthentication");
+      return jsonResponse({ token: `synthetic-bearer-${authCalls}`, exp: 2_000_000_000 });
+    }
+    apiCalls++;
+    assert.equal(init?.method, "GET");
+    assert.equal(new Headers(init?.headers).get("authorization"), `Bearer synthetic-bearer-${authCalls}`);
+    if (apiCalls === 1) {
+      return new Response(new ReadableStream<Uint8Array>({
+        cancel() { canceled = true; },
+      }), { status: 401 });
+    }
+    return jsonResponse({ data: [] });
+  };
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+  assert.deepEqual(await client.products(), { data: [] });
+  assert.equal(canceled, true);
+  assert.equal(authCalls, 2);
+  assert.equal(apiCalls, 2);
+});
