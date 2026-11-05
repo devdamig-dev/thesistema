@@ -74,6 +74,11 @@ export class FudoApiError extends Error {
 const DEFAULT_API_URL = "https://api.fu.do/v1alpha1";
 const DEFAULT_AUTH_URL = "https://auth.fu.do/api";
 const TOKEN_SKEW_MS = 5 * 60 * 1000;
+// Some valid auth responses omit an explicit exp (e.g. expiry is carried in
+// the bearer itself). Cache briefly rather than authenticating before every
+// single GET; a 401 still forces one safe refresh.
+const MISSING_EXP_TTL_MS = 10 * 60 * 1000;
+const MAX_TOKEN_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 function safeError(status: number): FudoApiError {
   if (status === 401) {
@@ -221,8 +226,26 @@ export class FudoClient {
       );
     }
 
+    const now = this.now();
+    const hasExplicitExpiration = payload.exp !== undefined && payload.exp !== null;
+    const explicitExpiration = hasExplicitExpiration ? normalizeExpiration(payload.exp) : null;
+    // An explicit but malformed/expired timestamp is not a usable token:
+    // fail before sending it to Fudo. An omitted timestamp is different:
+    // give the otherwise valid bearer a short, bounded local lease and rely
+    // on the existing 401 single-flight refresh if the provider revokes it.
+    if (hasExplicitExpiration && (!explicitExpiration || explicitExpiration <= now)) {
+      throw new FudoApiError(
+        "invalid_response",
+        "Fudo devolvió una expiración de token inválida.",
+        response.status,
+        false,
+      );
+    }
     this.token = payload.token;
-    this.tokenExpiresAt = normalizeExpiration(payload.exp);
+    this.tokenExpiresAt = Math.min(
+      explicitExpiration ?? now + MISSING_EXP_TTL_MS,
+      now + MAX_TOKEN_CACHE_TTL_MS,
+    );
   }
 
   private async authenticateOnce(): Promise<void> {
