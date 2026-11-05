@@ -206,8 +206,13 @@ export class FudoClient {
 
     // A syntactically valid JSON response can still be null, an array, or a
     // primitive. Treat it as a provider contract error, never a generic crash.
+    // Bearer values must be a single, bounded HTTP-header token. A provider
+    // response containing only whitespace, control characters or an enormous
+    // token is not a successful authentication. Reject before issuing ANY GET.
+    // Do not echo provider-supplied token contents into errors or logs.
     if (!payload || typeof payload !== "object" || Array.isArray(payload)
-      || typeof payload.token !== "string" || !payload.token) {
+      || typeof payload.token !== "string" || payload.token.length === 0
+      || payload.token.length > 8192 || /[\s\x00-\x1f\x7f]/.test(payload.token)) {
       throw new FudoApiError(
         "invalid_response",
         "Fudo no devolvió un token utilizable.",
