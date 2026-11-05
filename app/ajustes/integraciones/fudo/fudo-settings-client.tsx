@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/ajustes/setting-row";
 import type { FudoConnectionView, FudoResourcePreflight } from "@/lib/integrations/fudo/service";
 import { evaluateFudoPilotReadiness, fudoConnectionRevision, selectCurrentFudoPreflight } from "@/lib/integrations/fudo/readiness";
+import { runFudoActionSafely } from "@/lib/integrations/fudo/action-feedback";
 import {
   connectFudoAction, testFudoConnectionAction, inspectFudoPermissionsAction, disconnectFudoAction, syncFudoAction,
 } from "@/app/actions/fudo";
@@ -47,7 +48,7 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
     setNotice(null);
     setPreflightState(null);
     startTransition(async () => {
-      const result = await action();
+      const result = await runFudoActionSafely(action);
       setNotice({ ok: result.ok, message: result.message });
       if (result.ok && clear) { setKey(""); setSecret(""); }
       router.refresh();
