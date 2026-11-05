@@ -1,3 +1,6 @@
+import type { FudoResourcePreflight } from "./service";
+import { FUDO_SYNC_RESOURCES } from "./snapshot";
+
 /**
  * UI boundary for Fudo O1 server actions.
  *
@@ -32,8 +35,6 @@ export async function runFudoActionSafely(
  * stored as "available": readiness would otherwise render invalid checks (or
  * throw when checks is absent), despite no trustworthy diagnostic result.
  */
-import type { FudoResourcePreflight } from "./service";
-import { FUDO_SYNC_RESOURCES } from "./snapshot";
 
 const FUDO_PROBE_CODES = new Set([
   "available", "invalid_credentials", "forbidden", "rate_limited",
