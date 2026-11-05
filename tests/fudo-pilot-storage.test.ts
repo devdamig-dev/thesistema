@@ -70,6 +70,14 @@ test("Fudo preserves numeric safe IDs but refuses rounded or fractional external
   assert.throws(() => parseFudoPage({ data: [{ id: 42.5 }] }), /invalid_fudo_record/);
   assert.throws(() => parseFudoPage({ data: [{ id: -Infinity }] }), /invalid_fudo_record/);
   assert.throws(() => parseFudoPage({ data: [{ id: " " }] }), /invalid_fudo_record/);
+  // Two provider IDs can differ only in padding. Never trim into the same
+  // external_id (including across separately imported pages).
+  for (const padded of [" item-1", "item-1 ", "\titem-1", "item-1\n"]) {
+    assert.throws(() => parseFudoPage({ data: [{ id: padded }] }),
+      /invalid_fudo_record/, JSON.stringify(padded));
+  }
+  assert.equal(parseFudoPage({ data: [{ id: "item 1" }] })[0].externalId, "item 1",
+    "valid opaque IDs are stored byte-for-byte, not canonicalized");
 });
 
 test("Fudo keeps paging a short provider-capped page when JSON:API links.next exists", () => {
