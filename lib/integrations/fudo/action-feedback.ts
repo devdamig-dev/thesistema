@@ -25,3 +25,42 @@ export async function runFudoActionSafely(
     return { ok: false, message: UNAVAILABLE };
   }
 }
+
+/**
+ * Permission diagnostics carry five structured resource checks in addition to
+ * the generic action feedback. A malformed Server Action payload must not be
+ * stored as "available": readiness would otherwise render invalid checks (or
+ * throw when checks is absent), despite no trustworthy diagnostic result.
+ */
+import type { FudoResourcePreflight } from "./service";
+import { FUDO_SYNC_RESOURCES } from "./snapshot";
+
+const FUDO_PROBE_CODES = new Set([
+  "available", "invalid_credentials", "forbidden", "rate_limited",
+  "provider_unavailable", "api_unavailable", "invalid_response",
+]);
+
+export async function runFudoPreflightSafely(
+  action: () => Promise<FudoResourcePreflight>,
+): Promise<FudoResourcePreflight> {
+  const result = await runFudoActionSafely(action);
+  const checks = (result as Partial<FudoResourcePreflight>).checks;
+  const invalid = { ok: false, message: UNAVAILABLE, checks: [] };
+  if (!Array.isArray(checks) || checks.length > FUDO_SYNC_RESOURCES.length) return invalid;
+
+  const seen = new Set<string>();
+  for (const check of checks) {
+    if (!check || typeof check !== "object"
+      || typeof check.resource !== "string"
+      || !FUDO_SYNC_RESOURCES.some((resource) => resource === check.resource)
+      || typeof check.code !== "string" || !FUDO_PROBE_CODES.has(check.code)
+      || seen.has(check.resource)) return invalid;
+    seen.add(check.resource);
+  }
+  // A success claim is only credible when every O1 resource was checked.
+  // Partial diagnostics are valid only as failures with individual safe codes.
+  if (result.ok && (checks.length !== FUDO_SYNC_RESOURCES.length
+    || checks.some((check) => check.code !== "available"))) return invalid;
+
+  return { ok: result.ok, message: result.message, checks };
+}
