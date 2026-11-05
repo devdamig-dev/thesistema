@@ -152,7 +152,7 @@ const MAX_READ_JSON_BYTES = 16 * 1024 * 1024;
 
 async function readBoundedJson(response: Response, maxBytes: number): Promise<unknown> {
   const lengthHeader = response.headers.get("content-length");
-  if (lengthHeader && /^\\d+$/.test(lengthHeader) && Number(lengthHeader) > maxBytes) {
+  if (lengthHeader && /^\d+$/.test(lengthHeader) && Number(lengthHeader) > maxBytes) {
     throw new Error("fudo_response_too_large");
   }
   if (!response.body) throw new Error("fudo_response_missing_body");
