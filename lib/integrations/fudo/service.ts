@@ -325,7 +325,8 @@ export async function inspectFudoReadPermissions(): Promise<FudoResourcePrefligh
       return { ok: false, message: "Necesitás ser owner o administrador del negocio.", checks: [] };
     }
     const { actor, db } = authorized;
-    const stored = await db.from("fudo_connections").select("credentials_ciphertext,connection_generation")
+    const stored = await db.from("fudo_connections")
+      .select("credentials_ciphertext,connection_generation,status,last_tested_at")
       .eq("business_id", actor.businessId).maybeSingle();
     if (stored.error) return { ok: false, message: UNKNOWN, checks: [] };
     if (!stored.data) return { ok: false, message: "Primero conectá Fudo.", checks: [] };
@@ -333,15 +334,25 @@ export async function inspectFudoReadPermissions(): Promise<FudoResourcePrefligh
     if (typeof generation !== "string" || !generation) {
       return { ok: false, message: UNKNOWN, checks: [] };
     }
+    // Copy primitive metadata before external calls; PostgREST results can be
+    // replaced by another owner/admin's retest while these five GETs run.
+    const statusAtStart: unknown = stored.data.status;
+    const testedAtStart: unknown = stored.data.last_tested_at;
     const credentials = decryptFudoCredentials(actor.businessId, stored.data.credentials_ciphertext);
     const checks = await new FudoClient(credentials).probeReadAccess(FUDO_SYNC_RESOURCES);
     // A second owner can rotate or disconnect while the five external probes
     // are running. Never report old credentials as currently authorized.
     // This status-only reread does not expose ciphertext to the browser.
-    const current = await db.from("fudo_connections").select("connection_generation")
+    const current = await db.from("fudo_connections")
+      .select("connection_generation,status,last_tested_at")
       .eq("business_id", actor.businessId).maybeSingle();
     if (current.error) return { ok: false, message: UNKNOWN, checks: [] };
-    if (!current.data || current.data.connection_generation !== generation) {
+    // A parallel connection retest can change status or its test timestamp
+    // WITHOUT rotating the credentials. Never treat pre-retest permission
+    // checks as evidence of the current connection's health.
+    if (!current.data || current.data.connection_generation !== generation
+      || current.data.status !== statusAtStart
+      || current.data.last_tested_at !== testedAtStart) {
       return {
         ok: false,
         message: "La conexión Fudo cambió durante la revisión. Volvé a comprobar los permisos de la conexión actual.",
