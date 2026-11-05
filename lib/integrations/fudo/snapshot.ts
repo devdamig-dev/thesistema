@@ -27,9 +27,12 @@ export function parseFudoPage(value: unknown): FudoSnapshot[] {
     // persist a rounded external_id: two distinct Fudo records could otherwise
     // collide in the tenant's upsert key. Providers must send large IDs as strings.
     const rawId = body.id;
-    const id = typeof rawId === "string" ? rawId.trim()
+    // External IDs are opaque provider keys: trimming changes their identity
+    // and can silently collapse distinct records across pages into one upsert.
+    // Reject padded IDs rather than normalizing them or marking the cycle complete.
+    const id = typeof rawId === "string" ? rawId
       : typeof rawId === "number" && Number.isSafeInteger(rawId) ? String(rawId) : "";
-    if (!id || id.length > 256 || seen.has(id)) throw new Error("invalid_fudo_record");
+    if (!id || id !== id.trim() || id.length > 256 || seen.has(id)) throw new Error("invalid_fudo_record");
     seen.add(id);
 
     const attributes = body.attributes && typeof body.attributes === "object" && !Array.isArray(body.attributes)
