@@ -17,6 +17,7 @@ let connection = {
   credentials_ciphertext: originalCiphertext,
   status: "connected",
   last_error_code: null as string | null,
+  last_tested_at: null as string | null,
 };
 const filtersSeen: string[] = [];
 let writes = 0;
@@ -34,6 +35,11 @@ const db = {
         return this;
       },
       in(_column: string, _values: string[]) { return this; },
+      is(column: string, value: null) {
+        filtersSeen.push(column);
+        filters[column] = value;
+        return this;
+      },
       async maybeSingle() {
         if (table === "business_members") return { error: null, data: { id: "active-member" } };
         if (table === "profiles") return { error: null, data: { active: true } };
@@ -76,7 +82,7 @@ test("Fudo retest fences stale results after credential rotation, without cipher
       connection = {
         business_id: BUSINESS, connection_generation: ORIGINAL_GENERATION,
         credentials_ciphertext: originalCiphertext,
-        status: "connected", last_error_code: null,
+        status: "connected", last_error_code: null, last_tested_at: null,
       };
       filtersSeen.length = 0;
       writes = 0;
@@ -118,7 +124,79 @@ test("Fudo retest fences stale results after credential rotation, without cipher
     assert.equal(success.ok, true);
     assert.equal(writes, 1);
     assert.equal(connection.status, "connected");
+
+    // A timestamp-based CAS loses its protection if the new timestamp equals
+    // the previous revision. Clock skew reproduces the same regression as two
+    // probes completing within one millisecond, without relying on timing.
+    const futureRevision = new Date(Date.now() + 60_000).toISOString();
+    connection = { ...connection, last_tested_at: futureRevision };
+    writes = 0;
+    const skewedClockRetest = await testStoredFudoConnection();
+    assert.equal(skewedClockRetest.ok, true);
+    assert.equal(writes, 1);
+    assert.ok(connection.last_tested_at);
+    assert.ok(Date.parse(connection.last_tested_at!) > Date.parse(futureRevision),
+      "the persisted revision must advance beyond the previously stored timestamp");
   } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
+
+
+test("Fudo concurrent same-generation retests reject a stale failure after a newer success", async () => {
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  connection = {
+    business_id: BUSINESS, connection_generation: ORIGINAL_GENERATION,
+    credentials_ciphertext: originalCiphertext, status: "connected",
+    last_error_code: null, last_tested_at: "2026-11-04T20:00:00.000Z",
+  };
+  filtersSeen.length = 0;
+  writes = 0;
+  let releaseOldRead: () => void = () => {};
+  const oldReadGate = new Promise<void>((resolve) => { releaseOldRead = resolve; });
+  let signalOldRead: () => void = () => {};
+  const oldReadStarted = new Promise<void>((resolve) => { signalOldRead = resolve; });
+  let readCount = 0;
+  globalThis.fetch = async (input) => {
+    if (String(input).includes("auth.fu.do")) {
+      return new Response(JSON.stringify({
+        token: "fixture-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    readCount++;
+    if (readCount === 1) {
+      signalOldRead();
+      await oldReadGate;
+      return new Response(JSON.stringify({ error: "PRIVATE_PROVIDER_ERROR" }), { status: 403 });
+    }
+    return new Response(JSON.stringify({ data: [] }), { status: 200 });
+  };
+  try {
+    const older = testStoredFudoConnection();
+    await oldReadStarted;
+    const newer = await testStoredFudoConnection();
+    assert.equal(newer.ok, true, "latest completed test should persist success");
+    assert.equal(writes, 1);
+    const currentRevision = connection.last_tested_at;
+    releaseOldRead();
+    const stale = await older;
+    assert.equal(stale.ok, false);
+    if (!stale.ok) {
+      assert.equal(stale.code, "connection_changed");
+      assert.doesNotMatch(stale.message, /PRIVATE_PROVIDER_ERROR|fixture-bearer|api-secret/);
+    }
+    assert.equal(writes, 1, "stale 403 cannot downgrade newer successful state");
+    assert.equal(connection.status, "connected");
+    assert.equal(connection.last_error_code, null);
+    assert.equal(connection.last_tested_at, currentRevision);
+    assert.ok(filtersSeen.includes("last_tested_at"), "compare-and-set must fence the test revision");
+    assert.ok(!filtersSeen.includes("credentials_ciphertext"), "never send ciphertext in filters");
+  } finally {
+    releaseOldRead();
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
