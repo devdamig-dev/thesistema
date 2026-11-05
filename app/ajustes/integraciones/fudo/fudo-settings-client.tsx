@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/ajustes/setting-row";
 import type { FudoConnectionView, FudoResourcePreflight } from "@/lib/integrations/fudo/service";
 import { evaluateFudoPilotReadiness, fudoConnectionRevision, selectCurrentFudoPreflight } from "@/lib/integrations/fudo/readiness";
-import { runFudoActionSafely } from "@/lib/integrations/fudo/action-feedback";
+import { runFudoActionSafely, runFudoPreflightSafely } from "@/lib/integrations/fudo/action-feedback";
 import {
   connectFudoAction, testFudoConnectionAction, inspectFudoPermissionsAction, disconnectFudoAction, syncFudoAction,
 } from "@/app/actions/fudo";
@@ -106,8 +106,10 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
               <RefreshCcw className="h-4 w-4" /> Probar conexión
             </Button>}
             {hasCredentials && <Button disabled={working} onClick={() => execute(async () => {
-              const result = await inspectFudoPermissionsAction();
-              if (connectionRevision) setPreflightState({ revision: connectionRevision, result });
+              const result = await runFudoPreflightSafely(inspectFudoPermissionsAction);
+              if (connectionRevision && result.checks.length > 0) {
+                setPreflightState({ revision: connectionRevision, result });
+              }
               return result;
             })}>
               <ShieldCheck className="h-4 w-4" /> Revisar permisos de importación

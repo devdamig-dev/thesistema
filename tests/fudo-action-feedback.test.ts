@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runFudoActionSafely } from "../lib/integrations/fudo/action-feedback";
+import { runFudoActionSafely, runFudoPreflightSafely } from "../lib/integrations/fudo/action-feedback";
+import type { FudoResourcePreflight } from "../lib/integrations/fudo/service";
 
 test("Fudo UI keeps sanitized result returned by the server", async () => {
   assert.deepEqual(await runFudoActionSafely(async () => ({
@@ -29,4 +30,49 @@ test("Fudo UI does not mistake malformed action responses for success", async ()
     assert.equal(result.ok, false, JSON.stringify(value));
     assert.match(result.message, /Revisá tu conexión/);
   }
+});
+
+
+test("Fudo preflight preserves well-formed partial diagnostics but cannot invent a five-resource success", async () => {
+  const resources = ["products", "ingredients", "providers", "orders", "sales"] as const;
+  const valid = { ok: true, message: "Cinco lecturas compatibles.", checks: resources.map(
+    (resource) => ({ resource, code: "available" as const }),
+  ) };
+  assert.deepEqual(await runFudoPreflightSafely(async () => valid), valid);
+  const partial = { ok: false, message: "Hay recursos sin permiso.", checks: [
+    { resource: "products" as const, code: "available" as const },
+    { resource: "sales" as const, code: "forbidden" as const },
+  ] };
+  assert.deepEqual(await runFudoPreflightSafely(async () => partial), partial);
+});
+
+test("Fudo preflight rejects malformed, duplicated or unverified checks without false green status", async () => {
+  const resources = ["products", "ingredients", "providers", "orders", "sales"] as const;
+  const validChecks = resources.map((resource) => ({ resource, code: "available" }));
+  const malformed: unknown[] = [
+    null, undefined, { ok: true, message: "Success" },
+    { ok: true, message: "Success", checks: null },
+    { ok: true, message: "Success", checks: {} },
+    { ok: true, message: "Success", checks: [] },
+    { ok: true, message: "Success", checks: validChecks.slice(0, 4) },
+    { ok: true, message: "Success", checks: [...validChecks, validChecks[0]] },
+    { ok: true, message: "Success", checks: [...validChecks.slice(0, 4), { resource: "sales", code: "forbidden" }] },
+    { ok: true, message: "Success", checks: [...validChecks.slice(0, 4), { resource: "other", code: "available" }] },
+    { ok: true, message: "Success", checks: [...validChecks.slice(0, 4), { resource: "sales", code: "unexpected" }] },
+    { ok: false, message: "Failed", checks: [null] },
+    { ok: false, message: "Failed", checks: [42] },
+  ];
+  for (const response of malformed) {
+    const result = await runFudoPreflightSafely(async () => response as FudoResourcePreflight);
+    assert.equal(result.ok, false, JSON.stringify(response));
+    assert.deepEqual(result.checks, [], JSON.stringify(response));
+    assert.match(result.message, /Revisá tu conexión/);
+  }
+  const leaked = "sensitive-provider-exception";
+  const thrown = await runFudoPreflightSafely(async () => {
+    throw new Error(leaked);
+  });
+  assert.equal(thrown.ok, false);
+  assert.deepEqual(thrown.checks, []);
+  assert.ok(!JSON.stringify(thrown).includes(leaked));
 });
