@@ -296,3 +296,29 @@ test("Fudo report discards a run which settles while progress is being read", as
     Object.assign(runs[0], before);
   }
 });
+
+test("Fudo preflight revision stays tenant-scoped even for identical connection metadata", async () => {
+  role = "owner"; isMember = true;
+  const original = { ...connections[1] };
+  try {
+    // Simulate two tenants with the same generation, health and test time.
+    // Browser state from A must still be distinguishable from B.
+    connections[1].connection_generation = connections[0].connection_generation;
+    connections[1].status = connections[0].status;
+    connections[1].last_tested_at = connections[0].last_tested_at;
+    tenant = A;
+    const statusA = await getFudoConnectionView();
+    tenant = B;
+    const statusB = await getFudoConnectionView();
+    assert.ok(statusA && statusB);
+    assert.match(statusA.connectionRevision ?? "", /^[a-f0-9]{64}$/);
+    assert.match(statusB.connectionRevision ?? "", /^[a-f0-9]{64}$/);
+    assert.notEqual(statusA.connectionRevision, statusB.connectionRevision,
+      "switching tenants must invalidate earlier permission probes");
+    assert.doesNotMatch(String(statusA.connectionRevision), new RegExp(A));
+    assert.doesNotMatch(String(statusB.connectionRevision), new RegExp(B));
+  } finally {
+    Object.assign(connections[1], original);
+    tenant = A;
+  }
+});
