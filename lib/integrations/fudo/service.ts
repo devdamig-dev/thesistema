@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { getCurrentUserContext } from "@/lib/data/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isDatabaseMode } from "@/lib/env";
@@ -23,6 +23,8 @@ export type FudoSyncRunView = {
 
 export type FudoConnectionView = {
   configured: boolean;
+  /** Opaque per-tenant, per-generation, per-test revision for ephemeral UI probes. */
+  connectionRevision: string | null;
   status: "disconnected" | "connected" | "error";
   lastTestedAt: string | null;
   lastSyncedAt: string | null;
@@ -93,7 +95,7 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
   const row = connection.data;
   if (!row) {
     return {
-      configured: true, status: "disconnected",
+      configured: true, connectionRevision: null, status: "disconnected",
       lastTestedAt: null, lastSyncedAt: null, lastSyncStatus: null, lastErrorCode: null, lastCounts: {},
       importedCounts: {}, seenThisCycleCounts: {}, possiblyMissingCounts: {}, nextPages: {}, recentRuns: [],
     };
@@ -239,6 +241,11 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
     ))) return null;
   return {
     configured: true,
+    // Never reuse green checks after switching businesses with an identical
+    // status and timestamp. Do not expose raw tenant or generation identifiers.
+    connectionRevision: createHash("sha256")
+      .update(JSON.stringify([actor.businessId, generation, revision.status, revision.lastTestedAt]))
+      .digest("hex"),
     status: revision.status === "connected" ? "connected" : "error",
     lastTestedAt: revision.lastTestedAt ?? null,
     lastSyncedAt: revision.lastSyncedAt ?? null,

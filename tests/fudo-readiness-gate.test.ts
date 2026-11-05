@@ -6,7 +6,7 @@ import type { FudoConnectionView, FudoResourcePreflight } from "../lib/integrati
 
 function view(): FudoConnectionView {
   return {
-    configured: true, status: "disconnected",
+    configured: true, connectionRevision: null, status: "disconnected",
     lastTestedAt: null, lastSyncedAt: null, lastSyncStatus: null, lastErrorCode: null,
     lastCounts: {}, importedCounts: {}, seenThisCycleCounts: {}, possiblyMissingCounts: {},
     nextPages: {}, recentRuns: [],
@@ -76,12 +76,29 @@ test("permission probes are scoped to the current rendered connection revision",
   const status = view();
   status.status = "connected";
   status.lastTestedAt = "2026-11-04T14:00:00Z";
-  const previous = { revision: fudoConnectionRevision(status), result: allAvailable };
+  status.connectionRevision = "a".repeat(64);
+  const previous = { revision: fudoConnectionRevision(status)!, result: allAvailable };
   assert.equal(selectCurrentFudoPreflight(status, previous), allAvailable);
   status.lastTestedAt = "2026-11-04T14:01:00Z";
+  status.connectionRevision = "b".repeat(64);
   assert.equal(selectCurrentFudoPreflight(status, previous), null,
     "a second admin's rotation/retest must invalidate older results on refresh");
   status.status = "disconnected";
   status.lastTestedAt = null;
+  status.connectionRevision = null;
   assert.equal(selectCurrentFudoPreflight(status, previous), null);
+});
+
+test("permission probes cannot cross businesses with the same status and last test timestamp", () => {
+  const businessA = view();
+  businessA.status = "connected";
+  businessA.lastTestedAt = "2026-11-05T05:00:00Z";
+  businessA.connectionRevision = "a".repeat(64);
+  const businessB = { ...businessA, connectionRevision: "b".repeat(64) };
+  const previous = { revision: fudoConnectionRevision(businessA)!, result: allAvailable };
+  assert.equal(selectCurrentFudoPreflight(businessA, previous), allAvailable);
+  assert.equal(selectCurrentFudoPreflight(businessB, previous), null,
+    "business A permissions must never be reused after selecting business B");
+  assert.equal(selectCurrentFudoPreflight({ ...businessB, connectionRevision: null }, previous), null,
+    "missing server revision must fail closed");
 });

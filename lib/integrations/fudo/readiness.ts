@@ -8,16 +8,18 @@ export type FudoReadinessStep = {
   state: "done" | "pending" | "blocked";
 };
 
-/** A probe is only valid for the server-rendered connection test revision. */
-export function fudoConnectionRevision(view: Pick<FudoConnectionView, "status" | "lastTestedAt">): string {
-  return `${view.status}:${view.lastTestedAt ?? ""}`;
+/** A probe is valid only for one server-derived tenant, generation and test revision. */
+export function fudoConnectionRevision(view: Pick<FudoConnectionView, "status" | "connectionRevision">): string | null {
+  return view.status === "connected" && typeof view.connectionRevision === "string"
+    && /^[a-f0-9]{64}$/.test(view.connectionRevision) ? view.connectionRevision : null;
 }
 
 export function selectCurrentFudoPreflight(
-  view: Pick<FudoConnectionView, "status" | "lastTestedAt">,
+  view: Pick<FudoConnectionView, "status" | "connectionRevision">,
   stored: { revision: string; result: FudoResourcePreflight } | null,
 ): FudoResourcePreflight | null {
-  return stored?.revision === fudoConnectionRevision(view) ? stored.result : null;
+  const revision = fudoConnectionRevision(view);
+  return revision !== null && stored?.revision === revision ? stored.result : null;
 }
 
 /**
