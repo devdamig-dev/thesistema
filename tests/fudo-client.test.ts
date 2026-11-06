@@ -723,3 +723,38 @@ test("Fudo connect and permission probe reject explicit wrong-resource records",
   assert.deepEqual(verbs, ["GET", "GET"], "only provider reads; no write or redirect");
   assert.doesNotMatch(JSON.stringify(checks), /synthetic-|cross-resource/);
 });
+
+
+test("Fudo HTTP 200 mixed JSON:API data/errors cannot pass connection or five-resource preflight", async () => {
+  const now = 1_800_000_000_000;
+  const methods: string[] = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      return jsonResponse({ token: "private-bearer", exp: Math.floor((now + 86_400_000) / 1000) });
+    }
+    methods.push(String(init?.method));
+    const resource = new URL(String(input)).pathname.split("/").at(-1);
+    if (resource === "products") return jsonResponse({
+      data: [{ id: "private-product", type: "Product" }],
+      errors: [{ detail: "secret-provider-error" }],
+      links: { next: null },
+    });
+    return jsonResponse({ data: [], links: { next: null } });
+  };
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+  await assert.rejects(() => client.testConnection(), /invalid_fudo_page/);
+  const checks = await client.probeReadAccess(["products", "ingredients", "providers", "orders", "sales"]);
+  assert.deepEqual(checks, [
+    { resource: "products", code: "invalid_response" },
+    { resource: "ingredients", code: "available" },
+    { resource: "providers", code: "available" },
+    { resource: "orders", code: "available" },
+    { resource: "sales", code: "available" },
+  ]);
+  assert.equal(methods.length, 6);
+  assert.ok(methods.every((method) => method === "GET"));
+  assert.doesNotMatch(JSON.stringify(checks), /private-|synthetic-|secret-provider-error|bearer/i);
+});

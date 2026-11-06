@@ -21,6 +21,15 @@ export type FudoSnapshot = {
 };
 
 export function parseFudoPage(value: unknown, expectedResource?: string): FudoSnapshot[] {
+  // JSON:API forbids top-level data and errors together. An upstream can
+  // return HTTP 200 with seemingly importable records AND an error document;
+  // never mark that page as imported or advance its cursor. Treat even an
+  // empty errors member as an ambiguous provider contract, without exposing
+  // its contents to logs or the UI.
+  if (value && typeof value === "object" && !Array.isArray(value)
+    && Object.prototype.hasOwnProperty.call(value, "errors")) {
+    throw new Error("invalid_fudo_page");
+  }
   const expectedTypes = expectedResource ? (FUDO_JSON_API_TYPES as Record<string, readonly string[]>)[expectedResource] : undefined;
   const raw = Array.isArray(value)
     ? value
