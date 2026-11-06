@@ -148,6 +148,10 @@ function toQuery(params: FudoListParams): string {
  * by the caller. Never log or return provider body bytes.
  */
 const MAX_AUTH_JSON_BYTES = 64 * 1024;
+// Connect and permission checks request only one record, not a 100-record
+// import page. Keep the aggregate payload budget low when probing five
+// resources concurrently: each individual staged record is capped at 128 KiB.
+const MAX_PROBE_JSON_BYTES = 1024 * 1024;
 const MAX_READ_JSON_BYTES = 16 * 1024 * 1024;
 
 // Fetch resolves as soon as headers arrive; a discarded error response can
@@ -395,7 +399,11 @@ export class FudoClient {
     }
 
     try {
-      return await readBoundedJson(response, MAX_READ_JSON_BYTES);
+      // A one-record preflight should never buffer a 16 MiB import page.
+      // Full 100-record synchronization retains its existing larger bound.
+      const maxBytes = String(params["page[size]"] ?? "") === "1"
+        ? MAX_PROBE_JSON_BYTES : MAX_READ_JSON_BYTES;
+      return await readBoundedJson(response, maxBytes);
     } catch (error) {
       const interrupted = error instanceof Error && error.message === "fudo_response_transport_failed";
       throw new FudoApiError(
