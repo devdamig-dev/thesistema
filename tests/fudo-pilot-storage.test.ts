@@ -153,3 +153,15 @@ test("Fudo JSON:API rejects a top-level errors member even alongside valid recor
   assert.throws(() => parseFudoPage({ errors: [{ detail: "private-provider-error" }] }, "products"),
     /invalid_fudo_page/);
 });
+
+test("Fudo O1 rejects malformed JSON:API attributes rather than silently staging empty metadata", () => {
+  assert.equal(parseFudoPage({ data: [{ id: "valid-omitted", type: "Product" }] }, "products").length, 1);
+  assert.equal(parseFudoPage({ data: [{ id: "valid-object", type: "Product", attributes: {} }] }, "products").length, 1);
+  for (const attributes of [null, [], ["fake-product"], "private-content", 17, false]) {
+    assert.throws(
+      () => parseFudoPage({ data: [{ id: "invalid", type: "Product", attributes }] }, "products"),
+      (error: unknown) => error instanceof Error && error.message === "invalid_fudo_record",
+      "an explicitly provided attributes member must be a JSON:API object",
+    );
+  }
+});
