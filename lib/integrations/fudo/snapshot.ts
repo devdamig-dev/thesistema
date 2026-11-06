@@ -4,6 +4,15 @@ export const FUDO_SYNC_RESOURCES = ["products", "ingredients", "providers", "ord
 export type FudoSyncResource = typeof FUDO_SYNC_RESOURCES[number];
 export const FUDO_SYNC_PAGE_SIZE = 100;
 
+// Fudo's public JSON:API schemas identify resources with singular types.
+// Check explicit type metadata when present so a wrong-resource HTTP 200
+// cannot be staged under another resource key. Keep missing types compatible
+// with the existing O1 read-only fixtures until a real pilot confirms the shape.
+const FUDO_JSON_API_TYPES: Record<FudoSyncResource, string> = {
+  products: "Product", ingredients: "Ingredient", providers: "Provider",
+  orders: "Order", sales: "Sale",
+};
+
 export type FudoSnapshot = {
   externalId: string;
   payload: Record<string, unknown>;
@@ -11,7 +20,8 @@ export type FudoSnapshot = {
   sourceUpdatedAt: string | null;
 };
 
-export function parseFudoPage(value: unknown): FudoSnapshot[] {
+export function parseFudoPage(value: unknown, expectedResource?: string): FudoSnapshot[] {
+  const expectedType = expectedResource ? (FUDO_JSON_API_TYPES as Record<string, string>)[expectedResource] : undefined;
   const raw = Array.isArray(value)
     ? value
     : value && typeof value === "object" && !Array.isArray(value)
@@ -23,6 +33,10 @@ export function parseFudoPage(value: unknown): FudoSnapshot[] {
   return raw.map((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("invalid_fudo_record");
     const body = item as Record<string, unknown>;
+    // A 200 from /products containing a Sale object is not a valid products
+    // import. Do not upsert a wrong provider type or mark its cursor complete.
+    if (expectedType && Object.prototype.hasOwnProperty.call(body, "type")
+      && body.type !== expectedType) throw new Error("invalid_fudo_record");
     // JavaScript JSON parsing rounds integers beyond MAX_SAFE_INTEGER. Never
     // persist a rounded external_id: two distinct Fudo records could otherwise
     // collide in the tenant's upsert key. Providers must send large IDs as strings.
