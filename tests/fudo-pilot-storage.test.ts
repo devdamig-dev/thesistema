@@ -59,6 +59,17 @@ test("Fudo staging rejects ambiguous records and oversized provider pages", () =
 });
 
 
+test("Fudo enforces the per-record size limit in actual UTF-8 bytes", () => {
+  const small = { id: "multibyte-ok", type: "Product", attributes: { description: "ñ".repeat(60_000) } };
+  const oversized = { id: "multibyte-reject", type: "Product", attributes: { description: "ñ".repeat(70_000) } };
+  assert.ok(Buffer.byteLength(JSON.stringify(small), "utf8") < 131072);
+  assert.ok(JSON.stringify(oversized).length < 131072,
+    "a UTF-16 character-count would mistakenly accept this record");
+  assert.ok(Buffer.byteLength(JSON.stringify(oversized), "utf8") > 131072);
+  assert.equal(parseFudoPage({ data: [small] }, "products")[0].externalId, "multibyte-ok");
+  assert.throws(() => parseFudoPage({ data: [oversized] }, "products"), /fudo_record_too_large/);
+});
+
 test("Fudo preserves numeric safe IDs but refuses rounded or fractional external IDs", () => {
   assert.equal(parseFudoPage({ data: [{ id: Number.MAX_SAFE_INTEGER }] })[0].externalId,
     String(Number.MAX_SAFE_INTEGER));
