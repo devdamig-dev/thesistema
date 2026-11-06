@@ -60,6 +60,9 @@ function safeFailure(error: unknown): FudoActionResult {
   if (error instanceof Error && error.message === "fudo_encryption_unavailable") {
     return fail("server_unconfigured", "La conexión segura todavía no está habilitada en GastroPilot.");
   }
+  if (error instanceof Error && error.message === "fudo_actor_revoked") {
+    return fail("forbidden", "Tu acceso al negocio cambió durante la sincronización. Volvé a ingresar.");
+  }
   if (error instanceof Error && error.message === "fudo_ciphertext_invalid") {
     return fail("invalid_stored_credentials", "No se pudo leer la conexión cifrada. Volvé a vincular Fudo.");
   }
@@ -481,6 +484,9 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
     if (started.data?.code === "connection_changed") return fail("connection_changed", "La conexión Fudo cambió; actualizá la pantalla e intentá nuevamente.");
     if (started.data?.code !== "started" || typeof started.data?.run_id !== "string") return fail("storage_unavailable", UNKNOWN);
     runId = started.data.run_id;
+    // A role can be revoked after fudo_begin_sync commits. Do not reset
+    // a completed cycle on behalf of an actor who is no longer authorized.
+    if (!(await isStillAuthorized(authorized.actor))) throw new Error("fudo_actor_revoked");
     const previous = await db.from("fudo_sync_progress").select("resource_type,next_page")
       .eq("business_id", actor.businessId).eq("connection_generation", generation);
     if (previous.error) throw new Error("fudo_storage_failed");
@@ -495,6 +501,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       if (reset.error) throw new Error("fudo_storage_failed");
     }
     const syncBusinessId = authorized.actor.businessId;
+    const syncActor = authorized.actor;
     // Each Fudo GET may take up to 15s. Five sequential resource reads can
     // time out a 60s function; three bounded workers keep progress resumable.
     // Wait for ALL launched page writes to settle even if one resource fails.
@@ -511,6 +518,9 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
         ? cursor.data.cycle_id : page === 1 ? randomUUID() : null;
       const cycleStartedAt = typeof cursor.data?.cycle_started_at === "string"
         ? cursor.data.cycle_started_at : page === 1 ? new Date().toISOString() : null;
+      // A previous parallel worker may have detected revocation already.
+      // Do not initiate fresh provider reads using a removed actor's connection.
+      if (!(await isStillAuthorized(syncActor))) throw new Error("fudo_actor_revoked");
       const response = await client.list(resource, {
         "page[number]": page, "page[size]": FUDO_SYNC_PAGE_SIZE,
       });
@@ -519,6 +529,11 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       // pagination BEFORE any staging upsert so the failed page cannot leave
       // new records or cycle presence markers without a matching cursor.
       const nextPage = nextFudoPage(response, page, snapshots.length, resource);
+      // Provider GETs are asynchronous: role revocation or session switch
+      // during the request must abort before staging OR cursor writes,
+      // including empty pages. SQL transaction fencing is still required
+      // to eliminate the remaining check/write race entirely.
+      if (!(await isStillAuthorized(syncActor))) throw new Error("fudo_actor_revoked");
       const partial = nextPage !== 0;
       const seenAt = new Date().toISOString();
       if (snapshots.length) {
@@ -541,6 +556,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       if (progress.error) throw new Error("fudo_storage_failed");
       return partial;
     });
+    if (!(await isStillAuthorized(syncActor))) throw new Error("fudo_actor_revoked");
     const hasPendingPages = pendingPages.some(Boolean);
     const status = hasPendingPages ? "partial" : "completed";
     const completed = new Date().toISOString();
@@ -563,9 +579,13 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       await db.from("fudo_sync_runs").update({
         status: "failed", counts, error_code: failure.ok ? null : failure.code, finished_at: new Date().toISOString(),
       }).eq("business_id", actor.businessId).eq("id", runId);
-      if (generation) await db.from("fudo_connections").update({
-        last_sync_status: "failed", last_error_code: failure.ok ? null : failure.code,
-      }).eq("business_id", actor.businessId).eq("connection_generation", generation);
+      // Always close the audit run for recovery, but do not change the
+      // connection health on behalf of an actor whose rights were revoked.
+      if (generation && !(error instanceof Error && error.message === "fudo_actor_revoked")) {
+        await db.from("fudo_connections").update({
+          last_sync_status: "failed", last_error_code: failure.ok ? null : failure.code,
+        }).eq("business_id", actor.businessId).eq("connection_generation", generation);
+      }
     }
     return failure;
   }

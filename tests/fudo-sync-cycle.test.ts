@@ -14,6 +14,8 @@ const ciphertext = encryptFudoCredentials(A, {
 type Row = Record<string, any>;
 const progress: Row[] = [];
 const records: Row[] = [];
+let membershipActive = true;
+let activeBusiness = A;
 const runs: Row[] = [];
 const conn: Row = {
   business_id: A, connection_generation: GENERATION, credentials_ciphertext: ciphertext,
@@ -29,6 +31,7 @@ function from(table: string) {
   let filters: Record<string, unknown> = {};
   let limit = Infinity;
   let countOnly = false;
+  let newestFirst = false;
   let action: "select" | "update" | "delete" = "select";
   let changes: Row = {};
 
@@ -39,7 +42,10 @@ function from(table: string) {
     },
     eq(key: string, value: unknown) { filters = { ...filters, [key]: value }; return this; },
     in(_key: string, _values: string[]) { return this; },
-    order(_key: string, _options: unknown) { return this; },
+    order(_key: string, options: { ascending?: boolean }) {
+      newestFirst = table === "fudo_sync_runs" && _key === "started_at" && options?.ascending === false;
+      return this;
+    },
     limit(n: number) { limit = n; return this; },
     update(values: Row) { action = "update"; changes = values; return this; },
     delete() { action = "delete"; return this; },
@@ -65,7 +71,7 @@ function from(table: string) {
     },
     async maybeSingle() {
       if (table === "profiles") return { data: { active: true }, error: null };
-      if (table === "business_members") return { data: { id: "active-member" }, error: null };
+      if (table === "business_members") return { data: membershipActive ? { id: "active-member" } : null, error: null };
       return { data: matching()[0] ?? null, error: null };
     },
     then(resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) {
@@ -92,7 +98,10 @@ function from(table: string) {
       : table === "fudo_sync_progress" ? progress
         : table === "fudo_external_records" ? records
           : table === "fudo_sync_runs" ? runs : [];
-    return source.filter((r) => matches(r, filters)).slice(0, limit);
+    const matched = source.filter((r) => matches(r, filters));
+    // Supabase honors ORDER BY started_at DESC; our earlier mock ignored it.
+    // A rejected run preceding valid runs must not appear as the latest run.
+    return (newestFirst ? matched.reverse() : matched).slice(0, limit);
   }
   return query;
 }
@@ -113,7 +122,7 @@ const loader = Module as any;
 const previousLoad = loader._load;
 loader._load = function(name: string, ...args: any[]) {
   if (name === "@/lib/data/auth") return {
-    getCurrentUserContext: async () => ({ isAuthenticated: true, userId: USER, businessId: A, role: "owner" }),
+    getCurrentUserContext: async () => ({ isAuthenticated: true, userId: USER, businessId: activeBusiness, role: "owner" }),
   };
   if (name === "@/lib/supabase/admin") return { createSupabaseAdminClient: () => db };
   if (name === "@/lib/env") return { isDatabaseMode: () => true };
@@ -122,6 +131,58 @@ loader._load = function(name: string, ...args: any[]) {
 const { syncFudoReadOnly, getFudoConnectionView } =
   require("../lib/integrations/fudo/service") as typeof import("../lib/integrations/fudo/service");
 loader._load = previousLoad;
+
+test("Fudo O1 refuses staging and cursor writes if owner is revoked or switches tenant during GET", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  try {
+    for (const transition of ["revoked", "switched"] as const) {
+      membershipActive = true;
+      activeBusiness = A;
+      const beforeRecords = JSON.stringify(records);
+      const beforeProgress = JSON.stringify(progress);
+      const beforeConnection = { ...conn };
+      const providerMethods: string[] = [];
+      globalThis.fetch = async (input, init) => {
+        if (String(input) === "https://auth.fu.do/api") {
+          assert.equal(init?.method, "POST");
+          return new Response(JSON.stringify({
+            token: "fixture-token", exp: Math.floor(Date.now() / 1000) + 86400,
+          }), { status: 200 });
+        }
+        providerMethods.push(String(init?.method));
+        if (transition === "revoked") membershipActive = false;
+        else activeBusiness = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+        return new Response(JSON.stringify({
+          data: [{ id: "must-not-stage", type: new URL(String(input)).pathname.split("/").at(-1),
+            attributes: { name: "private-fixture" } }],
+          links: { next: null },
+        }), { status: 200 });
+      };
+      const outcome = await syncFudoReadOnly();
+      assert.equal(outcome.ok, false, transition);
+      if (!outcome.ok) {
+        assert.equal(outcome.code, "forbidden", transition);
+        assert.doesNotMatch(outcome.message, /fixture-token|private-fixture|must-not-stage/);
+      }
+      assert.equal(JSON.stringify(records), beforeRecords, "no provider snapshot persisted after actor changed");
+      assert.equal(JSON.stringify(progress), beforeProgress, "no cursor advanced after actor changed");
+      assert.equal(runs.at(-1)?.status, "failed", "audit run is closed for recovery");
+      assert.deepEqual(conn, beforeConnection, "revoked actor cannot update connection health");
+      assert.ok(providerMethods.length > 0 && providerMethods.every((verb) => verb === "GET"),
+        "only safe read calls reach Fudo");
+      assert.ok(providerMethods.length <= 3,
+        "the aborted run must not start fresh GETs after the initial concurrent batch");
+    }
+  } finally {
+    membershipActive = true;
+    activeBusiness = A;
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
 
 test("Fudo O1 pagination keeps one cycle UUID then flags a provider ID absent on a full rescan", async () => {
   const prevFetch = globalThis.fetch;
