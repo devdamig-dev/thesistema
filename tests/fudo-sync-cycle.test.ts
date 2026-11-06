@@ -31,6 +31,7 @@ function from(table: string) {
   let filters: Record<string, unknown> = {};
   let limit = Infinity;
   let countOnly = false;
+  let newestFirst = false;
   let action: "select" | "update" | "delete" = "select";
   let changes: Row = {};
 
@@ -41,7 +42,10 @@ function from(table: string) {
     },
     eq(key: string, value: unknown) { filters = { ...filters, [key]: value }; return this; },
     in(_key: string, _values: string[]) { return this; },
-    order(_key: string, _options: unknown) { return this; },
+    order(_key: string, options: { ascending?: boolean }) {
+      newestFirst = table === "fudo_sync_runs" && _key === "started_at" && options?.ascending === false;
+      return this;
+    },
     limit(n: number) { limit = n; return this; },
     update(values: Row) { action = "update"; changes = values; return this; },
     delete() { action = "delete"; return this; },
@@ -94,7 +98,10 @@ function from(table: string) {
       : table === "fudo_sync_progress" ? progress
         : table === "fudo_external_records" ? records
           : table === "fudo_sync_runs" ? runs : [];
-    return source.filter((r) => matches(r, filters)).slice(0, limit);
+    const matched = source.filter((r) => matches(r, filters));
+    // Supabase honors ORDER BY started_at DESC; our earlier mock ignored it.
+    // A rejected run preceding valid runs must not appear as the latest run.
+    return (newestFirst ? matched.reverse() : matched).slice(0, limit);
   }
   return query;
 }
