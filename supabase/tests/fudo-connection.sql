@@ -192,4 +192,103 @@ select pg_temp.fudo_assert(
      and resource_type='ingredients'),
   'tenant counts stay separate; legacy cycle stays unknown');
 
+
+-- Atomic page RPC: SQL rejects stale/foreign actors and commits staging+cursor
+-- together. Fixture-only data; whole suite rolled back.
+select pg_temp.fudo_assert(
+  not has_function_privilege('authenticated',
+    'public.fudo_commit_sync_page(uuid,uuid,uuid,uuid,text,integer,integer,uuid,timestamptz,jsonb)','execute')
+  and not has_function_privilege('anon',
+    'public.fudo_commit_sync_page(uuid,uuid,uuid,uuid,text,integer,integer,uuid,timestamptz,jsonb)','execute'),
+  'browser roles cannot call page commit');
+
+do $
+declare
+  a uuid := '00000000-0000-4000-8000-000000008010';
+  b uuid := '00000000-0000-4000-8000-000000008020';
+  owner_a uuid := '00000000-0000-4000-8000-000000008001';
+  owner_b uuid := '00000000-0000-4000-8000-000000008002';
+  generation_a uuid;
+  run_a uuid;
+  cycle uuid := '00000000-0000-4000-8000-000000008399';
+  cycle_start timestamptz := '2026-11-06T20:00:00Z';
+  first_row jsonb := jsonb_build_array(jsonb_build_object(
+    'external_id','page-fixture-a','payload',jsonb_build_object('id','page-fixture-a'),
+    'content_hash',repeat('a',64),'source_updated_at',null));
+  second_row jsonb := jsonb_build_array(jsonb_build_object(
+    'external_id','page-fixture-a','payload',jsonb_build_object('id','page-fixture-a','version',2),
+    'content_hash',repeat('b',64),'source_updated_at',null));
+  result jsonb;
+begin
+  perform pg_temp.fudo_assert(public.fudo_replace_connection(a,owner_a,repeat('s',100))='connected',
+    'owner can connect fixture A');
+  select connection_generation into generation_a from public.fudo_connections where business_id=a;
+  result := public.fudo_begin_sync(a,generation_a,owner_a);
+  perform pg_temp.fudo_assert(result->>'code'='started','page fixture starts run');
+  run_a := (result->>'run_id')::uuid;
+
+  result := public.fudo_commit_sync_page(a,generation_a,owner_b,run_a,
+    'products',1,2,cycle,cycle_start,first_row);
+  perform pg_temp.fudo_assert(result->>'code'='forbidden','B owner cannot stage into A');
+
+  result := public.fudo_commit_sync_page(a,generation_a,owner_a,run_a,
+    'products',1,2,cycle,cycle_start,first_row);
+  perform pg_temp.fudo_assert(result->>'code'='saved','page one is atomically committed');
+  perform pg_temp.fudo_assert(
+    (select count(*)=1 from public.fudo_external_records
+       where business_id=a and connection_generation=generation_a and external_id='page-fixture-a')
+    and (select next_page=2 and cycle_id=cycle
+         from public.fudo_sync_progress where business_id=a
+           and connection_generation=generation_a and resource_type='products'),
+    'snapshot and cursor both stored');
+
+  result := public.fudo_commit_sync_page(a,generation_a,owner_a,run_a,
+    'products',1,2,cycle,cycle_start,first_row);
+  perform pg_temp.fudo_assert(result->>'code'='stale_page','stale page cannot rewrite cursor');
+
+  update public.business_members set role='manager' where business_id=a and user_id=owner_a;
+  result := public.fudo_commit_sync_page(a,generation_a,owner_a,run_a,
+    'products',2,0,cycle,cycle_start,second_row);
+  perform pg_temp.fudo_assert(result->>'code'='forbidden','revoked actor blocked in SQL transaction');
+  perform pg_temp.fudo_assert(
+    (select next_page=2 from public.fudo_sync_progress where business_id=a
+      and connection_generation=generation_a and resource_type='products')
+    and (select content_hash=repeat('a',64) from public.fudo_external_records
+      where business_id=a and connection_generation=generation_a and external_id='page-fixture-a'),
+    'revoked attempt changes neither cursor nor snapshot');
+  update public.business_members set role='owner' where business_id=a and user_id=owner_a;
+
+  result := public.fudo_commit_sync_page(a,generation_a,owner_a,run_a,
+    'products',2,0,'00000000-0000-4000-8000-000000008398',cycle_start,second_row);
+  perform pg_temp.fudo_assert(result->>'code'='cycle_changed','resumed page must preserve cycle UUID');
+
+  result := public.fudo_commit_sync_page(a,generation_a,owner_a,run_a,
+    'products',2,0,cycle,cycle_start,
+    jsonb_build_array(jsonb_build_object('external_id','bad','payload',jsonb_build_object('id','bad'),
+      'content_hash','bad-hash')));
+  perform pg_temp.fudo_assert(result->>'code'='invalid_input','malformed record rejected before writing');
+
+  result := public.fudo_commit_sync_page(a,generation_a,owner_a,run_a,
+    'products',2,0,cycle,cycle_start,second_row);
+  perform pg_temp.fudo_assert(result->>'code'='saved','page two completes the import');
+  perform pg_temp.fudo_assert(
+    (select next_page=0 and last_complete_at is not null from public.fudo_sync_progress
+      where business_id=a and connection_generation=generation_a and resource_type='products')
+    and (select content_hash=repeat('b',64) from public.fudo_external_records
+      where business_id=a and connection_generation=generation_a and external_id='page-fixture-a')
+    and (select count(*)=1 from public.fudo_external_records
+      where business_id=a and connection_generation=generation_a and resource_type='products'),
+    'idempotent provider ID is updated and completed without duplication');
+
+  update public.fudo_sync_runs set status='completed',finished_at=now() where id=run_a;
+  result := public.fudo_commit_sync_page(a,generation_a,owner_a,run_a,
+    'ingredients',1,0,cycle,cycle_start,'[]'::jsonb);
+  perform pg_temp.fudo_assert(result->>'code'='run_changed','closed run cannot append snapshots');
+
+  perform pg_temp.fudo_assert(
+    (select count(*)=0 from public.fudo_external_records where business_id=b
+      and external_id='page-fixture-a'),
+    'no cross-tenant staging');
+end $;
+
 rollback;
