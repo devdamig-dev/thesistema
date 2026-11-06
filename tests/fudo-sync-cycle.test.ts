@@ -286,3 +286,45 @@ test("Fudo O1 rejects malformed pagination before changing staging or cursor", a
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = prevKey;
   }
 });
+
+test("Fudo O1 rejects a cross-resource JSON:API record before staging or cursor advance", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  const beforeProducts = JSON.stringify(records.filter((row) => row.resource_type === "products"));
+  const beforeCursor = JSON.stringify(progress.filter((row) => row.resource_type === "products"));
+  const methods: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST", "POST is reserved for bearer authentication");
+      return new Response(JSON.stringify({
+        token: "synthetic-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    methods.push(String(init?.method));
+    if (new URL(String(input)).pathname.endsWith("/products")) {
+      // Structurally valid ID but from /sales: this is not a product.
+      return new Response(JSON.stringify({
+        data: [{ id: "must-not-stage", type: "Sale", attributes: { name: "private-fixture" } }],
+        links: { next: null },
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+  };
+  try {
+    const outcome = await syncFudoReadOnly();
+    assert.equal(outcome.ok, false);
+    if (!outcome.ok) assert.equal(outcome.code, "invalid_response");
+    assert.equal(runs.at(-1)?.status, "failed");
+    assert.equal(JSON.stringify(records.filter((row) => row.resource_type === "products")),
+      beforeProducts, "never persist a cross-resource record");
+    assert.equal(JSON.stringify(progress.filter((row) => row.resource_type === "products")),
+      beforeCursor, "never advance the mismatched resource cursor");
+    assert.ok(methods.length > 0 && methods.every((method) => method === "GET"));
+    assert.doesNotMatch(JSON.stringify(outcome), /must-not-stage|synthetic-bearer|private-fixture/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = originalKey;
+  }
+});

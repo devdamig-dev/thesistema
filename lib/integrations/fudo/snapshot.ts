@@ -4,6 +4,15 @@ export const FUDO_SYNC_RESOURCES = ["products", "ingredients", "providers", "ord
 export type FudoSyncResource = typeof FUDO_SYNC_RESOURCES[number];
 export const FUDO_SYNC_PAGE_SIZE = 100;
 
+// JSON:API resource types may be singular (as in Fudo examples) or plural,
+// depending on the provider schema version. Only compare recognized resource
+// identities and retain missing-type compatibility until real pilot QA.
+const FUDO_JSON_API_TYPES: Record<FudoSyncResource, readonly string[]> = {
+  products: ["product", "products"], ingredients: ["ingredient", "ingredients"],
+  providers: ["provider", "providers"], orders: ["order", "orders"],
+  sales: ["sale", "sales"],
+};
+
 export type FudoSnapshot = {
   externalId: string;
   payload: Record<string, unknown>;
@@ -11,7 +20,8 @@ export type FudoSnapshot = {
   sourceUpdatedAt: string | null;
 };
 
-export function parseFudoPage(value: unknown): FudoSnapshot[] {
+export function parseFudoPage(value: unknown, expectedResource?: string): FudoSnapshot[] {
+  const expectedTypes = expectedResource ? (FUDO_JSON_API_TYPES as Record<string, readonly string[]>)[expectedResource] : undefined;
   const raw = Array.isArray(value)
     ? value
     : value && typeof value === "object" && !Array.isArray(value)
@@ -23,6 +33,12 @@ export function parseFudoPage(value: unknown): FudoSnapshot[] {
   return raw.map((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("invalid_fudo_record");
     const body = item as Record<string, unknown>;
+    // A 200 from /products containing a Sale object is not a valid products
+    // import. Do not upsert a wrong provider type or mark its cursor complete.
+    if (expectedTypes && Object.prototype.hasOwnProperty.call(body, "type")
+      && (typeof body.type !== "string" || !expectedTypes.includes(body.type.toLowerCase()))) {
+      throw new Error("invalid_fudo_record");
+    }
     // JavaScript JSON parsing rounds integers beyond MAX_SAFE_INTEGER. Never
     // persist a rounded external_id: two distinct Fudo records could otherwise
     // collide in the tenant's upsert key. Providers must send large IDs as strings.

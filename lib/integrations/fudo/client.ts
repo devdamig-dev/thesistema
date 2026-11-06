@@ -445,7 +445,7 @@ export class FudoClient {
       try {
         const response = await this.list(resource, { "page[number]": 1, "page[size]": 1 });
         // A 200 alone is not enough: invalid JSON:API shape would break a sync.
-        const snapshots = parseFudoPage(response);
+        const snapshots = parseFudoPage(response, resource);
         // The first page must also have usable pagination metadata; otherwise
         // the importer would fail immediately after a misleading green probe.
         nextFudoPage(response, 1, snapshots.length, resource, 1);
@@ -464,7 +464,7 @@ export class FudoClient {
    */
   async testConnection(): Promise<{ ok: true }> {
     const response = await this.products({ "page[size]": 1, "page[number]": 1 });
-    const snapshots = parseFudoPage(response);
+    const snapshots = parseFudoPage(response, "products");
     nextFudoPage(response, 1, snapshots.length, "products", 1);
     return { ok: true };
   }

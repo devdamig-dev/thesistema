@@ -703,3 +703,23 @@ test("Fudo treats a broken HTTP 200 resource body as retryable, but retains inva
   });
   assert.equal(resourceReads, 2);
 });
+
+
+test("Fudo connect and permission probe reject explicit wrong-resource records", async () => {
+  const verbs: string[] = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return jsonResponse({ token: "synthetic-bearer", exp: 2_000_000_000 });
+    }
+    verbs.push(String(init?.method));
+    return jsonResponse({ data: [{ id: "cross-resource", type: "Sale" }], links: { next: null } });
+  };
+  const client = new FudoClient({ apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    { fetchImpl: fakeFetch, now: () => 1_800_000_000_000 });
+  await assert.rejects(() => client.testConnection(), /invalid_fudo_record/);
+  const checks = await client.probeReadAccess(["products"]);
+  assert.deepEqual(checks, [{ resource: "products", code: "invalid_response" }]);
+  assert.deepEqual(verbs, ["GET", "GET"], "only provider reads; no write or redirect");
+  assert.doesNotMatch(JSON.stringify(checks), /synthetic-|cross-resource/);
+});
