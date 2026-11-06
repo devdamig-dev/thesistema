@@ -119,6 +119,8 @@ test("Fudo JSON:API type metadata must match the requested O1 resource", () => {
   ] as const;
   for (const [resource, type] of expected) {
     assert.equal(parseFudoPage({ data: [{ id: "1", type }] }, resource).length, 1);
+    assert.equal(parseFudoPage({ data: [{ id: "1", type: resource }] }, resource).length, 1,
+      "JSON:API plural resource name is also supported");
     assert.throws(() => parseFudoPage({ data: [{ id: "1", type: "OtherResource" }] }, resource),
       /invalid_fudo_record/, resource);
     assert.throws(() => parseFudoPage({ data: [{ id: "1", type: null }] }, resource),
