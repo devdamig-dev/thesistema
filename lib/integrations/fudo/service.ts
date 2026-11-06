@@ -518,6 +518,9 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
         ? cursor.data.cycle_id : page === 1 ? randomUUID() : null;
       const cycleStartedAt = typeof cursor.data?.cycle_started_at === "string"
         ? cursor.data.cycle_started_at : page === 1 ? new Date().toISOString() : null;
+      // A previous parallel worker may have detected revocation already.
+      // Do not initiate fresh provider reads using a removed actor's connection.
+      if (!(await isStillAuthorized(syncActor))) throw new Error("fudo_actor_revoked");
       const response = await client.list(resource, {
         "page[number]": page, "page[size]": FUDO_SYNC_PAGE_SIZE,
       });
