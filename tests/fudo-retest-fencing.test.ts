@@ -5,6 +5,9 @@ import { encryptFudoCredentials } from "../lib/integrations/fudo/crypto";
 
 const BUSINESS = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const USER = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const OTHER_BUSINESS = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+let activeBusiness = BUSINESS;
+let isMember = true;
 const ORIGINAL_GENERATION = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const ROTATED_GENERATION = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const KEY = Buffer.alloc(32, 17).toString("base64");
@@ -41,7 +44,8 @@ const db = {
         return this;
       },
       async maybeSingle() {
-        if (table === "business_members") return { error: null, data: { id: "active-member" } };
+        if (table === "business_members") return { error: null, data:
+          isMember && filters.business_id === activeBusiness ? { id: "active-member" } : null };
         if (table === "profiles") return { error: null, data: { active: true } };
         if (table !== "fudo_connections") throw Error("Unexpected table");
         const matching = Object.entries(filters).every(([field, value]) =>
@@ -63,7 +67,7 @@ const originalLoad = loader._load;
 loader._load = function(name: string, ...args: any[]) {
   if (name === "@/lib/data/auth") return {
     getCurrentUserContext: async () => ({
-      isAuthenticated: true, userId: USER, businessId: BUSINESS, role: "owner",
+      isAuthenticated: true, userId: USER, businessId: activeBusiness, role: "owner",
     }),
   };
   if (name === "@/lib/supabase/admin") return { createSupabaseAdminClient: () => db };
@@ -200,5 +204,57 @@ test("Fudo concurrent same-generation retests reject a stale failure after a new
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
+
+test("Fudo retest never writes health or reports success after membership revocation or tenant switch", async () => {
+  const oldKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const oldFetch = globalThis.fetch;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  try {
+    for (const transition of ["revoked", "switched"] as const) {
+      for (const providerStatus of [200, 403]) {
+        isMember = true;
+        activeBusiness = BUSINESS;
+        writes = 0;
+        connection = {
+          business_id: BUSINESS, connection_generation: ORIGINAL_GENERATION,
+          credentials_ciphertext: originalCiphertext, status: "connected",
+          last_error_code: null, last_tested_at: null,
+        };
+        const methods: string[] = [];
+        globalThis.fetch = async (input, init) => {
+          if (String(input) === "https://auth.fu.do/api") {
+            assert.equal(init?.method, "POST", "authentication only");
+            return new Response(JSON.stringify({
+              token: "synthetic-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+            }), { status: 200 });
+          }
+          methods.push(String(init?.method));
+          if (transition === "revoked") isMember = false;
+          else activeBusiness = OTHER_BUSINESS;
+          return providerStatus === 200
+            ? new Response(JSON.stringify({ data: [] }), { status: 200 })
+            : new Response(JSON.stringify({ detail: "PRIVATE_PROVIDER_RESPONSE" }), { status: 403 });
+        };
+        const result = await testStoredFudoConnection();
+        assert.equal(result.ok, false, transition + providerStatus);
+        if (!result.ok) {
+          assert.equal(result.code, "forbidden", transition + providerStatus);
+          assert.doesNotMatch(result.message, /synthetic-bearer|PRIVATE_PROVIDER_RESPONSE|fixture-fudo/i);
+        }
+        assert.deepEqual(methods, ["GET"]);
+        assert.equal(writes, 0, "revoked actor cannot update connection metadata");
+        assert.equal(connection.status, "connected");
+        assert.equal(connection.last_error_code, null);
+        assert.equal(connection.last_tested_at, null);
+      }
+    }
+  } finally {
+    isMember = true;
+    activeBusiness = BUSINESS;
+    globalThis.fetch = oldFetch;
+    if (oldKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = oldKey;
   }
 });
