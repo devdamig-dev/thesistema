@@ -172,6 +172,8 @@ test("Fudo O1 refuses staging and cursor writes if owner is revoked or switches 
       assert.deepEqual(conn, beforeConnection, "revoked actor cannot update connection health");
       assert.ok(providerMethods.length > 0 && providerMethods.every((verb) => verb === "GET"),
         "only safe read calls reach Fudo");
+      assert.ok(providerMethods.length <= 3,
+        "the aborted run must not start fresh GETs after the initial concurrent batch");
     }
   } finally {
     membershipActive = true;
