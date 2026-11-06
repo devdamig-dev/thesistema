@@ -14,6 +14,7 @@ const ciphertext = encryptFudoCredentials(A, {
 type Row = Record<string, any>;
 const progress: Row[] = [];
 const records: Row[] = [];
+let membershipActive = true;
 const runs: Row[] = [];
 const conn: Row = {
   business_id: A, connection_generation: GENERATION, credentials_ciphertext: ciphertext,
@@ -65,7 +66,7 @@ function from(table: string) {
     },
     async maybeSingle() {
       if (table === "profiles") return { data: { active: true }, error: null };
-      if (table === "business_members") return { data: { id: "active-member" }, error: null };
+      if (table === "business_members") return { data: membershipActive ? { id: "active-member" } : null, error: null };
       return { data: matching()[0] ?? null, error: null };
     },
     then(resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) {
@@ -122,6 +123,50 @@ loader._load = function(name: string, ...args: any[]) {
 const { syncFudoReadOnly, getFudoConnectionView } =
   require("../lib/integrations/fudo/service") as typeof import("../lib/integrations/fudo/service");
 loader._load = previousLoad;
+
+test("Fudo O1 refuses staging and cursor changes when owner membership is revoked during provider GET", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  membershipActive = true;
+  const beforeRecords = JSON.stringify(records);
+  const beforeProgress = JSON.stringify(progress);
+  const providerMethods: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return new Response(JSON.stringify({
+        token: "fixture-token", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    providerMethods.push(String(init?.method));
+    membershipActive = false; // Revoked while a real GET was in flight.
+    return new Response(JSON.stringify({
+      data: [{ id: "must-not-stage", type: new URL(String(input)).pathname.split("/").at(-1),
+        attributes: { name: "private-fixture" } }],
+      links: { next: null },
+    }), { status: 200 });
+  };
+  try {
+    const outcome = await syncFudoReadOnly();
+    assert.equal(outcome.ok, false, "a revoked owner must not complete the sync");
+    if (!outcome.ok) {
+      assert.equal(outcome.code, "forbidden");
+      assert.doesNotMatch(outcome.message, /fixture-token|private-fixture|must-not-stage/);
+    }
+    assert.equal(JSON.stringify(records), beforeRecords, "no provider snapshot persisted after revocation");
+    assert.equal(JSON.stringify(progress), beforeProgress, "no resource cursor advanced after revocation");
+    assert.equal(runs.at(-1)?.status, "failed", "audit run is closed for recovery");
+    assert.equal(conn.last_sync_status, null, "revoked actor cannot update connection health");
+    assert.ok(providerMethods.length > 0 && providerMethods.every((verb) => verb === "GET"),
+      "only safe read calls reach Fudo");
+  } finally {
+    membershipActive = true;
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
 
 test("Fudo O1 pagination keeps one cycle UUID then flags a provider ID absent on a full rescan", async () => {
   const prevFetch = globalThis.fetch;
