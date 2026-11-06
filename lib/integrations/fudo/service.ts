@@ -84,6 +84,14 @@ async function authorize(): Promise<{ actor: Actor; db: any } | null> {
   return { actor: { businessId: ctx.businessId, userId: ctx.userId }, db };
 }
 
+/** Provider requests can outlive a role revocation or an active tenant switch. */
+async function isStillAuthorized(actor: Actor): Promise<boolean> {
+  const current = await authorize();
+  return !!current
+    && current.actor.userId === actor.userId
+    && current.actor.businessId === actor.businessId;
+}
+
 export async function getFudoConnectionView(): Promise<FudoConnectionView | null> {
   const authorized = await authorize();
   if (!authorized) return null;
@@ -278,10 +286,7 @@ export async function connectFudo(input: FudoCredentials): Promise<FudoActionRes
     // Recheck the current authenticated actor AND their live DB membership
     // before the service-role RPC persists encrypted credentials. The initial
     // authorization alone would permit a revoked actor to finish this write.
-    const currentAuthorization = await authorize();
-    if (!currentAuthorization
-      || currentAuthorization.actor.businessId !== authorized.actor.businessId
-      || currentAuthorization.actor.userId !== authorized.actor.userId) {
+    if (!(await isStillAuthorized(authorized.actor))) {
       return fail("forbidden", "Tu acceso al negocio cambió durante la prueba. Volvé a ingresar y reintentá.");
     }
     // One transaction coordinates rotation with sync startup. Never check and write separately.
@@ -331,12 +336,22 @@ export async function testStoredFudoConnection(): Promise<FudoActionResult> {
     };
     try {
       await new FudoClient(credentials).testConnection();
+      // A revoked owner or tenant switch must not record a stale successful
+      // test via the service-role client, even with unchanged credentials.
+      if (!(await isStillAuthorized(actor))) {
+        return fail("forbidden", "Tu acceso al negocio cambió durante la prueba. Volvé a ingresar.");
+      }
       const updated = await recordTest("connected", null);
       if (updated.error) return fail("storage_unavailable", UNKNOWN);
       if (!updated.data) return fail("connection_changed", "La conexión Fudo cambió durante la prueba. Volvé a probar las credenciales actuales.");
       return { ok: true, message: "La consulta de lectura a productos Fudo respondió correctamente." };
     } catch (error) {
       const failure = safeFailure(error);
+      // Likewise, a late provider 401/403 cannot downgrade connection health
+      // after the actor has lost membership or changed active business.
+      if (!(await isStillAuthorized(actor))) {
+        return fail("forbidden", "Tu acceso al negocio cambió durante la prueba. Volvé a ingresar.");
+      }
       const updated = await recordTest("error", failure.ok ? null : failure.code);
       if (updated.error) return fail("storage_unavailable", UNKNOWN);
       if (!updated.data) return fail("connection_changed", "La conexión Fudo cambió durante la prueba. Volvé a probar las credenciales actuales.");
@@ -372,6 +387,11 @@ export async function inspectFudoReadPermissions(): Promise<FudoResourcePrefligh
     const testedAtStart: unknown = stored.data.last_tested_at;
     const credentials = decryptFudoCredentials(actor.businessId, stored.data.credentials_ciphertext);
     const checks = await new FudoClient(credentials).probeReadAccess(FUDO_SYNC_RESOURCES);
+    // Read-only permission results must not survive role revocation or a
+    // business switch that happened during the five provider GETs.
+    if (!(await isStillAuthorized(actor))) {
+      return { ok: false, message: "Tu acceso al negocio cambió durante la revisión. Volvé a ingresar.", checks: [] };
+    }
     // A second owner can rotate or disconnect while the five external probes
     // are running. Never report old credentials as currently authorized.
     // This status-only reread does not expose ciphertext to the browser.
