@@ -173,7 +173,13 @@ async function readBoundedJson(response: Response, maxBytes: number): Promise<un
   let finished = false;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      // A stream may fail after HTTP 200 (timeout, aborted connection, socket reset).
+      // Treat an interrupted transport differently from malformed provider JSON,
+      // and never propagate the stream's potentially sensitive error message.
+      let readResult: ReadableStreamReadResult<Uint8Array>;
+      try { readResult = await reader.read(); }
+      catch { throw new Error("fudo_response_transport_failed"); }
+      const { done, value } = readResult;
       if (done) { finished = true; break; }
       total += value.byteLength;
       if (total > maxBytes) throw new Error("fudo_response_too_large");
@@ -262,12 +268,15 @@ export class FudoClient {
     let payload: AuthPayload;
     try {
       payload = (await readBoundedJson(response, MAX_AUTH_JSON_BYTES)) as AuthPayload;
-    } catch {
+    } catch (error) {
+      const interrupted = error instanceof Error && error.message === "fudo_response_transport_failed";
       throw new FudoApiError(
-        "invalid_response",
-        "Fudo devolvió una respuesta de autenticación inválida.",
+        interrupted ? "provider_unavailable" : "invalid_response",
+        interrupted
+          ? "Se interrumpió la respuesta de autenticación de Fudo. Reintentá."
+          : "Fudo devolvió una respuesta de autenticación inválida.",
         response.status,
-        false,
+        interrupted,
       );
     }
 
@@ -387,12 +396,15 @@ export class FudoClient {
 
     try {
       return await readBoundedJson(response, MAX_READ_JSON_BYTES);
-    } catch {
+    } catch (error) {
+      const interrupted = error instanceof Error && error.message === "fudo_response_transport_failed";
       throw new FudoApiError(
-        "invalid_response",
-        "Fudo devolvió una respuesta inválida.",
+        interrupted ? "provider_unavailable" : "invalid_response",
+        interrupted
+          ? "Se interrumpió la lectura de Fudo. Reintentá."
+          : "Fudo devolvió una respuesta inválida.",
         response.status,
-        false,
+        interrupted,
       );
     }
   }
