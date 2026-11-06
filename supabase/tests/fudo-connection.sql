@@ -47,7 +47,7 @@ select pg_temp.fudo_assert(
 
 set local role service_role;
 
-do $fudo$
+do $$
 declare
   a uuid := '00000000-0000-4000-8000-000000008010';
   b uuid := '00000000-0000-4000-8000-000000008020';
@@ -150,7 +150,7 @@ begin
 
   perform pg_temp.fudo_assert(public.fudo_disconnect_connection(b,owner_b)='disconnected',
     'other tenant remains independently manageable');
-end $fudo$;
+end $$;
 
 -- A full second cycle retains historical IDs; only the stable cycle UUID
 -- identifies records seen again. This does not depend on server clocks.
@@ -202,7 +202,7 @@ select pg_temp.fudo_assert(
     'public.fudo_commit_sync_page(uuid,uuid,uuid,uuid,text,integer,integer,uuid,timestamptz,jsonb)','execute'),
   'browser roles cannot call page commit');
 
-do $
+do $fudo$
 declare
   a uuid := '00000000-0000-4000-8000-000000008010';
   b uuid := '00000000-0000-4000-8000-000000008020';
