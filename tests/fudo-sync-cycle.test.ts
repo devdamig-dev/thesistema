@@ -330,6 +330,48 @@ test("Fudo O1 rejects a cross-resource JSON:API record before staging or cursor 
 });
 
 
+test("Fudo O1 rejects an oversized multibyte record before staging or cursor changes", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  const beforeProducts = JSON.stringify(records.filter((row) => row.resource_type === "products"));
+  const beforeCursor = JSON.stringify(progress.filter((row) => row.resource_type === "products"));
+  const methods: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return new Response(JSON.stringify({
+        token: "synthetic-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    methods.push(String(init?.method));
+    if (new URL(String(input)).pathname.endsWith("/products")) {
+      return new Response(JSON.stringify({
+        data: [{ id: "multibyte-reject", type: "Product",
+          attributes: { description: "ñ".repeat(70_000) } }],
+        links: { next: null },
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+  };
+  try {
+    const outcome = await syncFudoReadOnly();
+    assert.equal(outcome.ok, false);
+    if (!outcome.ok) assert.equal(outcome.code, "invalid_response");
+    assert.equal(runs.at(-1)?.status, "failed");
+    assert.equal(JSON.stringify(records.filter((row) => row.resource_type === "products")),
+      beforeProducts, "an oversized provider record must never enter staging");
+    assert.equal(JSON.stringify(progress.filter((row) => row.resource_type === "products")),
+      beforeCursor, "no cursor advance after rejecting an oversized page");
+    assert.ok(methods.length > 0 && methods.every((method) => method === "GET"));
+    assert.doesNotMatch(JSON.stringify(outcome), /multibyte-reject|synthetic-bearer|ññ/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = originalKey;
+  }
+});
+
 test("Fudo O1 does not persist a mixed JSON:API data/errors page or advance its cursor", async () => {
   const originalFetch = globalThis.fetch;
   const originalKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
