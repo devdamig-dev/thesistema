@@ -110,3 +110,21 @@ test("Fudo rejects malformed or inconsistent pagination metadata", () => {
   assert.throws(() => nextFudoPage({ links: { next: "/products?page=100001" } }, 100000, 2), /invalid_fudo_page/);
   assert.throws(() => nextFudoPage({ data: [] }, 0, 0), /invalid_fudo_page/);
 });
+
+
+test("Fudo JSON:API type metadata must match the requested O1 resource", () => {
+  const expected = [
+    ["products", "Product"], ["ingredients", "Ingredient"],
+    ["providers", "Provider"], ["orders", "Order"], ["sales", "Sale"],
+  ] as const;
+  for (const [resource, type] of expected) {
+    assert.equal(parseFudoPage({ data: [{ id: "1", type }] }, resource).length, 1);
+    assert.throws(() => parseFudoPage({ data: [{ id: "1", type: "OtherResource" }] }, resource),
+      /invalid_fudo_record/, resource);
+    assert.throws(() => parseFudoPage({ data: [{ id: "1", type: null }] }, resource),
+      /invalid_fudo_record/, resource);
+  }
+  // Preserve compatibility with historical test fixtures lacking type: the
+  // new guard only rejects explicitly contradictory metadata.
+  assert.equal(parseFudoPage({ data: [{ id: "1" }] }, "products").length, 1);
+});
