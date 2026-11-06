@@ -478,7 +478,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       const response = await client.list(resource, {
         "page[number]": page, "page[size]": FUDO_SYNC_PAGE_SIZE,
       });
-      const snapshots = parseFudoPage(response);
+      const snapshots = parseFudoPage(response, resource);
       // A malformed next-link invalidates the entire page. Validate provider
       // pagination BEFORE any staging upsert so the failed page cannot leave
       // new records or cycle presence markers without a matching cursor.
