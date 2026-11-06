@@ -25,6 +25,10 @@ test("pilot readiness never says a product-only connection or a completed cursor
 
   result.lastSyncStatus = "completed";
   result.nextPages = Object.fromEntries(FUDO_SYNC_RESOURCES.map((resource) => [resource, 0]));
+  // Every completed cursor must correspond to a cycle with an actual UUID.
+  // The server returns a number (including zero for an empty resource) only
+  // if it could query the current cycle; legacy cursors return null.
+  result.seenThisCycleCounts = Object.fromEntries(FUDO_SYNC_RESOURCES.map((resource) => [resource, 0]));
   result.recentRuns = [{
     startedAt: "2026-11-04T12:00:00Z", finishedAt: "2026-11-04T12:00:01Z",
     status: "completed", counts: {}, errorCode: null,
@@ -32,6 +36,29 @@ test("pilot readiness never says a product-only connection or a completed cursor
   steps = evaluateFudoPilotReadiness(result, allAvailable);
   assert.deepEqual(steps.map((step) => step.state), ["done", "done", "done", "pending"],
     "synthetic checks and imported cursors cannot prove production E2E or multiempresa");
+});
+
+test("pilot never marks a legacy cursor with unknown cycle provenance as a complete import", () => {
+  const result = view();
+  result.status = "connected";
+  result.lastSyncStatus = "completed";
+  result.recentRuns = [{
+    startedAt: "2026-11-06T03:00:00Z", finishedAt: "2026-11-06T03:01:00Z",
+    status: "completed", counts: {}, errorCode: null,
+  }];
+  result.nextPages = Object.fromEntries(FUDO_SYNC_RESOURCES.map((resource) => [resource, 0]));
+  result.seenThisCycleCounts = Object.fromEntries(FUDO_SYNC_RESOURCES.map((resource) => [resource, 0]));
+
+  // SQL exposes null when a prior schema's cursor lacks cycle_id, not when
+  // the resource is merely empty. A completed run cannot repair that.
+  result.seenThisCycleCounts.orders = null;
+  assert.equal(evaluateFudoPilotReadiness(result, allAvailable)[2].state, "pending",
+    "unknown cycle identity cannot be called a completed import");
+  result.seenThisCycleCounts.orders = Number.NaN;
+  assert.equal(evaluateFudoPilotReadiness(result, allAvailable)[2].state, "pending");
+  result.seenThisCycleCounts.orders = 0;
+  assert.equal(evaluateFudoPilotReadiness(result, allAvailable)[2].state, "done",
+    "an empty but traceable resource is a valid completed scan");
 });
 
 test("pilot readiness is fail-closed for incomplete data, failed sync and partial permissions", () => {

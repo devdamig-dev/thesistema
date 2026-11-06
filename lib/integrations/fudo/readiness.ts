@@ -38,9 +38,17 @@ export function evaluateFudoPilotReadiness(
   const permissionsOk = currentPreflight?.ok === true
     && FUDO_SYNC_RESOURCES.every((resource) =>
       currentPreflight.checks.some((check) => check.resource === resource && check.code === "available"));
+  // A legacy or interrupted cursor can say "0" without a stable scan UUID.
+  // The server exposes a null seen-count for such a cursor: it is NOT a
+  // reconciliable full cycle even when the newest run says "completed".
+  // Empty resources legitimately have a seen-count of zero.
   const cycleComplete = connectionOk && view.lastSyncStatus === "completed"
     && view.recentRuns[0]?.status === "completed"
-    && FUDO_SYNC_RESOURCES.every((resource) => view.nextPages[resource] === 0);
+    && FUDO_SYNC_RESOURCES.every((resource) => {
+      const seen = view.seenThisCycleCounts[resource];
+      return view.nextPages[resource] === 0
+        && typeof seen === "number" && Number.isSafeInteger(seen) && seen >= 0;
+    });
 
   return [
     {
@@ -66,7 +74,7 @@ export function evaluateFudoPilotReadiness(
       title: "Primera lectura completa",
       description: cycleComplete
         ? "Los cinco cursores terminaron y la última ejecución cerró correctamente; falta conciliar los datos."
-        : "Sincronizá y reanudá las páginas pendientes hasta completar los cinco recursos sin errores.",
+        : "Sincronizá los cinco recursos hasta completar los cursores y verificar su ciclo de origen.",
       state: cycleComplete ? "done" : view.lastSyncStatus === "failed" ? "blocked" : "pending",
     },
     {
