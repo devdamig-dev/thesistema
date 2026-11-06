@@ -543,7 +543,7 @@ test("Fudo rejects an oversized authentication JSON response before any provider
   assert.equal(readCalls, 0);
 });
 
-test("Fudo aborts a streamed GET larger than its safe JSON bound even with a false short content-length", async () => {
+test("Fudo aborts a streamed 100-record GET larger than its safe JSON bound even with a false short content-length", async () => {
   const chunk = new Uint8Array(1024 * 1024).fill(65);
   let readCalls = 0;
   let emitted = 0;
@@ -566,7 +566,7 @@ test("Fudo aborts a streamed GET larger than its safe JSON bound even with a fal
     { apiKey: "private-test-key", apiSecret: "private-test-secret" },
     { fetchImpl: fakeFetch, now: () => 1_800_000_000_000 },
   );
-  await assert.rejects(() => client.testConnection(), (error: unknown) => {
+  await assert.rejects(() => client.products({ "page[size]": 100 }), (error: unknown) => {
     assert.ok(error instanceof FudoApiError);
     assert.equal(error.code, "invalid_response");
     assert.doesNotMatch(error.message, /private-test|synthetic-only|AAAAAA/i);
@@ -574,6 +574,57 @@ test("Fudo aborts a streamed GET larger than its safe JSON bound even with a fal
   });
   assert.equal(readCalls, 1, "never follow additional resource pages after an oversized body");
   assert.equal(emitted, 17, "stop immediately when the 16 MiB cap is exceeded");
+});
+
+
+test("Fudo one-record connection and permission probes reject oversized responses before buffering import-sized payloads", async () => {
+  const now = 1_800_000_000_000;
+  let apiReads = 0;
+  let headerCanceled = false;
+  let streamCanceled = false;
+  let chunksEmitted = 0;
+  const chunk = new Uint8Array(512 * 1024).fill(65);
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return jsonResponse({ token: "synthetic-probe-bearer", exp: 2_000_000_000 });
+    }
+    apiReads++;
+    assert.equal(init?.method, "GET");
+    assert.equal(new URL(String(input)).searchParams.get("page[size]"), "1");
+    if (apiReads === 1) {
+      // Rejected without reading an oversized advertised body.
+      return new Response(new ReadableStream<Uint8Array>({
+        cancel() { headerCanceled = true; },
+      }), { headers: { "content-length": String(1024 * 1024 + 1) } });
+    }
+    // A lying Content-Length must not bypass the streaming budget either.
+    return new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(chunk);
+        chunksEmitted++;
+        if (chunksEmitted === 5) controller.close();
+      },
+      cancel() { streamCanceled = true; },
+    }), { headers: { "content-length": "1" } });
+  };
+  const client = new FudoClient(
+    { apiKey: "synthetic-probe-key", apiSecret: "synthetic-probe-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+  await assert.rejects(() => client.testConnection(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "invalid_response");
+    assert.doesNotMatch(error.message, /synthetic-|probe-bearer|AAAAA/i);
+    return true;
+  });
+  assert.equal(headerCanceled, true, "oversized probe must cancel the header-rejected body");
+  const checks = await client.probeReadAccess(["products"]);
+  assert.deepEqual(checks, [{ resource: "products", code: "invalid_response" }]);
+  assert.equal(streamCanceled, true, "oversized stream must be canceled");
+  assert.ok(chunksEmitted < 5, "one-item probes must stop far below the 16 MiB import budget");
+  assert.equal(apiReads, 2);
+  assert.doesNotMatch(JSON.stringify(checks), /synthetic-|probe-bearer/i);
 });
 
 
