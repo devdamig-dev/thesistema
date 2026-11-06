@@ -63,6 +63,12 @@ function safeFailure(error: unknown): FudoActionResult {
   if (error instanceof Error && error.message === "fudo_actor_revoked") {
     return fail("forbidden", "Tu acceso al negocio cambió durante la sincronización. Volvé a ingresar.");
   }
+  if (error instanceof Error && error.message === "fudo_connection_changed") {
+    return fail("connection_changed", "La conexión Fudo cambió. Actualizá la pantalla y reintentá.");
+  }
+  if (error instanceof Error && error.message === "fudo_sync_page_rejected") {
+    return fail("sync_conflict", "La sincronización cambió durante la lectura. Actualizá y reintentá.");
+  }
   if (error instanceof Error && error.message === "fudo_ciphertext_invalid") {
     return fail("invalid_stored_credentials", "No se pudo leer la conexión cifrada. Volvé a vincular Fudo.");
   }
@@ -535,25 +541,31 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       // to eliminate the remaining check/write race entirely.
       if (!(await isStillAuthorized(syncActor))) throw new Error("fudo_actor_revoked");
       const partial = nextPage !== 0;
-      const seenAt = new Date().toISOString();
-      if (snapshots.length) {
-        const rows = snapshots.map((entry) => ({
-          business_id: syncBusinessId, connection_generation: generation, provider: "fudo", resource_type: resource,
-          external_id: entry.externalId, payload: entry.payload, content_hash: entry.contentHash,
-          last_seen_cycle_id: cycleId,
-          source_updated_at: entry.sourceUpdatedAt, last_seen_at: seenAt,
-        }));
-        const saved = await db.from("fudo_external_records")
-          .upsert(rows, { onConflict: "business_id,connection_generation,resource_type,external_id" });
-        if (saved.error) throw new Error("fudo_storage_failed");
-      }
+      // One PostgreSQL transaction validates the live actor + generation +
+      // running import + expected page, then persists snapshots AND cursor.
+      // A TypeScript preflight alone leaves a revocation/check-write race.
+      const saved = await db.rpc("fudo_commit_sync_page", {
+        p_business_id: syncBusinessId,
+        p_expected_generation: generation,
+        p_actor_id: syncActor.userId,
+        p_run_id: runId,
+        p_resource_type: resource,
+        p_expected_page: page,
+        p_next_page: nextPage,
+        p_cycle_id: cycleId,
+        p_cycle_started_at: cycleStartedAt,
+        p_rows: snapshots.map((entry) => ({
+          external_id: entry.externalId,
+          payload: entry.payload,
+          content_hash: entry.contentHash,
+          source_updated_at: entry.sourceUpdatedAt,
+        })),
+      });
+      if (saved.error) throw new Error("fudo_storage_failed");
+      if (saved.data?.code === "forbidden") throw new Error("fudo_actor_revoked");
+      if (saved.data?.code === "connection_changed") throw new Error("fudo_connection_changed");
+      if (saved.data?.code !== "saved") throw new Error("fudo_sync_page_rejected");
       counts[resource] = snapshots.length;
-      const progress = await db.from("fudo_sync_progress").upsert({
-        business_id: syncBusinessId, connection_generation: generation, resource_type: resource,
-        next_page: nextPage, cycle_id: cycleId, cycle_started_at: cycleStartedAt,
-        last_complete_at: partial ? null : seenAt, updated_at: seenAt,
-      }, { onConflict: "business_id,connection_generation,resource_type" });
-      if (progress.error) throw new Error("fudo_storage_failed");
       return partial;
     });
     if (!(await isStillAuthorized(syncActor))) throw new Error("fudo_actor_revoked");
