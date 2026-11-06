@@ -289,6 +289,6 @@ begin
     (select count(*)=0 from public.fudo_external_records where business_id=b
       and external_id='page-fixture-a'),
     'no cross-tenant staging');
-end $;
+end $fudo$;
 
 rollback;
