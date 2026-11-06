@@ -231,3 +231,45 @@ test("Fudo preflight discards permissions when a same-generation retest changes 
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = oldKey;
   }
 });
+
+test("Fudo preflight never returns stale permissions after membership revocation or business switch", async () => {
+  const oldKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const oldFetch = globalThis.fetch;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = SECRET_KEY;
+  try {
+    for (const transition of ["revoked", "switched"] as const) {
+      tenant = A; role = "owner"; isMember = true; active = true;
+      currentGenerationA = ORIGINAL_GENERATION; connectedA = true;
+      connectionStatusA = "connected"; lastTestedAtA = "2026-11-04T19:00:00Z";
+      const methods: string[] = [];
+      globalThis.fetch = async (input, init) => {
+        if (String(input) === "https://auth.fu.do/api") {
+          assert.equal(init?.method, "POST");
+          return new Response(JSON.stringify({
+            token: "synthetic-private-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+          }), { status: 200 });
+        }
+        methods.push(String(init?.method));
+        if (transition === "revoked") isMember = false;
+        else tenant = B;
+        return new Response(JSON.stringify({
+          data: [{ id: "PRIVATE_ID", attributes: { title: "PRIVATE_PROVIDER_DATA" } }],
+        }), { status: 200 });
+      };
+      const result = await inspectFudoReadPermissions();
+      assert.equal(result.ok, false, transition);
+      assert.deepEqual(result.checks, [], "revoked actor must not see provider permission checks");
+      assert.match(result.message, /acceso al negocio cambió/i);
+      assert.equal(methods.length, 5);
+      assert.ok(methods.every((method) => method === "GET"));
+      assert.doesNotMatch(JSON.stringify(result), /PRIVATE_|synthetic-private-bearer|pilot-secret/i);
+    }
+  } finally {
+    tenant = A; role = "owner"; isMember = true; active = true;
+    currentGenerationA = ORIGINAL_GENERATION; connectedA = true;
+    connectionStatusA = "connected"; lastTestedAtA = "2026-11-04T19:00:00Z";
+    globalThis.fetch = oldFetch;
+    if (oldKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = oldKey;
+  }
+});
