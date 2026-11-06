@@ -107,7 +107,7 @@ La API Pública General de Fudo requiere Plan Pro y credenciales/API habilitadas
 
 ---
 
-- **EN REVISIÓN (06/11/2026):** guardia de identidad JSON:API para O1: si Fudo informa `data[].type`, debe coincidir con el tipo singular del recurso solicitado (Product/Ingredient/Provider/Order/Sale). Sin este control, un HTTP 200 con registros de otro recurso podría acreditar conexión o guardarse en staging bajo el tipo incorrecto. Implementación en rama, pruebas de regresión sintéticas y Quality pendiente; **no considerar publicado ni validado con Fudo real** hasta el merge y despliegue verificados. Sin cambios SQL ni escrituras al proveedor.
+- **EN REVISIÓN (06/11/2026):** guardia de identidad JSON:API para O1: si Fudo informa `data[].type`, debe coincidir con la identidad singular o plural del recurso solicitado (Product/products, Ingredient/ingredients, Provider/providers, Order/orders, Sale/sales; comparación sin distinguir mayúsculas). Sin este control, un HTTP 200 con registros de otro recurso podría acreditar conexión o guardarse en staging bajo el tipo incorrecto. Implementación en rama, pruebas de regresión sintéticas y Quality pendiente; **no considerar publicado ni validado con Fudo real** hasta el merge y despliegue verificados. Sin cambios SQL ni escrituras al proveedor.
 
 ## O2 — Capa de datos operativos unificada
 **Estado: PENDIENTE**
