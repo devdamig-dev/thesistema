@@ -295,6 +295,7 @@ export async function connectFudo(input: FudoCredentials): Promise<FudoActionRes
       p_ciphertext: encrypted,
     });
     if (saved.error) return fail("storage_unavailable", "No se pudo guardar la conexión cifrada. Verificá la migración Fudo.");
+    if (saved.data === "forbidden") return fail("forbidden", "Tu acceso al negocio cambió. Volvé a ingresar.");
     if (saved.data === "sync_running") return fail("sync_running", "Hay una sincronización en curso; esperá antes de rotar credenciales.");
     if (saved.data !== "connected") return fail("storage_unavailable", UNKNOWN);
     return { ok: true, message: "Conexión validada y guardada. Fudo sigue siendo la fuente operativa; GastroPilot solo leerá datos." };
@@ -433,8 +434,11 @@ export async function disconnectFudo(): Promise<FudoActionResult> {
     const { actor, db } = authorized;
     // Runs abandoned by serverless invocations are recovered here, even if credentials
     // can no longer be decrypted (e.g. after a server key rotation).
-    const removed = await db.rpc("fudo_disconnect_connection", { p_business_id: actor.businessId });
+    const removed = await db.rpc("fudo_disconnect_connection", {
+      p_business_id: actor.businessId, p_actor_id: actor.userId,
+    });
     if (removed.error) return fail("storage_unavailable", UNKNOWN);
+    if (removed.data === "forbidden") return fail("forbidden", "Tu acceso al negocio cambió. Volvé a ingresar.");
     if (removed.data === "sync_running") return fail("sync_running", "Hay una sincronización en curso. Reintentá cuando termine.");
     if (removed.data !== "disconnected") return fail("storage_unavailable", UNKNOWN);
     return { ok: true, message: "Se eliminaron las credenciales. Se conserva la importación histórica para auditoría interna; no habrá nuevas consultas a Fudo." };
@@ -472,6 +476,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       p_actor_id: actor.userId,
     });
     if (started.error) return fail("storage_unavailable", UNKNOWN);
+    if (started.data?.code === "forbidden") return fail("forbidden", "Tu acceso al negocio cambió. Volvé a ingresar.");
     if (started.data?.code === "sync_running") return fail("sync_running", "Ya hay una sincronización activa de este negocio.");
     if (started.data?.code === "connection_changed") return fail("connection_changed", "La conexión Fudo cambió; actualizá la pantalla e intentá nuevamente.");
     if (started.data?.code !== "started" || typeof started.data?.run_id !== "string") return fail("storage_unavailable", UNKNOWN);
