@@ -130,3 +130,15 @@ test("Fudo JSON:API type metadata must match the requested O1 resource", () => {
   // new guard only rejects explicitly contradictory metadata.
   assert.equal(parseFudoPage({ data: [{ id: "1" }] }, "products").length, 1);
 });
+
+
+test("Fudo JSON:API rejects a top-level errors member even alongside valid records", () => {
+  const product = { id: "fixture-product", type: "Product", attributes: { name: "private-fixture" } };
+  assert.equal(parseFudoPage({ data: [product] }, "products").length, 1);
+  for (const errors of [[], [{ status: "403", detail: "private-provider-error" }], null]) {
+    assert.throws(() => parseFudoPage({ data: [product], errors }, "products"), /invalid_fudo_page/);
+    assert.throws(() => parseFudoPage({ data: [], errors }, "products"), /invalid_fudo_page/);
+  }
+  assert.throws(() => parseFudoPage({ errors: [{ detail: "private-provider-error" }] }, "products"),
+    /invalid_fudo_page/);
+});
