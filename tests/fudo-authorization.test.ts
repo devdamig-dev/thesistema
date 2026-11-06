@@ -12,11 +12,17 @@ let profileActive = true;
 let memberLookups = 0;
 let storedRow: Record<string, unknown> | null = null;
 let syncRunning = false;
+let forceRpcForbidden = false;
 const rpcCalls: string[] = [];
 
 const db = {
   async rpc(name: string, args: Record<string, unknown>) {
     rpcCalls.push(name);
+    if (name === "fudo_disconnect_connection") {
+      assert.equal(args.p_business_id, tenant, "disconnect tenant derives from server session");
+      assert.equal(args.p_actor_id, USER, "disconnect passes authenticated actor to atomic SQL");
+    }
+    if (forceRpcForbidden) return { data: "forbidden", error: null };
     if (name === "fudo_replace_connection") {
       if (syncRunning) return { data: "sync_running", error: null };
       storedRow = {
@@ -234,5 +240,34 @@ test("Fudo O1 denies a connection if the actor loses membership or switches tena
     globalThis.fetch = beforeFetch;
     if (beforeKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = beforeKey;
+  }
+});
+
+test("Fudo lifecycle surfaces a transaction-time permission denial without exposing credentials", async () => {
+  role = "owner"; tenant = A; validMembership = true; profileActive = true;
+  syncRunning = false; forceRpcForbidden = true;
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32, 27).toString("base64");
+  globalThis.fetch = async (input, init) => String(input) === "https://auth.fu.do/api"
+    ? new Response(JSON.stringify({ token: "synthetic-token", exp: Math.floor(Date.now() / 1000) + 86400 }), { status: 200 })
+    : new Response(JSON.stringify({ data: [] }), { status: 200 });
+  try {
+    const before = storedRow;
+    const connect = await connectFudo(credentials);
+    assert.equal(connect.ok, false);
+    if (!connect.ok) {
+      assert.equal(connect.code, "forbidden");
+      assert.doesNotMatch(connect.message, /pilot-test-api-key|pilot-test-secret|synthetic-token/);
+    }
+    const disconnect = await disconnectFudo();
+    assert.equal(disconnect.ok, false);
+    if (!disconnect.ok) assert.equal(disconnect.code, "forbidden");
+    assert.deepEqual(storedRow, before, "SQL denial cannot change connection");
+  } finally {
+    forceRpcForbidden = false;
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
   }
 });
