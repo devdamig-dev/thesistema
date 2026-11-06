@@ -648,3 +648,58 @@ test("Fudo cancels a rejected 401 read body before refreshing and retrying", asy
   assert.equal(authCalls, 2);
   assert.equal(apiCalls, 2);
 });
+
+test("Fudo treats an interrupted auth JSON stream as a retryable transport failure without leaking upstream errors", async () => {
+  let apiReads = 0;
+  const interrupted = () => new Response(new ReadableStream<Uint8Array>({
+    pull(controller) { controller.error(new Error("synthetic-private-auth-stream")); },
+  }), { status: 200 });
+  const fakeFetch: typeof fetch = async (input) => {
+    if (String(input) === "https://auth.fu.do/api") return interrupted();
+    apiReads++;
+    return jsonResponse({ data: [] });
+  };
+  const client = new FudoClient({ apiKey: "synthetic-key", apiSecret: "synthetic-secret" }, { fetchImpl: fakeFetch });
+  await assert.rejects(client.products(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "provider_unavailable");
+    assert.equal(error.retryable, true);
+    assert.doesNotMatch(error.message, /synthetic-private-auth-stream|synthetic-secret/i);
+    return true;
+  });
+  assert.equal(apiReads, 0, "a failed auth body must never authorize a resource GET");
+});
+
+test("Fudo treats a broken HTTP 200 resource body as retryable, but retains invalid JSON as a contract error", async () => {
+  let resourceReads = 0;
+  const fakeFetch: typeof fetch = async (input) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      return jsonResponse({ token: "synthetic-bearer", exp: 2_000_000_000 });
+    }
+    resourceReads++;
+    if (resourceReads === 1) {
+      return new Response(new ReadableStream<Uint8Array>({
+        pull(controller) { controller.error(new Error("synthetic-private-resource-stream")); },
+      }), { status: 200 });
+    }
+    return new Response("{not-json", { status: 200 });
+  };
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    { fetchImpl: fakeFetch, now: () => 1_800_000_000_000 },
+  );
+  await assert.rejects(client.products(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "provider_unavailable");
+    assert.equal(error.retryable, true);
+    assert.doesNotMatch(error.message, /synthetic-private-resource-stream|synthetic-bearer/i);
+    return true;
+  });
+  await assert.rejects(client.products(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "invalid_response");
+    assert.equal(error.retryable, false);
+    return true;
+  });
+  assert.equal(resourceReads, 2);
+});
