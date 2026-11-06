@@ -60,8 +60,15 @@ export function parseFudoPage(value: unknown, expectedResource?: string): FudoSn
     if (!id || id !== id.trim() || id.length > 256 || seen.has(id)) throw new Error("invalid_fudo_record");
     seen.add(id);
 
-    const attributes = body.attributes && typeof body.attributes === "object" && !Array.isArray(body.attributes)
-      ? body.attributes as Record<string, unknown> : {};
+    // JSON:API allows attributes to be omitted, but an explicitly supplied
+    // attributes member MUST be an object. Silently treating null, arrays or
+    // primitives as empty would mark malformed provider data as imported and
+    // could leave source_updated_at/provenance incomplete.
+    if (Object.prototype.hasOwnProperty.call(body, "attributes")
+      && (!body.attributes || typeof body.attributes !== "object" || Array.isArray(body.attributes))) {
+      throw new Error("invalid_fudo_record");
+    }
+    const attributes = (body.attributes ?? {}) as Record<string, unknown>;
     const rawDate = attributes.updatedAt ?? attributes.updated_at;
     const sourceUpdatedAt = typeof rawDate === "string" && !Number.isNaN(Date.parse(rawDate))
       ? new Date(rawDate).toISOString() : null;

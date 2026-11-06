@@ -413,3 +413,44 @@ test("Fudo O1 does not persist a mixed JSON:API data/errors page or advance its 
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = originalKey;
   }
 });
+
+test("Fudo O1 malformed attributes cannot overwrite staging or advance a resource cursor", async () => {
+  const priorFetch = globalThis.fetch;
+  const priorKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  const beforeRecords = JSON.stringify(records.filter((row) => row.resource_type === "products"));
+  const beforeProgress = JSON.stringify(progress.filter((row) => row.resource_type === "products"));
+  const methods: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return new Response(JSON.stringify({
+        token: "fixture-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    methods.push(String(init?.method));
+    if (new URL(String(input)).pathname.endsWith("/products")) {
+      return new Response(JSON.stringify({
+        data: [{ id: "must-not-stage", type: "Product", attributes: ["private-fixture"] }],
+        links: { next: null },
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+  };
+  try {
+    const result = await syncFudoReadOnly();
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.code, "invalid_response");
+    assert.equal(runs.at(-1)?.status, "failed");
+    assert.equal(JSON.stringify(records.filter((row) => row.resource_type === "products")),
+      beforeRecords, "invalid attributes must never overwrite or remark staging");
+    assert.equal(JSON.stringify(progress.filter((row) => row.resource_type === "products")),
+      beforeProgress, "invalid attributes must never advance the cursor");
+    assert.ok(methods.length > 0 && methods.every((method) => method === "GET"));
+    assert.doesNotMatch(JSON.stringify(result), /must-not-stage|private-fixture|fixture-bearer/);
+  } finally {
+    globalThis.fetch = priorFetch;
+    if (priorKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = priorKey;
+  }
+});

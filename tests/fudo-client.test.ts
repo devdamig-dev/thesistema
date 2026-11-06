@@ -809,3 +809,28 @@ test("Fudo HTTP 200 mixed JSON:API data/errors cannot pass connection or five-re
   assert.ok(methods.every((method) => method === "GET"));
   assert.doesNotMatch(JSON.stringify(checks), /private-|synthetic-|secret-provider-error|bearer/i);
 });
+
+test("Fudo connection and five-resource preflight fail closed on malformed JSON:API attributes", async () => {
+  const methods: string[] = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return jsonResponse({ token: "fixture-bearer", exp: Math.floor(Date.now() / 1000) + 86400 });
+    }
+    methods.push(String(init?.method));
+    const resource = new URL(String(input)).pathname.split("/").at(-1);
+    return jsonResponse({ data: [{
+      id: "fixture-1", type: resource === "products" ? "Product" : undefined,
+      attributes: resource === "products" ? [] : { name: "safe-fixture" },
+    }], links: { next: null } });
+  };
+  const client = new FudoClient(
+    { apiKey: "fixture-key", apiSecret: "fixture-secret" }, { fetchImpl: fakeFetch },
+  );
+  await assert.rejects(() => client.testConnection(), /invalid_fudo_record/);
+  const checks = await client.probeReadAccess(["products", "ingredients", "providers", "orders", "sales"]);
+  assert.equal(checks.find((check) => check.resource === "products")?.code, "invalid_response");
+  assert.ok(checks.filter((check) => check.code === "available").length === 4);
+  assert.ok(methods.length === 6 && methods.every((method) => method === "GET"));
+  assert.doesNotMatch(JSON.stringify(checks), /fixture-key|fixture-secret|fixture-bearer|safe-fixture/);
+});
