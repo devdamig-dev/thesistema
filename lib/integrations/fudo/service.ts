@@ -273,6 +273,17 @@ export async function connectFudo(input: FudoCredentials): Promise<FudoActionRes
     // Fail closed if encryption is not available; never persist plaintext credentials.
     const encrypted = encryptFudoCredentials(authorized.actor.businessId, creds);
     await new FudoClient(creds).testConnection();
+    // A provider probe can take 15 seconds. The owner/admin may be removed
+    // from this business (or switch session/tenant) while that GET is pending.
+    // Recheck the current authenticated actor AND their live DB membership
+    // before the service-role RPC persists encrypted credentials. The initial
+    // authorization alone would permit a revoked actor to finish this write.
+    const currentAuthorization = await authorize();
+    if (!currentAuthorization
+      || currentAuthorization.actor.businessId !== authorized.actor.businessId
+      || currentAuthorization.actor.userId !== authorized.actor.userId) {
+      return fail("forbidden", "Tu acceso al negocio cambió durante la prueba. Volvé a ingresar y reintentá.");
+    }
     // One transaction coordinates rotation with sync startup. Never check and write separately.
     const saved = await authorized.db.rpc("fudo_replace_connection", {
       p_business_id: authorized.actor.businessId, p_actor_id: authorized.actor.userId,
