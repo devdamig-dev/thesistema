@@ -150,12 +150,19 @@ function toQuery(params: FudoListParams): string {
 const MAX_AUTH_JSON_BYTES = 64 * 1024;
 const MAX_READ_JSON_BYTES = 16 * 1024 * 1024;
 
+// Fetch resolves as soon as headers arrive; a discarded error response can
+// still carry an unbounded body. Cancel it before retrying/authenticating or
+// returning a sanitized status, without parsing or logging provider content.
+async function discardResponseBody(response: Response): Promise<void> {
+  try { await response.body?.cancel(); } catch { /* Already closed or aborted. */ }
+}
+
 async function readBoundedJson(response: Response, maxBytes: number): Promise<unknown> {
   const lengthHeader = response.headers.get("content-length");
   if (lengthHeader && /^\d+$/.test(lengthHeader) && Number(lengthHeader) > maxBytes) {
     // Header-based rejection must also release the upstream response. Otherwise
     // a rejected body can keep a serverless fetch/stream alive until timeout.
-    try { await response.body?.cancel(); } catch { /* Already aborted or closed. */ }
+    await discardResponseBody(response);
     throw new Error("fudo_response_too_large");
   }
   if (!response.body) throw new Error("fudo_response_missing_body");
@@ -247,7 +254,10 @@ export class FudoClient {
       );
     }
 
-    if (!response.ok) throw safeError(response.status);
+    if (!response.ok) {
+      await discardResponseBody(response);
+      throw safeError(response.status);
+    }
 
     let payload: AuthPayload;
     try {
@@ -357,6 +367,9 @@ export class FudoClient {
     }
 
     if (response.status === 401 && retry) {
+      // The first 401 may have an arbitrarily large body. Release it before
+      // refreshing credentials or issuing any retry GET.
+      await discardResponseBody(response);
       // Never invalidate a newer token installed by a concurrent read.
       if (this.token === attemptedToken) {
         this.token = null;
@@ -367,7 +380,10 @@ export class FudoClient {
       return this.getJson(path, params, false);
     }
 
-    if (!response.ok) throw safeError(response.status);
+    if (!response.ok) {
+      await discardResponseBody(response);
+      throw safeError(response.status);
+    }
 
     try {
       return await readBoundedJson(response, MAX_READ_JSON_BYTES);
