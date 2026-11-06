@@ -66,7 +66,9 @@ export function parseFudoPage(value: unknown, expectedResource?: string): FudoSn
     const sourceUpdatedAt = typeof rawDate === "string" && !Number.isNaN(Date.parse(rawDate))
       ? new Date(rawDate).toISOString() : null;
     const serialized = JSON.stringify(body);
-    if (serialized.length > 131072) throw new Error("fudo_record_too_large");
+    // JSON.stringify().length counts UTF-16 code units, not UTF-8 bytes.
+    // A multibyte product description must not bypass the 128 KiB staging limit.
+    if (Buffer.byteLength(serialized, "utf8") > 131072) throw new Error("fudo_record_too_large");
     return {
       externalId: id,
       payload: body,
