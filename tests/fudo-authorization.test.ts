@@ -193,3 +193,46 @@ test("Fudo connection does not persist credentials when HTTP 200 body is not imp
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
   }
 });
+
+test("Fudo O1 denies a connection if the actor loses membership or switches tenant during the provider probe", async () => {
+  const beforeFetch = globalThis.fetch;
+  const beforeKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32, 31).toString("base64");
+  try {
+    for (const change of ["membership_revoked", "tenant_switched"] as const) {
+      role = "owner"; tenant = A; validMembership = true; profileActive = true;
+      syncRunning = false; storedRow = null;
+      const writesBefore = rpcCalls.filter((call) => call === "fudo_replace_connection").length;
+      const providerVerbs: string[] = [];
+      globalThis.fetch = async (input, init) => {
+        const url = String(input);
+        if (url === "https://auth.fu.do/api") {
+          assert.equal(init?.method, "POST");
+          return new Response(JSON.stringify({
+            token: "synthetic-token", exp: Math.floor(Date.now() / 1000) + 86400,
+          }), { status: 200 });
+        }
+        providerVerbs.push(String(init?.method));
+        assert.ok(url.startsWith("https://api.fu.do/v1alpha1/products?"));
+        if (change === "membership_revoked") validMembership = false;
+        else tenant = B; // A session may switch to another authorized business.
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      };
+      const result = await connectFudo(credentials);
+      assert.equal(result.ok, false, change);
+      if (!result.ok) {
+        assert.equal(result.code, "forbidden", change);
+        assert.doesNotMatch(result.message, /synthetic-token|pilot-test-api-key|pilot-test-secret/);
+      }
+      assert.deepEqual(providerVerbs, ["GET"], change);
+      assert.equal(storedRow, null, "revoked or switched actors cannot save ciphertext");
+      assert.equal(rpcCalls.filter((call) => call === "fudo_replace_connection").length,
+        writesBefore, "the privileged write RPC must not be called after actor change");
+    }
+  } finally {
+    tenant = A; role = "owner"; validMembership = true; profileActive = true;
+    globalThis.fetch = beforeFetch;
+    if (beforeKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = beforeKey;
+  }
+});
