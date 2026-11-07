@@ -186,6 +186,14 @@ const db = {
     }
     const seenAt = new Date().toISOString();
     const entries = args.p_rows as Row[];
+    // Mirror the PostgreSQL same-cycle collision fence: a normal second
+    // full scan may re-see an ID, but overlapping pages within ONE scan fail.
+    if (args.p_expected_page > 1 && entries.some((entry) => records.some((prior) =>
+      prior.business_id === A && prior.connection_generation === GENERATION
+      && prior.resource_type === args.p_resource_type && prior.external_id === entry.external_id
+      && prior.last_seen_cycle_id === args.p_cycle_id))) {
+      return { data: { code: "duplicate_in_cycle" }, error: null };
+    }
     for (const entry of entries) {
       const row = {
         business_id: A, connection_generation: GENERATION, provider: "fudo",
@@ -726,5 +734,63 @@ test("Fudo O1 malformed attributes cannot overwrite staging or advance a resourc
     globalThis.fetch = priorFetch;
     if (priorKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = priorKey;
+  }
+});
+
+
+test("Fudo O1 overlapping pages fail before staging and cursor, without leaking provider records", async () => {
+  const prevFetch = globalThis.fetch;
+  const prevKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  progress.length = 0;
+  records.length = 0;
+  runs.length = 0;
+  membershipActive = true;
+  activeBusiness = A;
+  denyPageCommit = false;
+  denyFinish = false;
+  conn.status = "connected";
+  conn.connection_generation = GENERATION;
+  const methods: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return new Response(JSON.stringify({ token: "synthetic-bearer",
+        exp: Math.floor(Date.now() / 1000) + 86400 }), { status: 200 });
+    }
+    methods.push(String(init?.method));
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/products")) {
+      const second = url.searchParams.get("page[number]") === "2";
+      return new Response(JSON.stringify({ data: [{ id: "overlap-id-fixture",
+        type: "Product", attributes: { name: second ? "must-not-stage" : "original" } }],
+        links: { next: second ? null : "https://api.fu.do/v1alpha1/products?page[number]=2&page[size]=100" },
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+  };
+  try {
+    const first = await syncFudoReadOnly();
+    assert.equal(first.ok, true, "first page is valid but incomplete");
+    if (first.ok) assert.equal(first.hasMorePages, true);
+    const beforeRecords = JSON.stringify(records.filter((row) => row.resource_type === "products"));
+    const beforeCursor = JSON.stringify(progress.filter((row) => row.resource_type === "products"));
+    assert.equal(records.filter((row) => row.resource_type === "products").length, 1);
+    const second = await syncFudoReadOnly();
+    assert.equal(second.ok, false);
+    if (!second.ok) {
+      assert.equal(second.code, "invalid_response");
+      assert.doesNotMatch(second.message, /overlap-id-fixture|must-not-stage|synthetic-bearer/);
+    }
+    assert.equal(runs.at(-1)?.status, "failed", "colliding page is recorded as failed");
+    assert.equal(JSON.stringify(records.filter((row) => row.resource_type === "products")), beforeRecords,
+      "overlap cannot overwrite or remark an existing provider record");
+    assert.equal(JSON.stringify(progress.filter((row) => row.resource_type === "products")), beforeCursor,
+      "overlap cannot finish or advance the provider cursor");
+    assert.ok(methods.length > 0 && methods.every((method) => method === "GET"));
+  } finally {
+    globalThis.fetch = prevFetch;
+    if (prevKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = prevKey;
   }
 });
