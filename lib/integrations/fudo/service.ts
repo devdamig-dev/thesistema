@@ -66,6 +66,9 @@ function safeFailure(error: unknown): FudoActionResult {
   if (error instanceof Error && error.message === "fudo_connection_changed") {
     return fail("connection_changed", "La conexión Fudo cambió. Actualizá la pantalla y reintentá.");
   }
+  if (error instanceof Error && error.message === "fudo_duplicate_in_cycle") {
+    return fail("invalid_response", "Fudo repitió un identificador en páginas distintas del mismo recurso. La lectura se detuvo para evitar una conciliación incorrecta.");
+  }
   if (error instanceof Error && error.message === "fudo_sync_page_rejected") {
     return fail("sync_conflict", "La sincronización cambió durante la lectura. Actualizá y reintentá.");
   }
@@ -554,6 +557,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
       if (saved.error) throw new Error("fudo_storage_failed");
       if (saved.data?.code === "forbidden") throw new Error("fudo_actor_revoked");
       if (saved.data?.code === "connection_changed") throw new Error("fudo_connection_changed");
+      if (saved.data?.code === "duplicate_in_cycle") throw new Error("fudo_duplicate_in_cycle");
       if (saved.data?.code !== "saved") throw new Error("fudo_sync_page_rejected");
       counts[resource] = snapshots.length;
       return partial;
