@@ -29,6 +29,60 @@ export async function runFudoActionSafely(
   }
 }
 
+
+/** The server, not a browser message parser, decides whether another page exists. */
+export const FUDO_SYNC_UI_BATCH_LIMIT = 5;
+export type FudoUiSyncOutcome = {
+  ok: boolean;
+  message: string;
+  completedBatches: number;
+  hasMorePages: boolean;
+};
+
+/**
+ * Continue the idempotent read-only sync through at most five separate
+ * authenticated Server Actions. Never retry a rejected/ambiguous action:
+ * the caller may not know whether its transaction committed. The durable
+ * PostgreSQL cursor remains the source of truth for the next manual attempt.
+ * This is foreground work, not an unbounded background job.
+ */
+export async function runFudoSyncBatches(
+  action: () => Promise<FudoUiActionResult & { hasMorePages?: boolean }>,
+  batchLimit: number = FUDO_SYNC_UI_BATCH_LIMIT,
+): Promise<FudoUiSyncOutcome> {
+  if (!Number.isSafeInteger(batchLimit) || batchLimit < 1 || batchLimit > FUDO_SYNC_UI_BATCH_LIMIT) {
+    return { ok: false, message: UNAVAILABLE, completedBatches: 0, hasMorePages: false };
+  }
+  let completedBatches = 0;
+  while (completedBatches < batchLimit) {
+    const result = await runFudoActionSafely(action);
+    if (!result.ok) {
+      return { ok: false, message: result.message, completedBatches, hasMorePages: false };
+    }
+    // A string in the response, or a missing continuation flag, cannot
+    // authorize another API call. Do not parse human-readable success copy.
+    const syncResult = result as FudoUiActionResult & { hasMorePages?: unknown };
+    if (typeof syncResult.hasMorePages !== "boolean") {
+      return { ok: false, message: UNAVAILABLE, completedBatches, hasMorePages: false };
+    }
+    completedBatches++;
+    if (!syncResult.hasMorePages) {
+      return {
+        ok: true,
+        message: `Se completó la lectura del ciclo en ${completedBatches} tanda(s). Falta conciliar los datos con Fudo real para aprobar el piloto.`,
+        completedBatches,
+        hasMorePages: false,
+      };
+    }
+  }
+  return {
+    ok: true,
+    message: `Se importaron ${completedBatches} tandas de lectura. Quedan páginas pendientes; volvé a sincronizar para continuar.`,
+    completedBatches,
+    hasMorePages: true,
+  };
+}
+
 /**
  * Permission diagnostics carry five structured resource checks in addition to
  * the generic action feedback. A malformed Server Action payload must not be
