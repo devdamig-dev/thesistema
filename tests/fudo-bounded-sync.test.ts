@@ -59,7 +59,7 @@ test("Fudo O1 rejects missing or malformed continuation flags without parsing su
     let calls = 0;
     const result = await runFudoSyncBatches(async () => {
       calls++;
-      return { ok: true, message: "Se importó correctamente", hasMorePages: flag as boolean };
+      return { ok: true, message: "Se importó correctamente", hasMorePages: flag as unknown as boolean };
     });
     assert.equal(calls, 1);
     assert.equal(result.ok, false);
