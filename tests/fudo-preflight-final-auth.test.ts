@@ -17,6 +17,7 @@ let role = "owner";
 let isMember = true;
 let profileActive = true;
 let connectionReads = 0;
+let connectionStatus: "connected" | "error" = "connected";
 let duringFinalConnectionRead: (() => void) | null = null;
 
 const db = {
