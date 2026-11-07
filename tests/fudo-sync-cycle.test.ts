@@ -16,6 +16,7 @@ const progress: Row[] = [];
 const records: Row[] = [];
 let membershipActive = true;
 let activeBusiness = A;
+let denyPageCommit = false;
 const runs: Row[] = [];
 const conn: Row = {
   business_id: A, connection_generation: GENERATION, credentials_ciphertext: ciphertext,
@@ -107,14 +108,63 @@ function from(table: string) {
 }
 const db = {
   from,
-  async rpc(name: string, _args: Record<string, unknown>) {
-    if (name !== "fudo_begin_sync") throw Error("Unexpected RPC");
-    const id = String(++runNumber);
-    runs.push({
-      id, business_id: A, connection_generation: GENERATION, status: "running",
-      started_at: new Date().toISOString(), finished_at: null, counts: {}, error_code: null,
-    });
-    return { data: { code: "started", run_id: id }, error: null };
+  async rpc(name: string, args: Record<string, any>) {
+    if (name === "fudo_begin_sync") {
+      const id = String(++runNumber);
+      runs.push({
+        id, business_id: A, connection_generation: GENERATION, status: "running",
+        started_at: new Date().toISOString(), finished_at: null, counts: {}, error_code: null,
+      });
+      return { data: { code: "started", run_id: id }, error: null };
+    }
+    if (name !== "fudo_commit_sync_page") throw Error("Unexpected RPC");
+    // Simulate the SQL transaction checking membership AFTER the app's last
+    // async reauthorization, and committing staging+cursor as one operation.
+    if (denyPageCommit || !membershipActive || activeBusiness !== A
+      || args.p_business_id !== A || args.p_actor_id !== USER) {
+      return { data: { code: "forbidden" }, error: null };
+    }
+    if (args.p_expected_generation !== GENERATION) {
+      return { data: { code: "connection_changed" }, error: null };
+    }
+    if (!runs.some((r) => r.id === args.p_run_id && r.status === "running")) {
+      return { data: { code: "run_changed" }, error: null };
+    }
+    const current = progress.find((p) => p.business_id === A
+      && p.connection_generation === GENERATION && p.resource_type === args.p_resource_type);
+    if ((current?.next_page ?? 1) !== args.p_expected_page) {
+      return { data: { code: "stale_page" }, error: null };
+    }
+    if (args.p_expected_page > 1
+      && (current?.cycle_id ?? null) !== args.p_cycle_id) {
+      return { data: { code: "cycle_changed" }, error: null };
+    }
+    const seenAt = new Date().toISOString();
+    const entries = args.p_rows as Row[];
+    for (const entry of entries) {
+      const row = {
+        business_id: A, connection_generation: GENERATION, provider: "fudo",
+        resource_type: args.p_resource_type, external_id: entry.external_id,
+        payload: entry.payload, content_hash: entry.content_hash,
+        last_seen_cycle_id: args.p_cycle_id,
+        source_updated_at: entry.source_updated_at, last_seen_at: seenAt,
+      };
+      const index = records.findIndex((p) => p.business_id === A
+        && p.connection_generation === GENERATION
+        && p.resource_type === row.resource_type && p.external_id === row.external_id);
+      if (index >= 0) records[index] = { ...records[index], ...row };
+      else records.push(row);
+    }
+    const next = {
+      business_id: A, connection_generation: GENERATION, resource_type: args.p_resource_type,
+      next_page: args.p_next_page, cycle_id: args.p_cycle_id,
+      cycle_started_at: args.p_cycle_started_at,
+      last_complete_at: args.p_next_page === 0 ? seenAt : null,
+      updated_at: seenAt,
+    };
+    if (current) Object.assign(current, next);
+    else progress.push(next);
+    return { data: { code: "saved" }, error: null };
   },
 };
 
@@ -178,6 +228,46 @@ test("Fudo O1 refuses staging and cursor writes if owner is revoked or switches 
   } finally {
     membershipActive = true;
     activeBusiness = A;
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
+
+test("Fudo O1 SQL page fence denies a revocation after app preflight with no snapshot or cursor write", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  const recordSnapshot = JSON.stringify(records);
+  const progressSnapshot = JSON.stringify(progress);
+  const connectionSnapshot = { ...conn };
+  denyPageCommit = true;
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      return new Response(JSON.stringify({
+        token: "synthetic-token", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    assert.equal(init?.method, "GET");
+    return new Response(JSON.stringify({
+      data: [{ id: "must-not-write", type: new URL(String(input)).pathname.split("/").at(-1),
+        attributes: { name: "private-mock" } }],
+      links: { next: null },
+    }), { status: 200 });
+  };
+  try {
+    const result = await syncFudoReadOnly();
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.code, "forbidden");
+      assert.doesNotMatch(result.message, /private-mock|synthetic-token|must-not-write/);
+    }
+    assert.equal(JSON.stringify(records), recordSnapshot);
+    assert.equal(JSON.stringify(progress), progressSnapshot);
+    assert.deepEqual(conn, connectionSnapshot, "revoked SQL transaction never changes connection health");
+    assert.equal(runs.at(-1)?.status, "failed", "failed audit run still closes");
+  } finally {
+    denyPageCommit = false;
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
