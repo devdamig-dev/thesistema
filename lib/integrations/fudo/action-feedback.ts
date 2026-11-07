@@ -61,11 +61,12 @@ export async function runFudoSyncBatches(
     }
     // A string in the response, or a missing continuation flag, cannot
     // authorize another API call. Do not parse human-readable success copy.
-    if (typeof (result as { hasMorePages?: unknown }).hasMorePages !== "boolean") {
+    const syncResult = result as FudoUiActionResult & { hasMorePages?: unknown };
+    if (typeof syncResult.hasMorePages !== "boolean") {
       return { ok: false, message: UNAVAILABLE, completedBatches, hasMorePages: false };
     }
     completedBatches++;
-    if (!(result as { hasMorePages: boolean }).hasMorePages) {
+    if (!syncResult.hasMorePages) {
       return {
         ok: true,
         message: `Se completó la lectura del ciclo en ${completedBatches} tanda(s). Falta conciliar los datos con Fudo real para aprobar el piloto.`,
