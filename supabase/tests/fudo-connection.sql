@@ -216,7 +216,7 @@ declare
     'external_id','page-fixture-a','payload',jsonb_build_object('id','page-fixture-a'),
     'content_hash',repeat('a',64),'source_updated_at',null));
   second_row jsonb := jsonb_build_array(jsonb_build_object(
-    'external_id','page-fixture-a','payload',jsonb_build_object('id','page-fixture-a','version',2),
+    'external_id','page-fixture-b','payload',jsonb_build_object('id','page-fixture-b','version',2),
     'content_hash',repeat('b',64),'source_updated_at',null));
   result jsonb;
 begin
@@ -268,17 +268,33 @@ begin
       'content_hash','bad-hash')));
   perform pg_temp.fudo_assert(result->>'code'='invalid_input','malformed record rejected before writing');
 
+  -- A provider returning the same external ID on two different pages of
+  -- ONE cycle must fail: upsert would hide an overlapping/inconsistent scan.
+  result := public.fudo_commit_sync_page(a,generation_a,owner_a,run_a,
+    'products',2,0,cycle,cycle_start,first_row);
+  perform pg_temp.fudo_assert(result->>'code'='duplicate_in_cycle',
+    'overlapping provider pages must not certify the cycle');
+  perform pg_temp.fudo_assert(
+    (select next_page=2 from public.fudo_sync_progress
+      where business_id=a and connection_generation=generation_a and resource_type='products')
+    and (select content_hash=repeat('a',64) from public.fudo_external_records
+      where business_id=a and connection_generation=generation_a and resource_type='products'
+        and external_id='page-fixture-a'),
+    'duplicate does not change staging, provenance or cursor');
+
   result := public.fudo_commit_sync_page(a,generation_a,owner_a,run_a,
     'products',2,0,cycle,cycle_start,second_row);
-  perform pg_temp.fudo_assert(result->>'code'='saved','page two completes the import');
+  perform pg_temp.fudo_assert(result->>'code'='saved','distinct page two completes the import');
   perform pg_temp.fudo_assert(
     (select next_page=0 and last_complete_at is not null from public.fudo_sync_progress
       where business_id=a and connection_generation=generation_a and resource_type='products')
-    and (select content_hash=repeat('b',64) from public.fudo_external_records
+    and (select content_hash=repeat('a',64) from public.fudo_external_records
       where business_id=a and connection_generation=generation_a and external_id='page-fixture-a')
-    and (select count(*)=1 from public.fudo_external_records
+    and (select content_hash=repeat('b',64) from public.fudo_external_records
+      where business_id=a and connection_generation=generation_a and external_id='page-fixture-b')
+    and (select count(*)=2 from public.fudo_external_records
       where business_id=a and connection_generation=generation_a and resource_type='products'),
-    'idempotent provider ID is updated and completed without duplication');
+    'distinct source IDs on subsequent pages stay mapped without duplication');
 
   update public.fudo_sync_runs set status='completed',finished_at=now() where id=run_a;
   result := public.fudo_commit_sync_page(a,generation_a,owner_a,run_a,
