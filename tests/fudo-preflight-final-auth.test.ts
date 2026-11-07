@@ -69,8 +69,7 @@ loader._load = function(name: string, ...args: any[]) {
   if (name === "@/lib/env") return { isDatabaseMode: () => true };
   return originalLoad.call(this, name, ...args);
 };
-const { inspectFudoReadPermissions } = require("../lib/integrations/fudo/service")
-  as typeof import("../lib/integrations/fudo/service");
+const { inspectFudoReadPermissions } = require("../lib/integrations/fudo/service") as typeof import("../lib/integrations/fudo/service");
 loader._load = originalLoad;
 
 test("Fudo preflight rejects checks if owner is revoked during its last privileged reread", async () => {
