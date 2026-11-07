@@ -442,6 +442,64 @@ begin
     'already closed run cannot be rewritten');
 end $finish$;
 
+-- A false completed status is a correctness fault even if the server action
+-- reports it: all FIVE durable per-resource cursor commits are required.
+-- These service-role fixtures are rolled back at the end of this file.
+do $complete_guard$
+declare
+  a uuid := '00000000-0000-4000-8000-000000008010';
+  owner_a uuid := '00000000-0000-4000-8000-000000008001';
+  generation_a uuid;
+  started jsonb;
+  run_a uuid;
+  result jsonb;
+begin
+  select connection_generation into generation_a from public.fudo_connections where business_id=a;
+  started := public.fudo_begin_sync(a,generation_a,owner_a);
+  perform pg_temp.fudo_assert(started->>'code'='started','completion guard run starts');
+  run_a := (started->>'run_id')::uuid;
+
+  -- A completed claim without committed resource pages must not close the run
+  -- or publish a healthy connection status.
+  delete from public.fudo_sync_progress
+   where business_id=a and connection_generation=generation_a;
+  result := public.fudo_finish_sync(a,generation_a,owner_a,run_a,
+    'completed','{}'::jsonb,null,true);
+  perform pg_temp.fudo_assert(result->>'code'='incomplete_cycle',
+    'no cursor cannot be reported complete');
+  perform pg_temp.fudo_assert(
+    (select status='running' and finished_at is null from public.fudo_sync_runs where id=run_a),
+    'rejected completion leaves run running');
+
+  -- Four resources completed is still a partial scan, including empty tables.
+  insert into public.fudo_sync_progress
+    (business_id,connection_generation,resource_type,next_page,cycle_id,cycle_started_at,last_complete_at)
+  select a,generation_a,r,0,gen_random_uuid(),now(),now()
+    from unnest(array['products','ingredients','providers','orders']) as r;
+  result := public.fudo_finish_sync(a,generation_a,owner_a,run_a,
+    'completed','{}'::jsonb,null,true);
+  perform pg_temp.fudo_assert(result->>'code'='incomplete_cycle',
+    'four completed resources cannot certify five');
+  insert into public.fudo_sync_progress
+    (business_id,connection_generation,resource_type,next_page,cycle_id,cycle_started_at,last_complete_at)
+  values (a,generation_a,'sales',0,null,now(),now());
+  result := public.fudo_finish_sync(a,generation_a,owner_a,run_a,
+    'completed','{}'::jsonb,null,true);
+  perform pg_temp.fudo_assert(result->>'code'='incomplete_cycle',
+    'legacy cursor without a cycle UUID cannot certify completion');
+
+  update public.fudo_sync_progress set cycle_id=gen_random_uuid()
+    where business_id=a and connection_generation=generation_a and resource_type='sales';
+  result := public.fudo_finish_sync(a,generation_a,owner_a,run_a,
+    'completed','{}'::jsonb,null,true);
+  perform pg_temp.fudo_assert(result->>'code'='finished',
+    'five committed identifiable resource cycles can complete');
+  perform pg_temp.fudo_assert(
+    (select status='completed' from public.fudo_sync_runs where id=run_a)
+    and (select last_sync_status='completed' from public.fudo_connections where business_id=a),
+    'run and connection health finalize together only after five cursors');
+end $complete_guard$;
+
 
 -- O1 retest health is an authorized transaction, not a service-role UPDATE.
 -- All data here is synthetic and the enclosing fixture transaction rolls back.
