@@ -7,7 +7,7 @@ import { encryptFudoCredentials, decryptFudoCredentials } from "./crypto";
 import { FUDO_SYNC_PAGE_SIZE, FUDO_SYNC_RESOURCES, nextFudoPage, parseFudoPage } from "./snapshot";
 import { runFudoReadBatch } from "./read-batch";
 
-export type FudoActionResult = { ok: true; message: string } | { ok: false; code: string; message: string };
+export type FudoActionResult = { ok: true; message: string; hasMorePages?: boolean } | { ok: false; code: string; message: string };
 export type FudoResourcePreflight = {
   ok: boolean;
   message: string;
@@ -578,7 +578,7 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
     if (finalized.data?.code === "connection_changed") throw new Error("fudo_connection_changed");
     if (finalized.data?.code !== "finished") throw new Error("fudo_storage_failed");
     const total = Object.values(counts).reduce((sum, value) => sum + value, 0);
-    return { ok: true, message: hasPendingPages
+    return { ok: true, hasMorePages: hasPendingPages, message: hasPendingPages
       ? `Se importaron ${total} registros de esta tanda. Hay páginas pendientes: ejecutá otra sincronización para continuar.`
       : `Sincronización de esta tanda completada: ${total} registros leídos. No se modificaron ventas ni stock nativos.` };
   } catch (error) {
