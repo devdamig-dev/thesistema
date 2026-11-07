@@ -490,22 +490,11 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
     if (started.data?.code === "connection_changed") return fail("connection_changed", "La conexión Fudo cambió; actualizá la pantalla e intentá nuevamente.");
     if (started.data?.code !== "started" || typeof started.data?.run_id !== "string") return fail("storage_unavailable", UNKNOWN);
     runId = started.data.run_id;
-    // A role can be revoked after fudo_begin_sync commits. Do not reset
-    // a completed cycle on behalf of an actor who is no longer authorized.
+    // fudo_begin_sync atomically starts the run AND resets completed
+    // five-resource cursors under the live owner/admin tenant lock.
+    // Do not delete cursors from application code: a revoked actor could
+    // otherwise reset a finished scan after the SQL authorization check.
     if (!(await isStillAuthorized(authorized.actor))) throw new Error("fudo_actor_revoked");
-    const previous = await db.from("fudo_sync_progress").select("resource_type,next_page")
-      .eq("business_id", actor.businessId).eq("connection_generation", generation);
-    if (previous.error) throw new Error("fudo_storage_failed");
-    const progressRows = (previous.data ?? []) as Array<{ resource_type: string; next_page: number }>;
-    // Once all five resources were completed, a new click begins a fresh full scan.
-    // During an incomplete cycle, already completed resources are not re-read.
-    const fullCycleFinished = FUDO_SYNC_RESOURCES.every((resource) =>
-      progressRows.some((row) => row.resource_type === resource && row.next_page === 0));
-    if (fullCycleFinished) {
-      const reset = await db.from("fudo_sync_progress").delete()
-        .eq("business_id", actor.businessId).eq("connection_generation", generation);
-      if (reset.error) throw new Error("fudo_storage_failed");
-    }
     const syncBusinessId = authorized.actor.businessId;
     const syncActor = authorized.actor;
     // Each Fudo GET may take up to 15s. Five sequential resource reads can
