@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'scripts/qa/live-auth-rls-readonly.mjs'
+      - 'tests/qa/live-auth-rls-readonly.test.mjs'
       - '.github/workflows/qa-live-auth.yml'
 permissions:
   contents: read
@@ -20,6 +21,7 @@ jobs:
         with:
           node-version: '22.16.0'
       - run: node --check scripts/qa/live-auth-rls-readonly.mjs
+      - run: node --test tests/qa/live-auth-rls-readonly.test.mjs
   two-tenant:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
