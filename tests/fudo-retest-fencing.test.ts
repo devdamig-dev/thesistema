@@ -24,14 +24,16 @@ let connection = {
 };
 const filtersSeen: string[] = [];
 let writes = 0;
+const rpcCalls: Array<Record<string, unknown>> = [];
+let revokeDuringRpc = false;
+let switchDuringRpc = false;
 
 const db = {
   from(table: string) {
     const filters: Record<string, unknown> = {};
-    let updateValues: Partial<typeof connection> | null = null;
     return {
       select(_columns: string) { return this; },
-      update(values: Partial<typeof connection>) { updateValues = values; return this; },
+      update(_values: Partial<typeof connection>) { throw Error("Retest must not update with service_role outside SQL RPC"); },
       eq(column: string, value: unknown) {
         filtersSeen.push(column);
         filters[column] = value;
@@ -51,14 +53,35 @@ const db = {
         const matching = Object.entries(filters).every(([field, value]) =>
           (connection as unknown as Record<string, unknown>)[field] === value);
         if (!matching) return { error: null, data: null };
-        if (updateValues) {
-          writes++;
-          connection = { ...connection, ...updateValues };
-          return { error: null, data: { business_id: BUSINESS } };
-        }
         return { error: null, data: { ...connection } };
       },
     };
+  },
+  async rpc(name: string, args: Record<string, unknown>) {
+    assert.equal(name, "fudo_record_connection_test", "retest uses one authorized SQL transaction");
+    rpcCalls.push({ ...args });
+    // Simulate a SQL-transaction authorization check AFTER JS preflight.
+    if (revokeDuringRpc) { isMember = false; revokeDuringRpc = false; }
+    if (switchDuringRpc) { activeBusiness = OTHER_BUSINESS; switchDuringRpc = false; }
+    if (!isMember || activeBusiness !== BUSINESS || args.p_business_id !== BUSINESS
+      || args.p_actor_id !== USER) return { data: "forbidden", error: null };
+    if (args.p_expected_generation !== connection.connection_generation
+      || args.p_expected_last_tested_at !== connection.last_tested_at) {
+      return { data: "connection_changed", error: null };
+    }
+    assert.ok(args.p_status === "connected" || args.p_status === "error");
+    assert.equal(args.p_status === "connected", args.p_error_code === null);
+    writes++;
+    const nextTestedAt = new Date(Math.max(
+      Date.now(), connection.last_tested_at ? Date.parse(connection.last_tested_at) + 1 : 0,
+    )).toISOString();
+    connection = {
+      ...connection,
+      status: args.p_status as "connected" | "error",
+      last_error_code: args.p_error_code as string | null,
+      last_tested_at: nextTestedAt,
+    };
+    return { data: "recorded", error: null };
   },
 };
 
@@ -89,6 +112,7 @@ test("Fudo retest fences stale results after credential rotation, without cipher
         status: "connected", last_error_code: null, last_tested_at: null,
       };
       filtersSeen.length = 0;
+      rpcCalls.length = 0;
       writes = 0;
       globalThis.fetch = async (input) => {
         if (String(input).includes("auth.fu.do")) {
@@ -112,7 +136,8 @@ test("Fudo retest fences stale results after credential rotation, without cipher
       assert.equal(connection.status, "connected");
       assert.equal(connection.last_error_code, null);
       assert.equal(connection.connection_generation, ROTATED_GENERATION);
-      assert.ok(filtersSeen.includes("connection_generation"));
+      assert.ok(rpcCalls.some((args) => args.p_expected_generation === ORIGINAL_GENERATION),
+        "SQL CAS receives the exact generation used for the GET");
       assert.ok(!filtersSeen.includes("credentials_ciphertext"), "ciphertext must not be used as a URL filter");
     }
 
@@ -197,7 +222,8 @@ test("Fudo concurrent same-generation retests reject a stale failure after a new
     assert.equal(connection.status, "connected");
     assert.equal(connection.last_error_code, null);
     assert.equal(connection.last_tested_at, currentRevision);
-    assert.ok(filtersSeen.includes("last_tested_at"), "compare-and-set must fence the test revision");
+    assert.ok(rpcCalls.some((args) => args.p_expected_last_tested_at === "2026-11-04T20:00:00.000Z"),
+      "SQL CAS must fence the previous test revision");
     assert.ok(!filtersSeen.includes("credentials_ciphertext"), "never send ciphertext in filters");
   } finally {
     releaseOldRead();
@@ -253,6 +279,61 @@ test("Fudo retest never writes health or reports success after membership revoca
   } finally {
     isMember = true;
     activeBusiness = BUSINESS;
+    globalThis.fetch = oldFetch;
+    if (oldKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = oldKey;
+  }
+});
+
+
+test("Fudo SQL retest guard denies transaction-time revocation after the app preflight", async () => {
+  const oldKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const oldFetch = globalThis.fetch;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  try {
+    for (const transition of ["revoked", "switched"] as const) {
+      for (const status of [200, 403]) {
+        isMember = true;
+        activeBusiness = BUSINESS;
+        revokeDuringRpc = transition === "revoked";
+        switchDuringRpc = transition === "switched";
+        writes = 0;
+        rpcCalls.length = 0;
+        connection = {
+          business_id: BUSINESS, connection_generation: ORIGINAL_GENERATION,
+          credentials_ciphertext: originalCiphertext,
+          status: "connected", last_error_code: null, last_tested_at: null,
+        };
+        const methods: string[] = [];
+        globalThis.fetch = async (input, init) => {
+          if (String(input).includes("auth.fu.do")) {
+            return new Response(JSON.stringify({
+              token: "synthetic-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+            }), { status: 200 });
+          }
+          methods.push(String(init?.method));
+          return status === 200
+            ? new Response(JSON.stringify({ data: [] }), { status: 200 })
+            : new Response(JSON.stringify({ private: "DO_NOT_EXPOSE" }), { status: 403 });
+        };
+        const result = await testStoredFudoConnection();
+        assert.equal(result.ok, false);
+        if (!result.ok) {
+          assert.equal(result.code, "forbidden");
+          assert.doesNotMatch(result.message, /DO_NOT_EXPOSE|synthetic-bearer/);
+        }
+        assert.deepEqual(methods, ["GET"]);
+        assert.equal(rpcCalls.length, 1, "SQL sees post-preflight revocation");
+        assert.equal(writes, 0, "SQL must never change health after revocation");
+        assert.equal(connection.last_tested_at, null);
+        assert.equal(connection.last_error_code, null);
+      }
+    }
+  } finally {
+    isMember = true;
+    activeBusiness = BUSINESS;
+    revokeDuringRpc = false;
+    switchDuringRpc = false;
     globalThis.fetch = oldFetch;
     if (oldKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = oldKey;
