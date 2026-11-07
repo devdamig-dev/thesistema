@@ -428,6 +428,12 @@ export async function inspectFudoReadPermissions(): Promise<FudoResourcePrefligh
         checks: [],
       };
     }
+    // The privileged connection reread above is asynchronous: a role can be
+    // revoked or the active business can change *during that final query*.
+    // The earlier recheck after Fudo GETs is not sufficient to publish checks.
+    if (!(await isStillAuthorized(actor))) {
+      return { ok: false, message: "Tu acceso al negocio cambió durante la revisión. Volvé a ingresar.", checks: [] };
+    }
     const available = checks.filter((item) => item.code === "available").length;
     return {
       ok: available === FUDO_SYNC_RESOURCES.length,
