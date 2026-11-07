@@ -330,50 +330,38 @@ export async function testStoredFudoConnection(): Promise<FudoActionResult> {
     const credentials = decryptFudoCredentials(actor.businessId, stored.data.credentials_ciphertext);
     const generation: string = stored.data.connection_generation;
     const testedAtStart: string | null = stored.data.last_tested_at ?? null;
-    // A concurrent rotation or retest can finish while our provider probe is pending.
-    // Fence writes and success messages to the exact connection tested; the
-    // encrypted credentials must never be included in PostgREST URL filters.
-    // Compare-and-set the previous test revision as well as the generation.
-    // Two owners can retest the same credentials concurrently; the slower
-    // response must not overwrite a newer result with stale health metadata.
-    // This filters only on a timestamp, never on encrypted credentials.
-    const recordTest = async (status: "connected" | "error", errorCode: string | null) => {
-      // The CAS revision must actually advance, including two retests in the
-      // same millisecond or when an app server's clock lags the stored timestamp.
-      const nextTestedAt = new Date(Math.max(
-        Date.now(), testedAtStart ? Date.parse(testedAtStart) + 1 : 0,
-      )).toISOString();
-      const update = db.from("fudo_connections").update({
-        status, last_error_code: errorCode, last_tested_at: nextTestedAt,
-      }).eq("business_id", actor.businessId).eq("connection_generation", generation);
-      return (testedAtStart === null
-        ? update.is("last_tested_at", null)
-        : update.eq("last_tested_at", testedAtStart))
-        .select("business_id").maybeSingle();
-    };
+    // A concurrent rotation, retest or role revocation can finish while the
+    // provider GET is pending. SQL must fence both membership and the exact
+    // generation/test revision in the SAME transaction as the metadata write.
+    // No ciphertext enters PostgREST filters, RPC arguments or logs.
+    let providerFailure: FudoActionResult | null = null;
     try {
       await new FudoClient(credentials).testConnection();
-      // A revoked owner or tenant switch must not record a stale successful
-      // test via the service-role client, even with unchanged credentials.
-      if (!(await isStillAuthorized(actor))) {
-        return fail("forbidden", "Tu acceso al negocio cambió durante la prueba. Volvé a ingresar.");
-      }
-      const updated = await recordTest("connected", null);
-      if (updated.error) return fail("storage_unavailable", UNKNOWN);
-      if (!updated.data) return fail("connection_changed", "La conexión Fudo cambió durante la prueba. Volvé a probar las credenciales actuales.");
-      return { ok: true, message: "La consulta de lectura a productos Fudo respondió correctamente." };
     } catch (error) {
-      const failure = safeFailure(error);
-      // Likewise, a late provider 401/403 cannot downgrade connection health
-      // after the actor has lost membership or changed active business.
-      if (!(await isStillAuthorized(actor))) {
-        return fail("forbidden", "Tu acceso al negocio cambió durante la prueba. Volvé a ingresar.");
-      }
-      const updated = await recordTest("error", failure.ok ? null : failure.code);
-      if (updated.error) return fail("storage_unavailable", UNKNOWN);
-      if (!updated.data) return fail("connection_changed", "La conexión Fudo cambió durante la prueba. Volvé a probar las credenciales actuales.");
-      return failure;
+      providerFailure = safeFailure(error);
     }
+    if (!(await isStillAuthorized(actor))) {
+      return fail("forbidden", "Tu acceso al negocio cambió durante la prueba. Volvé a ingresar.");
+    }
+
+    const recorded = await db.rpc("fudo_record_connection_test", {
+      p_business_id: actor.businessId,
+      p_expected_generation: generation,
+      p_actor_id: actor.userId,
+      p_expected_last_tested_at: testedAtStart,
+      p_status: providerFailure ? "error" : "connected",
+      p_error_code: providerFailure && !providerFailure.ok ? providerFailure.code : null,
+    });
+    if (recorded.error) return fail("storage_unavailable", UNKNOWN);
+    if (recorded.data === "forbidden") {
+      return fail("forbidden", "Tu acceso al negocio cambió durante la prueba. Volvé a ingresar.");
+    }
+    if (recorded.data === "connection_changed") {
+      return fail("connection_changed", "La conexión Fudo cambió durante la prueba. Volvé a probar las credenciales actuales.");
+    }
+    if (recorded.data !== "recorded") return fail("storage_unavailable", UNKNOWN);
+    if (providerFailure) return providerFailure;
+    return { ok: true, message: "La consulta de lectura a productos Fudo respondió correctamente." };
   } catch (error) { return safeFailure(error); }
 }
 
