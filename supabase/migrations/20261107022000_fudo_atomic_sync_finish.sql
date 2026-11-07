@@ -23,7 +23,7 @@ declare
 begin
   if p_business_id is null or p_expected_generation is null
      or p_actor_id is null or p_run_id is null
-     or p_status not in ('partial','completed','failed')
+     or p_status is null or p_status not in ('partial','completed','failed')
      or p_update_connection is null
      or p_counts is null or jsonb_typeof(p_counts) <> 'object'
      or length(p_counts::text) > 2048
