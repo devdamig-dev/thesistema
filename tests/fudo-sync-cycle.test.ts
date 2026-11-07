@@ -49,7 +49,7 @@ function from(table: string) {
     },
     limit(n: number) { limit = n; return this; },
     update(values: Row) { action = "update"; changes = values; return this; },
-    delete() { action = "delete"; return this; },
+    delete() { throw new Error("Direct Fudo cursor deletes must use the authorized begin_sync RPC"); },
     async upsert(values: Row | Row[], _options?: unknown) {
       if (table === "fudo_sync_progress") {
         for (const row of [values].flat()) {
@@ -110,6 +110,21 @@ const db = {
   from,
   async rpc(name: string, args: Record<string, any>) {
     if (name === "fudo_begin_sync") {
+      if (!membershipActive || activeBusiness !== A
+        || args.p_business_id !== A || args.p_actor_id !== USER) {
+        return { data: { code: "forbidden" }, error: null };
+      }
+      // SQL handles a full five-resource rescan atomically with starting
+      // the run. A revoked actor can never clear completed cursors.
+      const resources = ["products", "ingredients", "providers", "orders", "sales"];
+      if (resources.every((resource) => progress.some((item) =>
+        item.business_id === A && item.connection_generation === GENERATION
+          && item.resource_type === resource && item.next_page === 0))) {
+        for (let i = progress.length - 1; i >= 0; i--) {
+          if (progress[i].business_id === A
+            && progress[i].connection_generation === GENERATION) progress.splice(i, 1);
+        }
+      }
       const id = String(++runNumber);
       runs.push({
         id, business_id: A, connection_generation: GENERATION, status: "running",

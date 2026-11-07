@@ -291,4 +291,64 @@ begin
     'no cross-tenant staging');
 end $fudo$;
 
+
+-- Read-only Fudo rescan reset is atomic with authorized run start.
+-- Synthetic fixtures; this entire test transaction rolls back.
+do $cycle$
+declare
+  a uuid := '00000000-0000-4000-8000-000000008010';
+  b uuid := '00000000-0000-4000-8000-000000008020';
+  owner_a uuid := '00000000-0000-4000-8000-000000008001';
+  generation_a uuid;
+  started jsonb;
+  staging_before integer;
+  b_before integer;
+begin
+  select connection_generation into generation_a from public.fudo_connections where business_id=a;
+  perform pg_temp.fudo_assert(generation_a is not null,'rescan fixture connection exists');
+  -- Existing product cursor is 0; others missing: an incomplete scan resumes.
+  started := public.fudo_begin_sync(a,generation_a,owner_a);
+  perform pg_temp.fudo_assert(started->>'code'='started','incomplete scan resumes');
+  perform pg_temp.fudo_assert(
+    (select count(*)=1 from public.fudo_sync_progress where business_id=a
+     and connection_generation=generation_a and resource_type='products' and next_page=0),
+    'incomplete scan retains completed resource');
+  update public.fudo_sync_runs set status='partial',finished_at=now()
+    where id=(started->>'run_id')::uuid;
+
+  insert into public.fudo_sync_progress
+    (business_id,connection_generation,resource_type,next_page,cycle_id,cycle_started_at,last_complete_at)
+  select a,generation_a,r,0,gen_random_uuid(),now(),now()
+    from unnest(array['ingredients','providers','orders','sales']) as r
+  on conflict (business_id,connection_generation,resource_type)
+    do update set next_page=0,last_complete_at=now();
+  select count(*) into staging_before from public.fudo_external_records
+    where business_id=a and connection_generation=generation_a;
+  select count(*) into b_before from public.fudo_sync_progress where business_id=b;
+
+  -- A post-run revocation must preserve all five completed cursors.
+  update public.business_members set role='manager' where business_id=a and user_id=owner_a;
+  started := public.fudo_begin_sync(a,generation_a,owner_a);
+  perform pg_temp.fudo_assert(started->>'code'='forbidden','revoked actor denied reset');
+  perform pg_temp.fudo_assert(
+    (select count(*)=5 from public.fudo_sync_progress where business_id=a
+      and connection_generation=generation_a and next_page=0),
+    'denied reset keeps complete cursors');
+  update public.business_members set role='owner' where business_id=a and user_id=owner_a;
+
+  started := public.fudo_begin_sync(a,generation_a,owner_a);
+  perform pg_temp.fudo_assert(started->>'code'='started','authorized rescan starts');
+  perform pg_temp.fudo_assert(
+    (select count(*)=0 from public.fudo_sync_progress where business_id=a
+      and connection_generation=generation_a),
+    'authorized begin resets five cursors atomically');
+  perform pg_temp.fudo_assert(
+    (select count(*)=staging_before from public.fudo_external_records
+     where business_id=a and connection_generation=generation_a)
+    and (select count(*)=b_before from public.fudo_sync_progress where business_id=b),
+    'historical snapshots and other tenant unchanged');
+  update public.fudo_sync_runs set status='completed',finished_at=now()
+    where id=(started->>'run_id')::uuid;
+end $cycle$;
+
 rollback;
