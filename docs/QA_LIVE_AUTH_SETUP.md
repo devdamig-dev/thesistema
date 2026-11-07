@@ -6,7 +6,7 @@ Este gate **prepara** la comprobación manual de aislamiento del piloto read-onl
 
 1. Crear **dos usuarios de QA**, no identidades de clientes, con email verificado y password de prueba propio. Deben pertenecer a dos organizaciones distintas sin membresía cruzada y con al menos un negocio por organización. Crear/autorizar los datos de QA antes de correr este gate, fuera de la automatización.
 2. Guardar en GitHub Actions → Repository secrets: `QA_PUBLIC_KEY` (anon/publishable **del proyecto GastroPilot `thesistema`**, nunca `service_role` o `sb_secret_*`), `QA_USER_A_EMAIL`, `QA_USER_A_PASSWORD`, `QA_USER_B_EMAIL`, `QA_USER_B_PASSWORD`. **Nunca pegarlos en chat, PR o logs.**
-3. Desde Actions → **O1 QA Auth real, RLS y acceso Fudo read-only** → Run workflow, elegir la rama `main` una vez integrado el PR. El endpoint está fijado al proyecto Supabase `tcgcgrftnsuhorssjojk`; no cambiarlo por proyectos de clientes.
+3. Desde Actions → **O1 QA Auth real, RLS y acceso Fudo read-only** → Run workflow, elegir la rama `main` una vez integrado el PR. El workflow comprueba `github.ref == refs/heads/main` y hace checkout explícito de `main` antes de acceder a secretos; en otra rama no ejecuta el job autenticado. Rechaza claves privadas (`sb_secret_*` y JWT distinto del rol `anon`) antes de realizar consultas. El endpoint está fijado al proyecto Supabase `tcgcgrftnsuhorssjojk`; no cambiarlo por proyectos de clientes.
 4. Guardar el enlace al run, los estados de los jobs y la fecha en el issue O1 #162, sin copiar JWT, emails, respuestas HTTP ni datos de negocios.
 
 ## Resultado observable y límites
