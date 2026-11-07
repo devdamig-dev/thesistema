@@ -517,6 +517,50 @@ test("Fudo O1 rejects malformed pagination before changing staging or cursor", a
   }
 });
 
+test("Fudo O1 rejects a nonempty short page without next metadata before staging or cursor", async () => {
+  const prevFetch = globalThis.fetch;
+  const prevKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  const beforeRecords = JSON.stringify(records.filter((row) => row.resource_type === "products"));
+  const beforeProgress = JSON.stringify(progress.filter((row) => row.resource_type === "products"));
+  const verbs: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return new Response(JSON.stringify({
+        token: "synthetic-token", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    verbs.push(String(init?.method));
+    if (new URL(String(input)).pathname.endsWith("/products")) {
+      return new Response(JSON.stringify({
+        // A valid row with no links: we cannot know whether the provider
+        // silently limited the requested 100-record page to one record.
+        data: [{ id: "uncommitted-short-product", attributes: { name: "synthetic-only" } }],
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+  };
+  try {
+    const outcome = await syncFudoReadOnly();
+    assert.equal(outcome.ok, false);
+    if (!outcome.ok) {
+      assert.equal(outcome.code, "invalid_response");
+      assert.doesNotMatch(outcome.message, /synthetic-token|uncommitted-short-product/);
+    }
+    assert.equal(runs.at(-1)?.status, "failed", "ambiguous provider pagination is an auditable failed run");
+    assert.equal(JSON.stringify(records.filter((row) => row.resource_type === "products")), beforeRecords,
+      "no partial staging persisted");
+    assert.equal(JSON.stringify(progress.filter((row) => row.resource_type === "products")), beforeProgress,
+      "the resource cursor must not advance or close");
+    assert.ok(verbs.length > 0 && verbs.every((verb) => verb === "GET"), "Fudo stays GET-only");
+  } finally {
+    globalThis.fetch = prevFetch;
+    if (prevKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = prevKey;
+  }
+});
+
 test("Fudo O1 rejects a cross-resource JSON:API record before staging or cursor advance", async () => {
   const originalFetch = globalThis.fetch;
   const originalKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
