@@ -97,3 +97,22 @@ test("Fudo O1 refuses an overfilled page even when links.next is null", () => {
   assert.equal(nextFudoPage(overfilled, 1, rows.length, "products", 2), 0,
     "the same data is valid if the caller explicitly requested two records");
 });
+
+test("Fudo O1 never marks a nonempty short import page complete without an explicit next link", () => {
+  // A provider cap of 20 on a 100-row request is indistinguishable from the
+  // last page when JSON:API next metadata is absent. Stop before cursor commit.
+  for (const count of [1, 20, 99]) {
+    for (const response of [{ data: [] }, { data: [], links: {} }]) {
+      assert.throws(() => nextFudoPage(response, 1, count, "products", 100),
+        /invalid_fudo_page/, `unlinked short page of ${count} must fail closed`);
+    }
+  }
+  assert.equal(nextFudoPage({ data: [], links: { next: null } }, 1, 20, "products", 100), 0,
+    "explicit provider end marker still completes a partial last page");
+  assert.equal(nextFudoPage({ data: [] }, 1, 0, "products", 100), 0,
+    "truly empty legacy page can complete safely");
+  assert.equal(nextFudoPage({ data: [] }, 1, 100, "products", 100), 2,
+    "full legacy page continues to the next numbered page");
+  assert.equal(nextFudoPage({ data: [] }, 1, 1, "products", 1), 0,
+    "one-record permission probes remain compatible without claiming import completeness");
+});
