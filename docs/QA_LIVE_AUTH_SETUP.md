@@ -1,6 +1,6 @@
 # GastroPilot O1 — QA manual con dos sesiones y RLS real
 
-Este gate **prepara** la comprobación manual de aislamiento del piloto read-only Fudo. El workflow `.github/workflows/qa-live-auth.yml` se ejecuta únicamente mediante `workflow_dispatch`. En PR se revisa exclusivamente la sintaxis del script, sin secretos ni acceso a datos reales.
+Este gate **prepara** la comprobación manual de aislamiento del piloto read-only Fudo. El workflow `.github/workflows/qa-live-auth.yml` se ejecuta únicamente mediante `workflow_dispatch`. En PR se revisa la sintaxis y se ejecutan **cinco fixtures sintéticas** (1 caso positivo y 4 negativos: HTTP 200 indebido en tabla privada, lectura cruzada A/B, clave de servicio y cuenta QA ausente), sin secretos ni acceso a datos reales. Estos tests sólo validan que el gate falla de forma segura; **no equivalen a sesiones A/B productivas**.
 
 ## Requisitos
 
