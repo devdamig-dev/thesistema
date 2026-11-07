@@ -8,6 +8,21 @@ if (missing.length) {
 }
 const origin = "https://tcgcgrftnsuhorssjojk.supabase.co";
 const key = process.env.QA_PUBLIC_KEY;
+// Never let a misconfigured service_role / private key turn a purported
+// RLS test into a privileged read. Legacy keys must carry role=anon.
+if (key.startsWith('sb_') && !key.startsWith('sb_publishable_')) {
+  throw Error('QA_PUBLIC_KEY debe ser una clave pública anon/publishable; se rechazó una clave privada.');
+}
+if (!key.startsWith('sb_publishable_')) {
+  let role;
+  try {
+    const encoded = key.split('.')[1];
+    role = JSON.parse(Buffer.from(encoded ?? '', 'base64url').toString('utf8')).role;
+  } catch {
+    throw Error('QA_PUBLIC_KEY no es una clave anon válida.');
+  }
+  if (role !== 'anon') throw Error('QA_PUBLIC_KEY debe tener rol anon; no se ejecutará QA privilegiada.');
+}
 const apiHeaders = (accessToken = '') => ({
   apikey: key,
   ...(accessToken ? {Authorization: 'Bearer ' + accessToken} : {}),
