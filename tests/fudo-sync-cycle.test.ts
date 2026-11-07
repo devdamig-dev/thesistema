@@ -17,6 +17,7 @@ const records: Row[] = [];
 let membershipActive = true;
 let activeBusiness = A;
 let denyPageCommit = false;
+let denyFinish = false;
 const runs: Row[] = [];
 const conn: Row = {
   business_id: A, connection_generation: GENERATION, credentials_ciphertext: ciphertext,
@@ -48,7 +49,12 @@ function from(table: string) {
       return this;
     },
     limit(n: number) { limit = n; return this; },
-    update(values: Row) { action = "update"; changes = values; return this; },
+    update(values: Row) {
+      if (table === "fudo_sync_runs" || table === "fudo_connections") {
+        throw new Error("Sync finalization must use fudo_finish_sync RPC, not separate table writes");
+      }
+      action = "update"; changes = values; return this;
+    },
     delete() { throw new Error("Direct Fudo cursor deletes must use the authorized begin_sync RPC"); },
     async upsert(values: Row | Row[], _options?: unknown) {
       if (table === "fudo_sync_progress") {
@@ -131,6 +137,30 @@ const db = {
         started_at: new Date().toISOString(), finished_at: null, counts: {}, error_code: null,
       });
       return { data: { code: "started", run_id: id }, error: null };
+    }
+    if (name === "fudo_finish_sync") {
+      const run = runs.find((entry) => entry.id === args.p_run_id &&
+        entry.business_id === A && entry.connection_generation === GENERATION &&
+        entry.status === "running");
+      if (!run || args.p_business_id !== A || args.p_actor_id !== USER) {
+        return { data: { code: "run_changed" }, error: null };
+      }
+      const allowed = membershipActive && activeBusiness === A && !denyFinish;
+      if (args.p_status !== "failed" && !allowed) {
+        return { data: { code: "forbidden" }, error: null };
+      }
+      // The audit close and connection health update occur in one SQL txn.
+      run.status = args.p_status;
+      run.counts = args.p_counts;
+      run.error_code = args.p_error_code;
+      run.finished_at = new Date().toISOString();
+      if (allowed && args.p_update_connection) {
+        if (args.p_status !== "failed") conn.status = "connected";
+        conn.last_sync_status = args.p_status;
+        conn.last_error_code = args.p_error_code;
+        if (args.p_status !== "failed") conn.last_synced_at = run.finished_at;
+      }
+      return { data: { code: "finished" }, error: null };
     }
     if (name !== "fudo_commit_sync_page") throw Error("Unexpected RPC");
     // Simulate the SQL transaction checking membership AFTER the app's last
@@ -283,6 +313,40 @@ test("Fudo O1 SQL page fence denies a revocation after app preflight with no sna
     assert.equal(runs.at(-1)?.status, "failed", "failed audit run still closes");
   } finally {
     denyPageCommit = false;
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
+
+test("Fudo O1 finalization denies revoked owner before changing connection health", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  membershipActive = true;
+  activeBusiness = A;
+  denyFinish = true;
+  const healthBefore = { ...conn };
+  const providerMethods: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return new Response(JSON.stringify({
+        token: "synthetic-token", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    providerMethods.push(String(init?.method));
+    return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+  };
+  try {
+    const result = await syncFudoReadOnly();
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.code, "forbidden");
+    assert.equal(runs.at(-1)?.status, "failed", "audit run closes after denied success");
+    assert.deepEqual(conn, healthBefore, "revoked finalize cannot mark connection successful");
+    assert.ok(providerMethods.every((method) => method === "GET"), "Fudo remains read-only");
+  } finally {
+    denyFinish = false;
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;

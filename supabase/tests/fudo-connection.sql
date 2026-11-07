@@ -351,4 +351,95 @@ begin
     where id=(started->>'run_id')::uuid;
 end $cycle$;
 
+
+-- O1: finalization must close the audit run and update connection health
+-- atomically, while a revoked owner can only mark their own run as failed.
+select pg_temp.fudo_assert(
+  not has_function_privilege('authenticated',
+    'public.fudo_finish_sync(uuid,uuid,uuid,uuid,text,jsonb,text,boolean)','execute')
+  and not has_function_privilege('anon',
+    'public.fudo_finish_sync(uuid,uuid,uuid,uuid,text,jsonb,text,boolean)','execute'),
+  'finish-sync is service-role only');
+
+do $finish$
+declare
+  a uuid := '00000000-0000-4000-8000-000000008010';
+  owner_a uuid := '00000000-0000-4000-8000-000000008001';
+  owner_b uuid := '00000000-0000-4000-8000-000000008002';
+  generation_a uuid;
+  started jsonb;
+  run_a uuid;
+  result jsonb;
+  original_health text;
+  original_synced timestamptz;
+begin
+  select connection_generation,last_sync_status,last_synced_at
+    into generation_a,original_health,original_synced
+    from public.fudo_connections where business_id=a;
+  perform pg_temp.fudo_assert(generation_a is not null,'finish fixture connection exists');
+  started := public.fudo_begin_sync(a,generation_a,owner_a);
+  perform pg_temp.fudo_assert(started->>'code'='started','finish fixture run starts');
+  run_a := (started->>'run_id')::uuid;
+
+  result := public.fudo_finish_sync(a,generation_a,owner_b,run_a,
+    'completed','{}'::jsonb,null,true);
+  perform pg_temp.fudo_assert(result->>'code'='run_changed',
+    'B owner cannot finish a run owned by A');
+
+  result := public.fudo_finish_sync(a,generation_a,owner_a,run_a,
+    'completed','[]'::jsonb,null,true);
+  perform pg_temp.fudo_assert(result->>'code'='invalid_input',
+    'malformed counts rejected');
+  perform pg_temp.fudo_assert(
+    (select status='running' from public.fudo_sync_runs where id=run_a),
+    'invalid finish never closes run');
+
+  update public.business_members set role='manager'
+    where business_id=a and user_id=owner_a;
+  result := public.fudo_finish_sync(a,generation_a,owner_a,run_a,
+    'completed','{}'::jsonb,null,true);
+  perform pg_temp.fudo_assert(result->>'code'='forbidden',
+    'revoked owner cannot finish successfully');
+  perform pg_temp.fudo_assert(
+    (select status='running' from public.fudo_sync_runs where id=run_a)
+    and (select last_sync_status is not distinct from original_health
+      and last_synced_at is not distinct from original_synced
+      from public.fudo_connections where business_id=a),
+    'denied finish never changes run or connection health');
+
+  result := public.fudo_finish_sync(a,generation_a,owner_a,run_a,
+    'failed',jsonb_build_object('products',1),'forbidden',false);
+  perform pg_temp.fudo_assert(result->>'code'='finished',
+    'revoked actor can close its own failed audit run');
+  perform pg_temp.fudo_assert(
+    (select status='failed' and error_code='forbidden'
+      from public.fudo_sync_runs where id=run_a)
+    and (select last_sync_status is not distinct from original_health
+      and last_synced_at is not distinct from original_synced
+      from public.fudo_connections where business_id=a),
+    'failed audit close cannot rewrite connection on revocation');
+
+  update public.business_members set role='owner'
+    where business_id=a and user_id=owner_a;
+  started := public.fudo_begin_sync(a,generation_a,owner_a);
+  perform pg_temp.fudo_assert(started->>'code'='started','next run starts');
+  run_a := (started->>'run_id')::uuid;
+  result := public.fudo_finish_sync(a,generation_a,owner_a,run_a,
+    'partial',jsonb_build_object('products',2),null,true);
+  perform pg_temp.fudo_assert(result->>'code'='finished'
+    and (result->>'connection_updated')::boolean,
+    'authorized finish updates both rows');
+  perform pg_temp.fudo_assert(
+    (select status='partial' and counts->>'products'='2'
+      from public.fudo_sync_runs where id=run_a)
+    and (select last_sync_status='partial' and last_error_code is null
+      and last_synced_at is not null
+      from public.fudo_connections where business_id=a),
+    'run and connection health finish consistently');
+  result := public.fudo_finish_sync(a,generation_a,owner_a,run_a,
+    'partial','{}'::jsonb,null,true);
+  perform pg_temp.fudo_assert(result->>'code'='run_changed',
+    'already closed run cannot be rewritten');
+end $finish$;
+
 rollback;

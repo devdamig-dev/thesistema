@@ -560,32 +560,47 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
     if (!(await isStillAuthorized(syncActor))) throw new Error("fudo_actor_revoked");
     const hasPendingPages = pendingPages.some(Boolean);
     const status = hasPendingPages ? "partial" : "completed";
-    const completed = new Date().toISOString();
-    const [runUpdate, connUpdate] = await Promise.all([
-      db.from("fudo_sync_runs").update({
-        status, counts, error_code: null, finished_at: completed,
-      }).eq("business_id", actor.businessId).eq("id", runId),
-      db.from("fudo_connections").update({
-        status: "connected", last_sync_status: status, last_synced_at: completed, last_error_code: null,
-      }).eq("business_id", actor.businessId).eq("connection_generation", generation),
-    ]);
-    if (runUpdate.error || connUpdate.error) return fail("storage_unavailable", UNKNOWN);
+    // The run result and connection health must commit atomically. Re-check
+    // owner/admin and generation inside SQL to close the final auth/write race.
+    const finalized = await db.rpc("fudo_finish_sync", {
+      p_business_id: syncBusinessId,
+      p_expected_generation: generation,
+      p_actor_id: syncActor.userId,
+      p_run_id: runId,
+      p_status: status,
+      p_counts: counts,
+      p_error_code: null,
+      p_update_connection: true,
+    });
+    if (finalized.error) throw new Error("fudo_storage_failed");
+    if (finalized.data?.code === "forbidden") throw new Error("fudo_actor_revoked");
+    if (finalized.data?.code === "connection_changed") throw new Error("fudo_connection_changed");
+    if (finalized.data?.code !== "finished") throw new Error("fudo_storage_failed");
     const total = Object.values(counts).reduce((sum, value) => sum + value, 0);
     return { ok: true, message: hasPendingPages
       ? `Se importaron ${total} registros de esta tanda. Hay páginas pendientes: ejecutá otra sincronización para continuar.`
       : `Sincronización de esta tanda completada: ${total} registros leídos. No se modificaron ventas ni stock nativos.` };
   } catch (error) {
     const failure = safeFailure(error);
-    if (runId && actor && db) {
-      await db.from("fudo_sync_runs").update({
-        status: "failed", counts, error_code: failure.ok ? null : failure.code, finished_at: new Date().toISOString(),
-      }).eq("business_id", actor.businessId).eq("id", runId);
-      // Always close the audit run for recovery, but do not change the
-      // connection health on behalf of an actor whose rights were revoked.
-      if (generation && !(error instanceof Error && error.message === "fudo_actor_revoked")) {
-        await db.from("fudo_connections").update({
-          last_sync_status: "failed", last_error_code: failure.ok ? null : failure.code,
-        }).eq("business_id", actor.businessId).eq("connection_generation", generation);
+    if (runId && actor && db && generation) {
+      // Always close the audit run after a failure, even if the actor was
+      // revoked, but NEVER rewrite connection health for that revoked actor.
+      // If SQL is unavailable, stale-run recovery remains the fallback.
+      const actorChanged = error instanceof Error &&
+        (error.message === "fudo_actor_revoked" || error.message === "fudo_connection_changed");
+      try {
+        await db.rpc("fudo_finish_sync", {
+          p_business_id: actor.businessId,
+          p_expected_generation: generation,
+          p_actor_id: actor.userId,
+          p_run_id: runId,
+          p_status: "failed",
+          p_counts: counts,
+          p_error_code: failure.ok ? null : failure.code,
+          p_update_connection: !actorChanged,
+        });
+      } catch {
+        // A later authorized request will recover an abandoned run.
       }
     }
     return failure;
