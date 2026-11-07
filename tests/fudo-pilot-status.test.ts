@@ -12,7 +12,9 @@ const CYCLE_B = "b2222222-2222-4222-8222-222222222222";
 let tenant = A;
 let role = "owner";
 let isMember = true;
+let profileActive = true;
 let duringProgressRead: (() => void) | null = null;
+let duringConnectionRead: (() => void) | null = null;
 
 const connections = [
   { business_id: A, connection_generation: GA, status: "connected", last_tested_at: null,
@@ -51,7 +53,7 @@ function query(table: string) {
   let countOnly = false;
   let max = Infinity;
   const get = () => {
-    if (table === "profiles") return [{ active: true }];
+    if (table === "profiles") return [{ active: profileActive }];
     if (table === "business_members") return isMember && filters.business_id === tenant && filters.user_id === USER ? [{ id: "member" }] : [];
     const all = table === "fudo_connections" ? connections
       : table === "fudo_sync_runs" ? runs
@@ -67,7 +69,11 @@ function query(table: string) {
     in(_key: string, _values: unknown[]) { return this; },
     order(_key: string, _value: unknown) { return this; },
     limit(value: number) { max = value; return this; },
-    async maybeSingle() { return { data: get()[0] ?? null, error: null }; },
+    async maybeSingle() {
+      const data = get()[0] ?? null;
+      if (table === "fudo_connections") duringConnectionRead?.();
+      return { data, error: null };
+    },
     then(resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) {
       // PostgREST returns independent JSON snapshots; do not let a simulated
       // concurrent write mutate data already returned by a previous query.
@@ -320,5 +326,45 @@ test("Fudo preflight revision stays tenant-scoped even for identical connection 
   } finally {
     Object.assign(connections[1], original);
     tenant = A;
+  }
+});
+
+test("Fudo report rejects aggregates if authorization changes during privileged reads", async () => {
+  for (const change of ["membership_revoked", "role_downgraded", "profile_disabled", "tenant_switched"] as const) {
+    tenant = A; role = "owner"; isMember = true; profileActive = true;
+    try {
+      duringProgressRead = () => {
+        duringProgressRead = null;
+        if (change === "membership_revoked") isMember = false;
+        if (change === "role_downgraded") role = "employee";
+        if (change === "profile_disabled") profileActive = false;
+        if (change === "tenant_switched") tenant = B;
+      };
+      const result = await getFudoConnectionView();
+      assert.equal(result, null, `must discard all aggregates after ${change}`);
+    } finally {
+      duringProgressRead = null;
+      tenant = A; role = "owner"; isMember = true; profileActive = true;
+    }
+  }
+});
+
+test("Fudo disconnected view also rejects a revoked owner after the connection lookup", async () => {
+  tenant = A; role = "owner"; isMember = true; profileActive = true;
+  const original = connections.find((row) => row.business_id === A);
+  assert.ok(original);
+  try {
+    // No connection for A: only the empty-status branch is exercised.
+    connections.splice(connections.indexOf(original), 1);
+    duringConnectionRead = () => {
+      duringConnectionRead = null;
+      isMember = false;
+    };
+    assert.equal(await getFudoConnectionView(), null,
+      "a detached owner must not receive even the previous business' empty integration view");
+  } finally {
+    duringConnectionRead = null;
+    if (!connections.includes(original)) connections.unshift(original);
+    tenant = A; role = "owner"; isMember = true; profileActive = true;
   }
 });
