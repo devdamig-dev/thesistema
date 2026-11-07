@@ -180,7 +180,15 @@ export function nextFudoPage(response: unknown, currentPage: number, recordCount
       }
     }
   }
-  // Backwards-compatible fallback only when next-link metadata is absent.
+  // Legacy fallback only when next-link metadata is absent. A nonempty
+  // short import page is ambiguous: Fudo could have capped the requested
+  // size while more records remain. Never commit next_page=0 and claim a
+  // complete five-resource cycle based only on that short response.
+  // Probes request page[size]=1 and do not claim a full import.
+  if (requestedPageSize === FUDO_SYNC_PAGE_SIZE && recordCount > 0
+    && recordCount < requestedPageSize) {
+    throw new Error("invalid_fudo_page");
+  }
   if (recordCount !== FUDO_SYNC_PAGE_SIZE) return 0;
   if (currentPage === 100000) throw new Error("invalid_fudo_page");
   return currentPage + 1;
