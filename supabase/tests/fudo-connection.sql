@@ -442,4 +442,102 @@ begin
     'already closed run cannot be rewritten');
 end $finish$;
 
+
+-- O1 retest health is an authorized transaction, not a service-role UPDATE.
+-- All data here is synthetic and the enclosing fixture transaction rolls back.
+select pg_temp.fudo_assert(
+  has_function_privilege('service_role',
+    'public.fudo_record_connection_test(uuid,uuid,uuid,timestamptz,text,text)','execute')
+  and not has_function_privilege('authenticated',
+    'public.fudo_record_connection_test(uuid,uuid,uuid,timestamptz,text,text)','execute')
+  and not has_function_privilege('anon',
+    'public.fudo_record_connection_test(uuid,uuid,uuid,timestamptz,text,text)','execute'),
+  'retest RPC only callable by service_role');
+
+do $retest$
+declare
+  a uuid := '00000000-0000-4000-8000-000000008010';
+  owner_a uuid := '00000000-0000-4000-8000-000000008001';
+  owner_b uuid := '00000000-0000-4000-8000-000000008002';
+  manager_a uuid := '00000000-0000-4000-8000-000000008003';
+  inactive_a uuid := '00000000-0000-4000-8000-000000008004';
+  generation_a uuid;
+  previous timestamptz;
+  newest timestamptz;
+  result text;
+begin
+  select connection_generation,last_tested_at into generation_a,previous
+    from public.fudo_connections where business_id=a;
+  perform pg_temp.fudo_assert(generation_a is not null,
+    'retest fixture has a connection');
+
+  result := public.fudo_record_connection_test(a,generation_a,owner_b,
+    previous,'error','forbidden');
+  perform pg_temp.fudo_assert(result='forbidden','other tenant cannot retest A');
+  result := public.fudo_record_connection_test(a,generation_a,manager_a,
+    previous,'error','forbidden');
+  perform pg_temp.fudo_assert(result='forbidden','manager cannot retest');
+  result := public.fudo_record_connection_test(a,generation_a,inactive_a,
+    previous,'error','forbidden');
+  perform pg_temp.fudo_assert(result='forbidden','inactive admin cannot retest');
+
+  result := public.fudo_record_connection_test(a,generation_a,owner_a,
+    previous,'connected',null);
+  perform pg_temp.fudo_assert(result='recorded','owner can record successful retest');
+  select last_tested_at into newest from public.fudo_connections where business_id=a;
+  perform pg_temp.fudo_assert(newest > previous,'retest timestamp advances');
+
+  result := public.fudo_record_connection_test(a,generation_a,owner_a,
+    previous,'error','forbidden');
+  perform pg_temp.fudo_assert(result='connection_changed',
+    'late provider failure cannot clobber a newer retest');
+  perform pg_temp.fudo_assert(
+    (select status='connected' and last_error_code is null
+     and last_tested_at=newest from public.fudo_connections where business_id=a),
+    'stale CAS leaves connection health intact');
+
+  update public.business_members set role='manager' where business_id=a and user_id=owner_a;
+  result := public.fudo_record_connection_test(a,generation_a,owner_a,
+    newest,'error','forbidden');
+  perform pg_temp.fudo_assert(result='forbidden',
+    'transaction-time revocation cannot write health');
+  perform pg_temp.fudo_assert(
+    (select status='connected' and last_tested_at=newest
+     from public.fudo_connections where business_id=a),
+    'denied actor leaves test metadata intact');
+  update public.business_members set role='owner' where business_id=a and user_id=owner_a;
+
+  result := public.fudo_record_connection_test(a,generation_a,owner_a,
+    newest,'error','forbidden');
+  perform pg_temp.fudo_assert(result='recorded',
+    'authorized retest may record a sanitized failure');
+  perform pg_temp.fudo_assert(
+    (select status='error' and last_error_code='forbidden'
+      from public.fudo_connections where business_id=a),
+    'only sanitized provider failure code stored');
+
+  -- A skewed server clock must never let CAS revisions repeat.
+  update public.fudo_connections set last_tested_at=now()+interval '1 hour'
+    where business_id=a;
+  select last_tested_at into previous from public.fudo_connections where business_id=a;
+  result := public.fudo_record_connection_test(a,generation_a,owner_a,
+    previous,'connected',null);
+  select last_tested_at into newest from public.fudo_connections where business_id=a;
+  perform pg_temp.fudo_assert(result='recorded' and newest>previous,
+    'retest revision advances even when DB timestamp was in the future');
+
+  result := public.fudo_record_connection_test(a,generation_a,owner_a,
+    newest,'error','PRIVATE_PAYLOAD');
+  perform pg_temp.fudo_assert(result='invalid_input',
+    'non-sanitized error codes cannot reach persistent health');
+
+  perform pg_temp.fudo_assert(
+    public.fudo_replace_connection(a,owner_a,repeat('r',100))='connected',
+    'rotation can invalidate a prior probe');
+  result := public.fudo_record_connection_test(a,generation_a,owner_a,
+    newest,'error','forbidden');
+  perform pg_temp.fudo_assert(result='connection_changed',
+    'old generation cannot overwrite a rotated connection');
+end $retest$;
+
 rollback;
