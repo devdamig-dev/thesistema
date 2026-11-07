@@ -1,0 +1,42 @@
+name: O1 QA Auth real, RLS y acceso Fudo read-only
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/qa/live-auth-rls-readonly.mjs'
+      - '.github/workflows/qa-live-auth.yml'
+permissions:
+  contents: read
+jobs:
+  syntax-only:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - run: node --check scripts/qa/live-auth-rls-readonly.mjs
+  two-tenant:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - name: Verificar sesiones QA A/B y denegación de tablas Fudo (sólo lectura)
+        env:
+          QA_PUBLIC_KEY: ${{ secrets.QA_PUBLIC_KEY }}
+          QA_USER_A_EMAIL: ${{ secrets.QA_USER_A_EMAIL }}
+          QA_USER_A_PASSWORD: ${{ secrets.QA_USER_A_PASSWORD }}
+          QA_USER_B_EMAIL: ${{ secrets.QA_USER_B_EMAIL }}
+          QA_USER_B_PASSWORD: ${{ secrets.QA_USER_B_PASSWORD }}
+        run: node scripts/qa/live-auth-rls-readonly.mjs
