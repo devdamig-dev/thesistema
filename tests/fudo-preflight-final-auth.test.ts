@@ -17,6 +17,7 @@ let role = "owner";
 let isMember = true;
 let profileActive = true;
 let connectionReads = 0;
+let connectionStatus: "connected" | "error" = "connected";
 let duringFinalConnectionRead: (() => void) | null = null;
 
 const db = {
@@ -43,7 +44,7 @@ const db = {
           ? {
               credentials_ciphertext: CIPHERTEXT,
               connection_generation: GENERATION,
-              status: "connected",
+              status: connectionStatus,
               last_tested_at: "2026-11-07T00:00:00Z",
             }
           : null;
@@ -124,5 +125,35 @@ test("Fudo preflight rejects checks if owner is revoked during its last privileg
     globalThis.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = originalKey;
+  }
+});
+
+test("Fudo O1 preflight refuses errored connections before decrypting or contacting provider", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  let outboundRequests = 0;
+  tenant = A; role = "owner"; isMember = true; profileActive = true;
+  connectionStatus = "error";
+  connectionReads = 0;
+  duringFinalConnectionRead = null;
+  delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  globalThis.fetch = async () => {
+    outboundRequests++;
+    throw new Error("No Fudo HTTP request should be initiated on a failed connection");
+  };
+  try {
+    const result = await inspectFudoReadPermissions();
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.checks, [], "no stale green checks when last retest failed");
+    assert.match(result.message, /test exitoso/);
+    assert.equal(connectionReads, 1, "only a tenant-scoped connection metadata read is needed");
+    assert.equal(outboundRequests, 0, "no provider auth POST or resource GET");
+  } finally {
+    tenant = A; role = "owner"; isMember = true; profileActive = true;
+    connectionStatus = "connected";
+    duringFinalConnectionRead = null;
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
   }
 });
