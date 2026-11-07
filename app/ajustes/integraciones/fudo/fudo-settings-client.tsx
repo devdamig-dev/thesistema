@@ -116,7 +116,7 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
             {hasCredentials && <Button disabled={working} onClick={() => execute(testFudoConnectionAction)}>
               <RefreshCcw className="h-4 w-4" /> Probar conexión
             </Button>}
-            {hasCredentials && <Button disabled={working} onClick={() => execute(async () => {
+            {connected && <Button disabled={working} onClick={() => execute(async () => {
               const result = await runFudoPreflightSafely(inspectFudoPermissionsAction);
               if (connectionRevision && result.checks.length > 0) {
                 setPreflightState({ revision: connectionRevision, result });
