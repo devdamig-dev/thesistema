@@ -385,6 +385,13 @@ export async function inspectFudoReadPermissions(): Promise<FudoResourcePrefligh
       .eq("business_id", actor.businessId).maybeSingle();
     if (stored.error) return { ok: false, message: UNKNOWN, checks: [] };
     if (!stored.data) return { ok: false, message: "Primero conectá Fudo.", checks: [] };
+    // A failed credential retest marks this connection as error. Do not issue
+    // another five provider GETs with unvalidated credentials or present fresh
+    // green probes for a connection explicitly blocked by the last retest.
+    // The owner/admin must first recover it through "Probar conexión".
+    if (stored.data.status !== "connected") {
+      return { ok: false, message: "La conexión Fudo requiere un test exitoso antes de revisar permisos.", checks: [] };
+    }
     const generation: unknown = stored.data.connection_generation;
     if (typeof generation !== "string" || !generation) {
       return { ok: false, message: UNKNOWN, checks: [] };
