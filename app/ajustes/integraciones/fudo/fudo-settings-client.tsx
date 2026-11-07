@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/ajustes/setting-row";
 import type { FudoConnectionView, FudoResourcePreflight } from "@/lib/integrations/fudo/service";
 import { evaluateFudoPilotReadiness, fudoConnectionRevision, selectCurrentFudoPreflight } from "@/lib/integrations/fudo/readiness";
-import { runFudoActionSafely, runFudoPreflightSafely } from "@/lib/integrations/fudo/action-feedback";
+import { runFudoActionSafely, runFudoPreflightSafely, runFudoSyncBatches } from "@/lib/integrations/fudo/action-feedback";
 import {
   connectFudoAction, testFudoConnectionAction, inspectFudoPermissionsAction, disconnectFudoAction, syncFudoAction,
 } from "@/app/actions/fudo";
@@ -51,6 +51,17 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
       const result = await runFudoActionSafely(action);
       setNotice({ ok: result.ok, message: result.message });
       if (result.ok && clear) { setKey(""); setSecret(""); }
+      router.refresh();
+    });
+  };
+
+  const executeBoundedSync = () => {
+    setNotice(null);
+    setPreflightState(null);
+    startTransition(async () => {
+      const result = await runFudoSyncBatches(syncFudoAction);
+      setNotice({ ok: result.ok, message: result.message });
+      // Reread persisted cursors and logs even if a later batch failed.
       router.refresh();
     });
   };
@@ -258,13 +269,17 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
         </p>}
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <Button variant="primary" disabled={!connected || working}
-            onClick={() => execute(syncFudoAction)}>
+            onClick={executeBoundedSync}>
             <DatabaseZap className="h-4 w-4" /> {working ? "Sincronizando…" : "Sincronizar datos"}
           </Button>
           {status.lastSyncStatus === "partial" && <span className="text-xs text-ink-muted">
-            Volvé a sincronizar para continuar con la siguiente tanda.
+            Si quedan páginas después de cinco tandas, volvé a sincronizar para continuar.
           </span>}
         </div>
+        <p className="mt-2 text-xs text-ink-muted">
+          Cada clic continúa hasta cinco tandas read-only con cursores persistidos; se detiene ante un error
+          o una respuesta incierta. No se alteran ventas, pedidos ni stock de Fudo.
+        </p>
       </SettingsCard>
 
       {hasCredentials && <SettingsCard title="Desconectar" description="Elimina las credenciales y detiene nuevas lecturas. Conserva los registros históricos importados para auditoría privada.">
