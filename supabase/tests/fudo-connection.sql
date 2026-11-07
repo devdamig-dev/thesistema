@@ -363,6 +363,29 @@ begin
      where business_id=a and connection_generation=generation_a)
     and (select count(*)=b_before from public.fudo_sync_progress where business_id=b),
     'historical snapshots and other tenant unchanged');
+  -- The same external ID is legitimate in a NEW full-scan cycle; this
+  -- guard must not reject normal idempotent rescans of historical staging.
+  perform pg_temp.fudo_assert(
+    (select count(*)=2 from public.fudo_external_records
+      where business_id=a and connection_generation=generation_a and resource_type='products'),
+    'rescan preserves prior product staging');
+  perform pg_temp.fudo_assert(
+    (public.fudo_commit_sync_page(a,generation_a,owner_a,
+       (started->>'run_id')::uuid,'products',1,0,
+       '00000000-0000-4000-8000-000000008377'::uuid,now(),
+       jsonb_build_array(jsonb_build_object(
+         'external_id','page-fixture-a','payload',jsonb_build_object('id','page-fixture-a','rescan',true),
+         'content_hash',repeat('c',64),'source_updated_at',null))) ->> 'code')='saved',
+    'same ID is accepted in new cycle');
+  perform pg_temp.fudo_assert(
+    (select count(*)=2 from public.fudo_external_records
+      where business_id=a and connection_generation=generation_a and resource_type='products')
+    and (select content_hash=repeat('c',64)
+        and last_seen_cycle_id='00000000-0000-4000-8000-000000008377'::uuid
+        from public.fudo_external_records where business_id=a
+          and connection_generation=generation_a and resource_type='products'
+          and external_id='page-fixture-a'),
+    'rescan updates provenance of old ID without creating a duplicate row');
   update public.fudo_sync_runs set status='completed',finished_at=now()
     where id=(started->>'run_id')::uuid;
 end $cycle$;
