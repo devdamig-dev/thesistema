@@ -111,6 +111,9 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
   if (connection.error) return null;
   const row = connection.data;
   if (!row) {
+    // Even an empty configuration view must not escape after a concurrent
+    // role revocation, profile deactivation or server-side tenant switch.
+    if (!(await isStillAuthorized(actor))) return null;
     return {
       configured: true, connectionRevision: null, status: "disconnected",
       lastTestedAt: null, lastSyncedAt: null, lastSyncStatus: null, lastErrorCode: null, lastCounts: {},
@@ -256,6 +259,10 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
       || nowRun.finished_at !== latestRunRevision.finished_at
       || nowRun.status !== latestRunRevision.status
     ))) return null;
+  // Aggregates are read through the privileged service role. A revoked
+  // administrator or a switched session must not receive those results, even
+  // when connection metadata and the latest run did not change.
+  if (!(await isStillAuthorized(actor))) return null;
   return {
     configured: true,
     // Never reuse green checks after switching businesses with an identical
