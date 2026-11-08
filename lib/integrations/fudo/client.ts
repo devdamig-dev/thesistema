@@ -13,6 +13,7 @@
  */
 
 import { nextFudoPage, parseFudoPage } from "./snapshot";
+import { assertSafeFudoJsonNumbers } from "./json-numbers";
 
 export type FudoCredentials = {
   apiKey: string;
@@ -161,7 +162,7 @@ async function discardResponseBody(response: Response): Promise<void> {
   try { await response.body?.cancel(); } catch { /* Already closed or aborted. */ }
 }
 
-async function readBoundedJson(response: Response, maxBytes: number): Promise<unknown> {
+async function readBoundedJson(response: Response, maxBytes: number, enforceNumericFidelity = false): Promise<unknown> {
   const lengthHeader = response.headers.get("content-length");
   if (lengthHeader && /^\d+$/.test(lengthHeader) && Number(lengthHeader) > maxBytes) {
     // Header-based rejection must also release the upstream response. Otherwise
@@ -203,7 +204,9 @@ async function readBoundedJson(response: Response, maxBytes: number): Promise<un
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  if (enforceNumericFidelity) assertSafeFudoJsonNumbers(source);
+  return JSON.parse(source);
 }
 
 export class FudoClient {
@@ -403,7 +406,7 @@ export class FudoClient {
       // Full 100-record synchronization retains its existing larger bound.
       const maxBytes = String(params["page[size]"] ?? "") === "1"
         ? MAX_PROBE_JSON_BYTES : MAX_READ_JSON_BYTES;
-      return await readBoundedJson(response, maxBytes);
+      return await readBoundedJson(response, maxBytes, true);
     } catch (error) {
       const interrupted = error instanceof Error && error.message === "fudo_response_transport_failed";
       throw new FudoApiError(
