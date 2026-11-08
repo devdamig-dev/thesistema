@@ -14,6 +14,7 @@ function runFixture(scenario, overrides = {}) {
   const source = [
     "const scenario = process.env.QA_FIXTURE_SCENARIO;",
     "let privateGets = 0;",
+    "let anonymousEntityGets = 0;", 
     "globalThis.fetch = async (input, init = {}) => {",
     "  const url = new URL(String(input));",
     "  if (init.redirect !== 'error') throw Error('QA fetch must reject provider redirects');",
@@ -30,6 +31,7 @@ function runFixture(scenario, overrides = {}) {
     "  if (!url.pathname.startsWith('/rest/v1/')) throw Error('Unexpected network path');",
     "  if (init.method && init.method !== 'GET') throw Error('Business write detected');",
     "  const table = url.pathname.slice('/rest/v1/'.length);",
+    "  if (!auth && (table === 'organizations' || table === 'businesses')) anonymousEntityGets++;", 
     "  if (table.startsWith('fudo_')) {",
     "    privateGets++;",
     "    if (scenario === 'private-200') return json([]);",
@@ -57,6 +59,7 @@ function runFixture(scenario, overrides = {}) {
     "};",
     "await import(" + JSON.stringify(gateUrl) + ");",
     "if (privateGets !== 12) throw Error('Expected exactly 12 private-table GETs, got ' + privateGets);",
+    "if (anonymousEntityGets !== 4) throw Error('Expected 4 anonymous entity GETs, got ' + anonymousEntityGets);", 
   ].join('\n');
   const env = {
     ...process.env,
@@ -79,6 +82,7 @@ test('Gate sintético A/B: organizaciones separadas y 12 GET privados denegados'
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, /PASS: 2 sesiones Auth QA reales/);
   assert.match(run.stdout, /12 GET/);
+  assert.match(run.stdout, /4 GET/);
   assert.doesNotMatch(run.stdout + run.stderr, /fixture-password|mock-token/);
 });
 
