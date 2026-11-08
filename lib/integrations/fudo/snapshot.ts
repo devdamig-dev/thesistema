@@ -13,6 +13,30 @@ const FUDO_JSON_API_TYPES: Record<FudoSyncResource, readonly string[]> = {
   sales: ["sale", "sales"],
 };
 
+/**
+ * PostgreSQL jsonb cannot store U+0000, even when it arrived as a valid
+ * JSON escape from the provider. Reject the whole page before calling the
+ * atomic staging RPC, so a provider contract error never looks like a DB
+ * outage or advances a cursor. Inspect keys as well as nested values.
+ */
+function hasJsonbNullCharacter(root: unknown): boolean {
+  const pending: unknown[] = [root];
+  while (pending.length) {
+    const value = pending.pop();
+    if (typeof value === "string") {
+      if (value.includes("\u0000")) return true;
+    } else if (Array.isArray(value)) {
+      pending.push(...value);
+    } else if (value && typeof value === "object") {
+      for (const [key, child] of Object.entries(value)) {
+        if (key.includes("\u0000")) return true;
+        pending.push(child);
+      }
+    }
+  }
+  return false;
+}
+
 export type FudoSnapshot = {
   externalId: string;
   payload: Record<string, unknown>;
@@ -57,7 +81,13 @@ export function parseFudoPage(value: unknown, expectedResource?: string): FudoSn
     // Reject padded IDs rather than normalizing them or marking the cycle complete.
     const id = typeof rawId === "string" ? rawId
       : typeof rawId === "number" && Number.isSafeInteger(rawId) ? String(rawId) : "";
-    if (!id || id !== id.trim() || id.length > 256 || seen.has(id)) throw new Error("invalid_fudo_record");
+    // Control characters in IDs corrupt provenance/export and can break SQL
+    // text storage (NUL is forbidden in PostgreSQL). Fail before staging.
+    if (!id || id !== id.trim() || id.length > 256
+      || /[\u0000-\u001f\u007f]/u.test(id) || seen.has(id)) throw new Error("invalid_fudo_record");
+    // A NUL hidden in nested attributes or object keys also makes jsonb reject
+    // the entire transaction. Report a sanitized provider-contract error.
+    if (hasJsonbNullCharacter(body)) throw new Error("invalid_fudo_record");
     seen.add(id);
 
     // JSON:API allows attributes to be omitted, but an explicitly supplied
