@@ -40,11 +40,13 @@ function runFixture(scenario, overrides = {}) {
     "  const requestedId = url.searchParams.get('id')?.replace('eq.', '');",
     "  const requestedOrg = url.searchParams.get('organization_id')?.replace('eq.', '');",
     "  if (table === 'organizations') {",
+    "    if (!auth) return json(scenario === 'anon-org-leak' ? [{id:'org-A'}] : []);",
     "    const ids = who === 'A' ? ['org-A'] : ['org-B'];",
     "    if (scenario === 'cross-tenant' && who === 'A') ids.push('org-B');",
     "    return json(ids.filter(id => !requestedId || id === requestedId).map(id => ({id})));",
     "  }",
     "  if (table === 'businesses') {",
+    "    if (!auth) return json(scenario === 'anon-business-leak' ? [{id:'business-A',organization_id:'org-A'}] : []);",
     "    const own = who === 'A' ? 'org-A' : 'org-B';",
     "    if (scenario === 'cross-business-id' && who === 'B' && requestedId === 'business-A')",
     "      return json([{id:'business-A',organization_id:'org-A'}]);",
@@ -134,4 +136,20 @@ test('Gate rechaza ausencia de cuentas QA en vez de fingir aprobación', () => {
   assert.notEqual(run.status, 0);
   assert.match(run.stderr, /QA no configurada/);
   assert.doesNotMatch(run.stdout, /PASS:/);
+});
+
+test('Gate rechaza descubrimiento anónimo del ID de una organización A/B', () => {
+  const run = runFixture('anon-org-leak');
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /Consulta anónima expuso un identificador privado de organizations/);
+  assert.doesNotMatch(run.stdout, /PASS: 4 tablas Fudo/);
+  assert.doesNotMatch(run.stdout + run.stderr, /fixture-password|mock-token/);
+});
+
+test('Gate rechaza descubrimiento anónimo del ID de un negocio A/B', () => {
+  const run = runFixture('anon-business-leak');
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /Consulta anónima expuso un identificador privado de businesses/);
+  assert.doesNotMatch(run.stdout, /PASS: 4 tablas Fudo/);
+  assert.doesNotMatch(run.stdout + run.stderr, /fixture-password|mock-token/);
 });
