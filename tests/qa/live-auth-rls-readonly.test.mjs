@@ -25,7 +25,7 @@ function runFixture(scenario, overrides = {}) {
     "    const credentials = JSON.parse(init.body);",
     "    return json({access_token: credentials.email === 'qa-a@example.invalid' ? 'mock-token-A' : 'mock-token-B'});",
     "  }",
-    "  if (url.pathname === '/auth/v1/user') return json({id: who === 'A' ? 'user-A' : 'user-B'});",
+    "  if (url.pathname === '/auth/v1/user') return json({id: scenario === 'same-auth-user' ? 'user-A' : who === 'A' ? 'user-A' : 'user-B'});",
     "  if (!url.pathname.startsWith('/rest/v1/')) throw Error('Unexpected network path');",
     "  if (init.method && init.method !== 'GET') throw Error('Business write detected');",
     "  const table = url.pathname.slice('/rest/v1/'.length);",
@@ -33,16 +33,19 @@ function runFixture(scenario, overrides = {}) {
     "    privateGets++;",
     "    return scenario === 'private-200' ? json([]) : json({message:'denied'}, 403);",
     "  }",
-    "  const requestedOrg = url.searchParams.get('id')?.replace('eq.', '')",
-    "    || url.searchParams.get('organization_id')?.replace('eq.', '');",
+    "  const requestedId = url.searchParams.get('id')?.replace('eq.', '');",
+    "  const requestedOrg = url.searchParams.get('organization_id')?.replace('eq.', '');",
     "  if (table === 'organizations') {",
     "    const ids = who === 'A' ? ['org-A'] : ['org-B'];",
     "    if (scenario === 'cross-tenant' && who === 'A') ids.push('org-B');",
-    "    return json(ids.filter(id => !requestedOrg || id === requestedOrg).map(id => ({id})));",
+    "    return json(ids.filter(id => !requestedId || id === requestedId).map(id => ({id})));",
     "  }",
     "  if (table === 'businesses') {",
     "    const own = who === 'A' ? 'org-A' : 'org-B';",
-    "    return json(!requestedOrg || requestedOrg === own ? [{id:'business-'+who,organization_id:own}] : []);",
+    "    if (scenario === 'cross-business-id' && who === 'B' && requestedId === 'business-A')",
+    "      return json([{id:'business-A',organization_id:'org-A'}]);",
+    "    const row = {id:'business-'+who,organization_id:own};",
+    "    return json((!requestedOrg || requestedOrg === own) && (!requestedId || requestedId === row.id) ? [row] : []);",
     "  }",
     "  throw Error('Unexpected table');",
     "};",
@@ -84,6 +87,20 @@ test('Gate falla si se exponen organizaciones cruzadas A/B', () => {
   const run = runFixture('cross-tenant');
   assert.notEqual(run.status, 0);
   assert.match(run.stderr, /comparten una organización/);
+  assert.doesNotMatch(run.stdout, /PASS:/);
+});
+
+test('Gate rechaza lectura directa de business_id ajeno aunque el filtro por organización funcione', () => {
+  const run = runFixture('cross-business-id');
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /Usuario B accede directamente a un negocio de A/);
+  assert.doesNotMatch(run.stdout, /PASS:/);
+});
+
+test('Gate rechaza dos credenciales que resuelven al mismo usuario Auth', () => {
+  const run = runFixture('same-auth-user');
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /No se probaron dos usuarios distintos/);
   assert.doesNotMatch(run.stdout, /PASS:/);
 });
 
