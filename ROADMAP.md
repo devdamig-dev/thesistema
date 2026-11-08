@@ -45,6 +45,13 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — corte seguro de lote tras un error (08/11/2026; PR #286 en revisión)
+
+- **Resultado observable:** al fallar un recurso Fudo durante un lote de hasta tres lecturas paralelas, no iniciar los recursos aún pendientes; esperar los GET y commits ya lanzados antes de cerrar el run como `failed`. Los cursores y snapshots confirmados permanecen para reintentar de forma idempotente.
+- **IMPLEMENTADO (rama, no main):** [PR #286](https://github.com/devdamig-dev/thesistema/pull/286) modifica `runFudoReadBatch` y añade regresión sintética de cinco recursos con primera falla, drenaje de dos lecturas en vuelo y cero GET adicionales.
+- **PROBADO:** pendiente de Quality Gate completo para el HEAD del PR; no usar un fixture como prueba de integración real.
+- **DESPLEGADO / VALIDADO EN PRODUCCIÓN:** no. El piloto permanece **NO-GO** hasta contar con Fudo Plan Pro/API del negocio autorizado, dos usuarios QA independientes, conciliación de cinco recursos, segundo ciclo sin duplicados y aislamiento autenticado A/B. Sin migraciones ni escrituras hacia Fudo o datos comerciales.
+
 ### O1 — cobertura QA de membresías por negocio (08/11/2026; publicada)
 
 - **IMPLEMENTADO:** [PR #284](https://github.com/devdamig-dev/thesistema/pull/284) integrado a `main` mediante squash `20e5b5d22b6440466d4522c16892c84719e9ddd6`. El gate manual Auth/RLS incorpora seis GET **exclusivamente de lectura** a `business_members`: comprobar rol owner/admin propio, denegar enumeración de membresías de negocio ajeno por `business_id` y denegar descubrimiento anónimo. Tres regresiones negativas verifican que no apruebe con rol insuficiente ni filtraciones de membresías. No se agregan llamadas a Fudo, SQL de escritura ni cambios funcionales del runtime.
