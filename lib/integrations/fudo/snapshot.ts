@@ -15,11 +15,12 @@ const FUDO_JSON_API_TYPES: Record<FudoSyncResource, readonly string[]> = {
 
 /**
  * PostgreSQL jsonb rejects U+0000 and unpaired UTF-16 surrogates in JSON
- * values AND object keys. JSON.parse accepts escaped lone surrogates, so
- * valid provider JSON is not necessarily compatible with jsonb. Reject the
- * entire page before the atomic staging RPC and never expose provider text.
+ * values AND object keys. JSON.parse can also round unsafe JSON integers and
+ * turn oversized numeric literals into Infinity, which JSON.stringify then
+ * silently stores as null. Reject those values before hashing/staging rather
+ * than importing altered financial or provenance data. Never expose payloads.
  */
-function hasJsonbInvalidUnicode(root: unknown): boolean {
+function hasUnsafeStagingValue(root: unknown): boolean {
   const invalidText = (text: string): boolean => {
     if (text.includes("\u0000")) return true;
     for (let i = 0; i < text.length; i++) {
@@ -40,6 +41,10 @@ function hasJsonbInvalidUnicode(root: unknown): boolean {
     const value = pending.pop();
     if (typeof value === "string") {
       if (invalidText(value)) return true;
+    } else if (typeof value === "number") {
+      // JSON.parse("1e999") -> Infinity -> JSON.stringify(...) -> null.
+      // JSON.parse("9007199254740993") silently rounds the integer.
+      if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value))) return true;
     } else if (Array.isArray(value)) {
       for (const child of value) pending.push(child);
     } else if (value && typeof value === "object") {
@@ -100,9 +105,9 @@ export function parseFudoPage(value: unknown, expectedResource?: string): FudoSn
     // text storage (NUL is forbidden in PostgreSQL). Fail before staging.
     if (!id || id !== id.trim() || id.length > 256
       || /[\u0000-\u001f\u007f]/u.test(id) || seen.has(id)) throw new Error("invalid_fudo_record");
-    // NUL or an unpaired surrogate in nested attributes/keys makes jsonb reject
-    // the entire transaction. Report a sanitized provider-contract error.
-    if (hasJsonbInvalidUnicode(body)) throw new Error("invalid_fudo_record");
+    // Fail before the atomic RPC if JSONB would reject text or JavaScript
+    // would silently alter a provider number during serialization/hashing.
+    if (hasUnsafeStagingValue(body)) throw new Error("invalid_fudo_record");
     seen.add(id);
 
     // JSON:API allows attributes to be omitted, but an explicitly supplied
