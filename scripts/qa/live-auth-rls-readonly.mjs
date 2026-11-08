@@ -100,6 +100,44 @@ for (const id of orgIdsB) {
 for (const id of orgIdsA) {
   assert.equal((await select(b,childTable,'&organization_id=eq.'+encodeURIComponent(id))).length,0,'B puede leer datos de A');
 }
+// El servicio Fudo autoriza por business_members, no sólo por businesses.
+// Acreditar una membresía QA propia owner/admin, y que el otro tenant no
+// pueda enumerar las membresías de un negocio ajeno por business_id.
+// Sólo se consultan IDs de negocios QA, nunca filas comerciales ni secretos.
+async function assertBusinessMembership(client, businessId, own) {
+  const filter = '&business_id=eq.' + encodeURIComponent(businessId)
+    + (own ? '&user_id=eq.' + encodeURIComponent(client.userId) : '');
+  const columns = own ? 'business_id,role' : 'business_id';
+  const url = origin + '/rest/v1/business_members?select=' + encodeURIComponent(columns)
+    + '&limit=1' + filter;
+  const response = await fetch(url, {
+    headers: apiHeaders(client.accessToken),
+    redirect: 'error',
+    signal: AbortSignal.timeout(15000),
+  });
+  // Una denegación de tabla con 403 es válida para la prueba cruzada;
+  // pero una membresía propia debe ser visible para acreditar el rol QA.
+  // Un 401 autenticado no demuestra RLS: podría ser una sesión inválida.
+  if (!own && response.status === 403) {
+    try { await response.body?.cancel(); } catch { /* sin contenido necesario */ }
+    return;
+  }
+  assert.equal(response.status, 200, 'Consulta de membresía QA con estado HTTP inesperado');
+  const rows = await response.json();
+  assert.ok(Array.isArray(rows), 'La consulta de membresías QA no devolvió una lista');
+  if (own) {
+    assert.ok(rows.length === 1 && ['owner', 'admin'].includes(rows[0]?.role)
+      && rows[0]?.business_id === businessId,
+    'La cuenta QA debe ser owner/admin de su propio negocio para acreditar el gate Fudo');
+  } else {
+    assert.equal(rows.length, 0, 'Usuario QA accede a membresías de otro negocio');
+  }
+}
+await assertBusinessMembership(a, childA[0].id, true);
+await assertBusinessMembership(b, childA[0].id, false);
+await assertBusinessMembership(b, childB[0].id, true);
+await assertBusinessMembership(a, childB[0].id, false);
+
 // También comprobar que la Data API pública no permita descubrir IDs de
 // organizaciones o negocios de A/B. Una sesión autenticada aislada no prueba
 // por sí sola que los mismos IDs sean privados frente a consultas anónimas.
@@ -130,6 +168,28 @@ for (const [table, id] of [
 ]) {
   await assertAnonymousTenantIdHidden(table, id);
 }
+// Incluso una consulta sin sesión no debe revelar miembros/roles a partir
+// de los IDs QA. Rechazo HTTP explícito o 200 con filas vacías son seguros.
+async function assertAnonymousMembershipHidden(businessId) {
+  const url = origin + '/rest/v1/business_members?select=business_id&business_id=eq.'
+    + encodeURIComponent(businessId) + '&limit=1';
+  const response = await fetch(url, {
+    headers: apiHeaders(key.startsWith('sb_publishable_') ? '' : key),
+    redirect: 'error',
+    signal: AbortSignal.timeout(15000),
+  });
+  if (response.status === 401 || response.status === 403) {
+    try { await response.body?.cancel(); } catch { /* acceso denegado */ }
+    return;
+  }
+  assert.equal(response.status, 200, 'Consulta anónima de membresías con HTTP inesperado');
+  const rows = await response.json();
+  assert.ok(Array.isArray(rows) && rows.length === 0,
+    'Consulta anónima expuso membresías del negocio');
+}
+await assertAnonymousMembershipHidden(childA[0].id);
+await assertAnonymousMembershipHidden(childB[0].id);
+
 // Las tablas Fudo son exclusivamente de servicio. Una sesión de owner/admin
 // tampoco debe poder recuperar ciphertext, staging, cursores o auditoría
 // vía PostgREST. Este gate consulta con A, B y sin sesión: sólo GET.
@@ -162,5 +222,6 @@ for (const account of [a, b, { accessToken: '' }]) {
 }
 console.log('PASS: 2 sesiones Auth QA reales, organizaciones y negocios separados, lectura cruzada bloqueada.');
 console.log('PASS: organizaciones y negocios A/B no descubribles anónimamente (4 GET).');
+console.log('PASS: membresías owner/admin propias verificadas y acceso cruzado/anónimo bloqueado (6 GET).');
 console.log('PASS: 4 tablas Fudo denegadas por PostgREST para A, B y anon (12 GET sin escrituras).');
 console.log('Alcance: sólo Auth QA y GET a Supabase; no certifica acciones server-side de GastroPilot, permisos Fudo ni conciliación real.');
