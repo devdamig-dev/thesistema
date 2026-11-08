@@ -14,22 +14,37 @@ const FUDO_JSON_API_TYPES: Record<FudoSyncResource, readonly string[]> = {
 };
 
 /**
- * PostgreSQL jsonb cannot store U+0000, even when it arrived as a valid
- * JSON escape from the provider. Reject the whole page before calling the
- * atomic staging RPC, so a provider contract error never looks like a DB
- * outage or advances a cursor. Inspect keys as well as nested values.
+ * PostgreSQL jsonb rejects U+0000 and unpaired UTF-16 surrogates in JSON
+ * values AND object keys. JSON.parse accepts escaped lone surrogates, so
+ * valid provider JSON is not necessarily compatible with jsonb. Reject the
+ * entire page before the atomic staging RPC and never expose provider text.
  */
-function hasJsonbNullCharacter(root: unknown): boolean {
+function hasJsonbInvalidUnicode(root: unknown): boolean {
+  const invalidText = (text: string): boolean => {
+    if (text.includes("\u0000")) return true;
+    for (let i = 0; i < text.length; i++) {
+      const unit = text.charCodeAt(i);
+      if (unit >= 0xd800 && unit <= 0xdbff) {
+        const next = text.charCodeAt(i + 1);
+        if (next < 0xdc00 || next > 0xdfff || Number.isNaN(next)) return true;
+        i++; // A complete surrogate pair represents a valid Unicode scalar.
+      } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   const pending: unknown[] = [root];
   while (pending.length) {
     const value = pending.pop();
     if (typeof value === "string") {
-      if (value.includes("\u0000")) return true;
+      if (invalidText(value)) return true;
     } else if (Array.isArray(value)) {
       for (const child of value) pending.push(child);
     } else if (value && typeof value === "object") {
       for (const [key, child] of Object.entries(value)) {
-        if (key.includes("\u0000")) return true;
+        if (invalidText(key)) return true;
         pending.push(child);
       }
     }
@@ -85,9 +100,9 @@ export function parseFudoPage(value: unknown, expectedResource?: string): FudoSn
     // text storage (NUL is forbidden in PostgreSQL). Fail before staging.
     if (!id || id !== id.trim() || id.length > 256
       || /[\u0000-\u001f\u007f]/u.test(id) || seen.has(id)) throw new Error("invalid_fudo_record");
-    // A NUL hidden in nested attributes or object keys also makes jsonb reject
+    // NUL or an unpaired surrogate in nested attributes/keys makes jsonb reject
     // the entire transaction. Report a sanitized provider-contract error.
-    if (hasJsonbNullCharacter(body)) throw new Error("invalid_fudo_record");
+    if (hasJsonbInvalidUnicode(body)) throw new Error("invalid_fudo_record");
     seen.add(id);
 
     // JSON:API allows attributes to be omitted, but an explicitly supplied

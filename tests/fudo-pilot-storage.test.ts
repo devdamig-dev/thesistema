@@ -184,3 +184,30 @@ test("Fudo O1 rejects provider NUL bytes before JSONB staging while preserving v
       /invalid_fudo_record/, "reject the page before an atomic SQL write");
   }
 });
+
+
+test("Fudo O1 rejects unpaired Unicode surrogates before atomic JSONB staging", () => {
+  const good = {
+    id: "sku-🧉", type: "Product",
+    attributes: { ["descripción🧉"]: { notes: ["Texto válido 😄", "Otra línea\ncorrecta"] } },
+  };
+  assert.equal(parseFudoPage(JSON.parse(JSON.stringify({ data: [good] })), "products").length, 1,
+    "valid paired surrogates and line breaks remain importable");
+
+  // A legal JSON document can contain escaped lone surrogates. JSON.parse
+  // accepts them, but PostgreSQL jsonb refuses to store those JSON strings.
+  const badCases = [
+    { ...good, id: "sku-\ud800" },
+    { ...good, id: "sku-\udc00" },
+    { ...good, id: "sku-\ud800X" },
+    { ...good, id: "sku-\ud800\ud800\udc00" },
+    { ...good, id: "other", attributes: { notes: ["safe", { text: "bad\ud800value" }] } },
+    { ...good, id: "other", attributes: { ["bad\udc00key"]: "value" } },
+  ];
+  for (const bad of badCases) {
+    const parsedProviderJson = JSON.parse(JSON.stringify({ data: [good, bad] }));
+    assert.throws(() => parseFudoPage(parsedProviderJson, "products"),
+      (error: unknown) => error instanceof Error && error.message === "invalid_fudo_record",
+      "reject the full page with a fixed code, without leaking the offending ID or payload");
+  }
+});
