@@ -26,7 +26,7 @@ function hasJsonbNullCharacter(root: unknown): boolean {
     if (typeof value === "string") {
       if (value.includes("\u0000")) return true;
     } else if (Array.isArray(value)) {
-      pending.push(...value);
+      for (const child of value) pending.push(child);
     } else if (value && typeof value === "object") {
       for (const [key, child] of Object.entries(value)) {
         if (key.includes("\u0000")) return true;
