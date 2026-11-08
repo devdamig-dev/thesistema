@@ -31,7 +31,10 @@ function runFixture(scenario, overrides = {}) {
     "  const table = url.pathname.slice('/rest/v1/'.length);",
     "  if (table.startsWith('fudo_')) {",
     "    privateGets++;",
-    "    return scenario === 'private-200' ? json([]) : json({message:'denied'}, 403);",
+    "    if (scenario === 'private-200') return json([]);",
+    "    if (scenario === 'authenticated-401' && auth) return json({message:'expired'}, 401);",
+    "    if (scenario === 'anon-401' && !auth) return json({message:'denied'}, 401);",
+    "    return json({message:'denied'}, 403);",
     "  }",
     "  const requestedId = url.searchParams.get('id')?.replace('eq.', '');",
     "  const requestedOrg = url.searchParams.get('organization_id')?.replace('eq.', '');",
@@ -72,6 +75,20 @@ test('Gate sintético A/B: organizaciones separadas y 12 GET privados denegados'
   const run = runFixture('success');
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, /PASS: 2 sesiones Auth QA reales/);
+  assert.match(run.stdout, /12 GET/);
+  assert.doesNotMatch(run.stdout + run.stderr, /fixture-password|mock-token/);
+});
+
+test('Gate rechaza 401 en tablas privadas con sesión A/B: podría ser un JWT inválido', () => {
+  const run = runFixture('authenticated-401');
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /sesión QA autenticada no acredita RLS mediante HTTP 401/);
+  assert.doesNotMatch(run.stdout, /PASS:/);
+});
+
+test('Gate permite 401 anónimo cuando A/B reciben denegación 403', () => {
+  const run = runFixture('anon-401');
+  assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, /12 GET/);
   assert.doesNotMatch(run.stdout + run.stderr, /fixture-password|mock-token/);
 });
