@@ -45,6 +45,12 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### Estado vigente de O1 (08/11/2026)
+
+- **IMPLEMENTADO / PROBADO EN CI / DESPLEGADO:** [PR #282](https://github.com/devdamig-dev/thesistema/pull/282) fusionado a `main` (squash `d7661d1d68a8e397fd63c42a97eba253c24d7453`). El gate Auth/RLS tiene regresiones sintéticas para ambas clases de clave pública: JWT legacy `anon` con Bearer y `sb_publishable_` sólo en `apikey`. [Quality #42469784840](https://github.com/devdamig-dev/thesistema/actions/runs/42469784840) finalizó `success` con `verify` (incluye tests, typecheck, lint, build y Playwright), `postgres17` y `postgrest`; [QA Auth #42469784775](https://github.com/devdamig-dev/thesistema/actions/runs/42469784775) pasó `syntax-only`, mientras `two-tenant` real quedó `skipped` por diseño en PR. [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/3vLBGMRt51sZeyQK4ZGY97rzxa87) para el mismo SHA. Cambios de pruebas/documentación; sin runtime Fudo, SQL ni escritura comercial.
+- **INSPECCIÓN SQL agregada de sólo lectura (08/11/2026):** 0 conexiones Fudo, 0 ejecuciones sync, 0 registros de staging y 0 cursores en Supabase `thesistema`. RLS activa en las cuatro tablas. Los conteos y RLS no sustituyen pruebas con dos identidades ni prueban ausencia de exposición vía API del servidor.
+- **VALIDADO EN PRODUCCIÓN CON SESIONES A/B Y FUDO REAL: NO. PILOTO NO-GO.** Pendientes dos usuarios QA realmente independientes y una cuenta Fudo Plan Pro/API del negocio autorizada. Recién entonces ejecutar workflow `two-tenant`, conexión owner/admin, permisos de cinco recursos, primera y segunda lectura read-only con conciliación/idempotencia y evidencia de no mutación. O2+ sigue pendiente hasta habilitar O1.
+
 ### Avance técnico del 03/11/2026
 - **IMPLEMENTADO / PROBADO (CI) / DESPLEGADO:** PR #166 mergeado a main, Quality #112 verde y Vercel Production READY según evidencia del issue #162. UI owner/admin, cifrado por `business_id`, test de lectura, desconexión/rotación, staging privado read-only, cursores, deduplicación, RPCs de exclusión mutua y recuperación de sync abandonada.
 - **DB/config:** migración `fudo_pilot_read_only_20261103` y clave maestra server-side aplicadas en el entorno de GastroPilot; las ACL verificadas niegan lectura a `authenticated`.
