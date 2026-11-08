@@ -79,7 +79,6 @@ test('Gate sintético A/B: organizaciones separadas y 12 GET privados denegados'
   assert.doesNotMatch(run.stdout + run.stderr, /fixture-password|mock-token/);
 });
 
-
 test('Gate rechaza 401 en tablas privadas con sesión A/B: podría ser un JWT inválido', () => {
   const run = runFixture('authenticated-401');
   assert.notEqual(run.status, 0);
