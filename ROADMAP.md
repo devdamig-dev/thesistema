@@ -135,6 +135,8 @@ La API Pública General de Fudo requiere Plan Pro y credenciales/API habilitadas
 
 - **QA O1 / REGRESIONES DEL GATE SIN CREDENCIALES (07/11/2026 ART):** [PR #273](https://github.com/devdamig-dev/thesistema/pull/273) incorpora cinco escenarios sintéticos para ejecutar el verdadero script de QA Auth A/B: caso aislado correcto con 12 denegaciones 403, rechazo de lectura privada HTTP 200 aunque vacía, lectura cruzada de organizaciones, clave `service_role`/secreta y ausencia de una contraseña QA. Se ejecutan en el job `syntax-only` de PR, sin secretos ni solicitudes externas (fetch simulado). El workflow manual `two-tenant` continúa separado y **no está ejecutado** con sesiones reales; la existencia de fixtures no valida RLS productiva, API Fudo, conciliación ni idempotencia. Registrar CI exacto en el issue O1; **O1 ACTIVO / PILOTO NO-GO / O2+ PENDIENTE**.
 
+- **O1 / QA independiente de acceso por ID de negocio (07/11/2026 ART):** el gate Auth A/B en `scripts/qa/live-auth-rls-readonly.mjs` también consulta por la **clave primaria de cada negocio** con la sesión de la otra empresa, además de filtros por `organization_id`, exigiendo cero filas. Se agregan fixtures de fuga directa por `business_id` y de dos credenciales QA que resuelven al mismo usuario Auth: ambos deben fallar, sin exponer IDs reales ni secretos. Corre en `syntax-only` sobre datos sintéticos; la prueba manual `two-tenant` sigue separada y requiere dos usuarios QA legítimos. **IMPLEMENTADO EN RAMA; PROBADO EN PRODUCCIÓN: NO; DESPLEGADO: NO hasta integrar PR; VALIDADO CON FUDO REAL: NO.** No hay cambios de SQL, tablas operativas o escrituras a Fudo. Mantener O1 ACTIVO / PILOTO NO-GO.
+
 ## O2 — Capa de datos operativos unificada
 **Estado: PENDIENTE**
 
