@@ -100,6 +100,33 @@ for (const id of orgIdsB) {
 for (const id of orgIdsA) {
   assert.equal((await select(b,childTable,'&organization_id=eq.'+encodeURIComponent(id))).length,0,'B puede leer datos de A');
 }
+// También comprobar que la Data API pública no permita descubrir IDs de
+// organizaciones o negocios de A/B. Una sesión autenticada aislada no prueba
+// por sí sola que los mismos IDs sean privados frente a consultas anónimas.
+// Se consulta un ID por tipo y tenant; nunca mostrar IDs ni filas en CI.
+async function assertAnonymousTenantIdHidden(table, id) {
+  const url = origin + '/rest/v1/' + table
+    + '?select=id&id=eq.' + encodeURIComponent(id) + '&limit=1';
+  const response = await fetch(url, {
+    headers: apiHeaders(),
+    redirect: 'error',
+    signal: AbortSignal.timeout(15000),
+  });
+  if (response.status === 401 || response.status === 403) {
+    try { await response.body?.cancel(); } catch { /* denegación sin contenido necesario */ }
+    return;
+  }
+  assert.equal(response.status, 200, 'Consulta anónima a ' + table + ' sin respuesta válida');
+  const rows = await response.json();
+  assert.ok(Array.isArray(rows) && rows.length === 0,
+    'Consulta anónima expuso un identificador privado de ' + table);
+}
+for (const [table, id] of [
+  [orgTable, orgsA[0].id], [orgTable, orgsB[0].id],
+  [childTable, childA[0].id], [childTable, childB[0].id],
+]) {
+  await assertAnonymousTenantIdHidden(table, id);
+}
 // Las tablas Fudo son exclusivamente de servicio. Una sesión de owner/admin
 // tampoco debe poder recuperar ciphertext, staging, cursores o auditoría
 // vía PostgREST. Este gate consulta con A, B y sin sesión: sólo GET.
@@ -128,5 +155,6 @@ for (const account of [a, b, { accessToken: '' }]) {
   for (const table of privateFudoTables) await assertPrivateFudoTableDenied(account, table);
 }
 console.log('PASS: 2 sesiones Auth QA reales, organizaciones y negocios separados, lectura cruzada bloqueada.');
+console.log('PASS: organizaciones y negocios A/B no descubribles anónimamente (4 GET).');
 console.log('PASS: 4 tablas Fudo denegadas por PostgREST para A, B y anon (12 GET sin escrituras).');
 console.log('Alcance: sólo Auth QA y GET a Supabase; no certifica acciones server-side de GastroPilot, permisos Fudo ni conciliación real.');
