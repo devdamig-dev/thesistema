@@ -180,7 +180,7 @@ test("Fudo O1 rejects provider NUL bytes before JSONB staging while preserving v
     { ...good, attributes: { ["bad\u0000key"]: "value" } },
   ];
   for (const record of nulCases) {
-    assert.throws(() => parseFudoPage({ data: [good, record] }, "products"),
+    assert.throws(() => parseFudoPage({ data: [good, { ...record, id: "product-2" }] }, "products"),
       /invalid_fudo_record/, "reject the page before an atomic SQL write");
   }
 });
