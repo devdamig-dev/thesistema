@@ -140,7 +140,10 @@ const privateFudoTables = [
 ];
 async function assertPrivateFudoTableDenied(client, table) {
   const response = await fetch(origin + '/rest/v1/' + table + '?select=*&limit=1', {
-    headers: apiHeaders(client.accessToken),
+    // La clave anon legacy es JWT público: enviarla también como Bearer en
+    // los 4 GET anónimos para no aceptar un 401 de gateway por falta de auth.
+    // La publishable key nueva sólo se envía en apikey, nunca como Bearer.
+    headers: apiHeaders(client.accessToken || (key.startsWith('sb_publishable_') ? '' : key)),
     redirect: 'error',
     signal: AbortSignal.timeout(15000),
   });
