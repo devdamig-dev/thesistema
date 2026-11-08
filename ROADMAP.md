@@ -45,6 +45,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — compatibilidad Unicode del staging JSONB (08/11/2026; PR en revisión)
+
+- **Resultado observable:** el importador rechaza antes de `fudo_commit_sync_page` páginas con caracteres U+0000 o surrogates UTF-16 sin pareja, incluso en IDs externos, valores anidados y claves JSON. PostgreSQL `jsonb` no acepta esas secuencias aunque JSON.parse sí. Los pares válidos (emoji y otros caracteres suplementarios) y saltos de línea normales siguen permitidos.
+- **IMPLEMENTADO EN RAMA:** `fix/fudo-o1-jsonb-unpaired-surrogates-20261108`, validador iterativo server-side y regresiones con JSON de proveedor simulado; el error hacia la UI permanece `invalid_response`, sin serializar datos/URLs/credenciales.
+- **PROBADO:** pendiente de Quality Gate para el HEAD del PR. **DESPLEGADO:** no para este cambio. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no. No hay migraciones ni escrituras hacia Fudo, ventas, caja o stock.
+- **Riesgo / rollback:** el contrato real del proveedor podría contener secuencias inválidas; se rechazan antes del upsert para evitar un fallo SQL ambiguo y un cursor adelantado. Revertir sólo el cambio de validación si un contrato Fudo verificado exige otra normalización segura; no sustituir caracteres silenciosamente.
+- **Bloqueos del piloto sin cambios:** cuenta Fudo Plan Pro/API autorizada, dos identidades QA A/B, conciliación de cinco recursos y segunda sincronización idempotente. O1 ACTIVO / PILOTO NO-GO / O2+ PENDIENTE.
+
 ### O1 — corte seguro de lote tras un error (08/11/2026; PR #286 en revisión)
 
 - **Resultado observable:** al fallar un recurso Fudo durante un lote de hasta tres lecturas paralelas, no iniciar los recursos aún pendientes; esperar los GET y commits ya lanzados antes de cerrar el run como `failed`. Los cursores y snapshots confirmados permanecen para reintentar de forma idempotente.
