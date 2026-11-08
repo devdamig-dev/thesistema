@@ -116,3 +116,39 @@ test("Fudo O1 never marks a nonempty short import page complete without an expli
   assert.equal(nextFudoPage({ data: [] }, 1, 1, "products", 1), 0,
     "one-record permission probes remain compatible without claiming import completeness");
 });
+
+
+test("Fudo O1 rejects unsafe provider JSON numbers before staging or hashing", () => {
+  // JSON.parse silently rounds large integer literals and accepts 1e999 as
+  // Infinity; a subsequent JSON.stringify turns that Infinity into null.
+  // Never persist or reconcile a financially meaningful, altered payload.
+  const invalidPages = [
+    '{"data":[{"type":"sale","id":"sale-1","attributes":{"total":9007199254740993}}]}',
+    '{"data":[{"type":"sale","id":"sale-1","attributes":{"lines":[{"amount":-9007199254740993}]}}]}',
+    '{"data":[{"type":"sale","id":"sale-1","attributes":{"total":1e999}}]}',
+    '{"data":[{"type":"sale","id":"sale-1","attributes":{"total":-1e999}}]}',
+  ];
+  for (const source of invalidPages) {
+    const parsed: unknown = JSON.parse(source);
+    assert.throws(() => parseFudoPage(parsed, "sales"), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, "invalid_fudo_record");
+      assert.doesNotMatch(error.message, /sale-1|9007199254740993|Infinity/);
+      return true;
+    });
+  }
+
+  // A decimal with ordinary business precision, the greatest safe integer,
+  // and a provider-supplied exact decimal string remain valid and unchanged.
+  const valid = parseFudoPage(JSON.parse(
+    '{"data":[{"type":"sale","id":"sale-1","attributes":{' +
+    '"total":12.75,"count":9007199254740991,"exactExternalAmount":"9007199254740993"}}]}',
+  ), "sales");
+  assert.equal(valid.length, 1);
+  assert.deepEqual(valid[0].payload.attributes, {
+    total: 12.75,
+    count: Number.MAX_SAFE_INTEGER,
+    exactExternalAmount: "9007199254740993",
+  });
+  assert.match(valid[0].contentHash, /^[a-f0-9]{64}$/);
+});
