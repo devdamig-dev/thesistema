@@ -80,6 +80,17 @@ const childB=await select(b,childTable);
 assert.ok(childA.length>0 && childB.length>0,'Ambos tenants QA deben tener un negocio');
 assert.ok(childA.every(row=>orgIdsA.has(row.organization_id)),'A tiene datos de otra empresa');
 assert.ok(childB.every(row=>orgIdsB.has(row.organization_id)),'B tiene datos de otra empresa');
+// El filtro por organización no alcanza para acreditar aislamiento de IDs de
+// negocio. Comprobar también acceso directo por PK, con IDs de fixtures QA
+// observados sólo en la sesión autorizada; nunca imprimirlos en CI.
+for (const row of childA) {
+  assert.equal((await select(b, childTable, '&id=eq.' + encodeURIComponent(row.id))).length, 0,
+    'Usuario B accede directamente a un negocio de A');
+}
+for (const row of childB) {
+  assert.equal((await select(a, childTable, '&id=eq.' + encodeURIComponent(row.id))).length, 0,
+    'Usuario A accede directamente a un negocio de B');
+}
 for (const id of orgIdsB) {
   assert.equal((await select(a,childTable,'&organization_id=eq.'+encodeURIComponent(id))).length,0,'A puede leer datos de B');
 }
