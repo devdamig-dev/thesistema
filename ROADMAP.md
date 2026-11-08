@@ -45,11 +45,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — cobertura QA de membresías por negocio (08/11/2026; en revisión)
+### O1 — cobertura QA de membresías por negocio (08/11/2026; publicada)
 
-- **IMPLEMENTADO EN RAMA:** ampliación del gate manual A/B de sólo lectura con seis GET a `business_members` (owner/admin propio, cross-tenant por `business_id` y lectura anónima), más tres regresiones sintéticas que hacen fallar el gate ante rol no autorizado o fuga de membresías. No se leen secretos ni se llaman endpoints Fudo; las consultas sólo abarcan dos identidades/negocios QA autorizados.
-- **PROBADO:** pendiente ejecutar `QA Auth syntax-only` y `Quality` del nuevo PR. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN:** no; faltan sesiones A/B reales y Fudo Plan Pro/API. **PILOTO NO-GO**, O2+ pendiente.
-- Riesgo/rollback: prueba y runbook exclusivamente; sin SQL, cambios runtime, permisos productivos ni escrituras comerciales. Si el esquema de membresías real no coincide con el supuesto de QA, corregir el test tras observar evidencia, nunca relajar RLS.
+- **IMPLEMENTADO:** [PR #284](https://github.com/devdamig-dev/thesistema/pull/284) integrado a `main` mediante squash `20e5b5d22b6440466d4522c16892c84719e9ddd6`. El gate manual Auth/RLS incorpora seis GET **exclusivamente de lectura** a `business_members`: comprobar rol owner/admin propio, denegar enumeración de membresías de negocio ajeno por `business_id` y denegar descubrimiento anónimo. Tres regresiones negativas verifican que no apruebe con rol insuficiente ni filtraciones de membresías. No se agregan llamadas a Fudo, SQL de escritura ni cambios funcionales del runtime.
+- **PROBADO EN CI:** [Quality #42478884793](https://github.com/devdamig-dev/thesistema/actions/runs/42478884793) `completed/success` para el HEAD `6742ebb0b7e162ff9bfb88c97d83679519c84805`: `verify` (incluidos Playwright), `postgres17` y `postgrest` todos `success`. [QA Auth #42478884823](https://github.com/devdamig-dev/thesistema/actions/runs/42478884823) `syntax-only/success` con 16 fixtures sintéticos; `two-tenant/skipped`. **No prueba autorización real de Supabase A/B.**
+- **DESPLEGADO:** [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/FGfSKJJvLeqjFAahQv7zFCRQpnMa) para el SHA exacto de `main` `20e5b5d2`, con alias `gastropilot.nexodg.com` confirmado. Preview del HEAD inicial tuvo bloqueo de cuota; producción final completó. Es un cambio de QA/runbook, no una nueva integración con Fudo.
+- **VALIDADO EN PRODUCCIÓN CON FUDO REAL: NO. PILOTO NO-GO.** Faltan dos identidades QA independientes owner/admin de negocios aislados y cuenta Fudo Plan Pro/API autorizada; luego ejecutar `two-tenant` real, conexión y permisos, lectura de cinco recursos, conciliación por IDs/conteos y segunda sincronización idempotente sin escrituras hacia Fudo. O2+ queda pendiente.
+- **Riesgo/rollback:** sólo tests y documentación; sin migraciones, secretos en logs ni modificación de ventas/stock/caja. Una futura falla de GET de membresía propia exige contrastar esquema/RLS y el contrato real, nunca relajar permisos para hacer pasar el test.
+
 
 ### Estado vigente de O1 (08/11/2026)
 
