@@ -14,6 +14,7 @@ function runFixture(scenario, overrides = {}) {
   const source = [
     "const scenario = process.env.QA_FIXTURE_SCENARIO;",
     "let privateGets = 0;",
+    "let anonymousPrivateGets = 0;",
     "let anonymousEntityGets = 0;", 
     "globalThis.fetch = async (input, init = {}) => {",
     "  const url = new URL(String(input));",
@@ -38,9 +39,13 @@ function runFixture(scenario, overrides = {}) {
     "  }",  
     "  if (table.startsWith('fudo_')) {",
     "    privateGets++;",
+    "    if (isAnon) {",
+    "      if (auth !== 'Bearer ' + process.env.QA_PUBLIC_KEY) throw Error('Legacy anon JWT missing on private GET');",
+    "      anonymousPrivateGets++;",
+    "    }",
     "    if (scenario === 'private-200') return json([]);",
     "    if (scenario === 'authenticated-401' && auth) return json({message:'expired'}, 401);",
-    "    if (scenario === 'anon-401' && !auth) return json({message:'denied'}, 401);",
+    "    if (scenario === 'anon-401' && isAnon) return json({message:'denied'}, 401);",
     "    return json({message:'denied'}, 403);",
     "  }",
     "  const requestedId = url.searchParams.get('id')?.replace('eq.', '');",
@@ -63,6 +68,7 @@ function runFixture(scenario, overrides = {}) {
     "};",
     "await import(" + JSON.stringify(gateUrl) + ");",
     "if (privateGets !== 12) throw Error('Expected exactly 12 private-table GETs, got ' + privateGets);",
+    "if (anonymousPrivateGets !== 4) throw Error('Expected 4 anonymous private-table GETs, got ' + anonymousPrivateGets);",
     "if (anonymousEntityGets !== 4) throw Error('Expected 4 anonymous entity GETs, got ' + anonymousEntityGets);", 
   ].join('\n');
   const env = {
@@ -97,7 +103,7 @@ test('Gate rechaza 401 en tablas privadas con sesión A/B: podría ser un JWT in
   assert.doesNotMatch(run.stdout, /PASS:/);
 });
 
-test('Gate permite 401 anónimo cuando A/B reciben denegación 403', () => {
+test('Gate permite 401 anónimo con bearer anon válido y A/B denegados con 403', () => {
   const run = runFixture('anon-401');
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, /12 GET/);
