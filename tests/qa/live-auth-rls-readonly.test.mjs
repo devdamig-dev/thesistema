@@ -15,7 +15,9 @@ function runFixture(scenario, overrides = {}) {
     "const scenario = process.env.QA_FIXTURE_SCENARIO;",
     "let privateGets = 0;",
     "let anonymousPrivateGets = 0;",
-    "let anonymousEntityGets = 0;", 
+    "let anonymousEntityGets = 0;",
+    "let membershipGets = 0;",
+    "let anonymousMembershipGets = 0;", 
     "globalThis.fetch = async (input, init = {}) => {",
     "  const url = new URL(String(input));",
     "  if (init.redirect !== 'error') throw Error('QA fetch must reject provider redirects');",
@@ -39,6 +41,22 @@ function runFixture(scenario, overrides = {}) {
     "    if (auth !== anonAuthorization) throw Error('Anonymous entity probe Authorization mismatched public key type');",
     "    anonymousEntityGets++;",
     "  }",  
+    "  if (table === 'business_members') {",
+    "    membershipGets++;",
+    "    const businessId = url.searchParams.get('business_id')?.replace('eq.', '');",
+    "    const userId = url.searchParams.get('user_id')?.replace('eq.', '');",
+    "    if (isAnon) {",
+    "      if (auth !== anonAuthorization) throw Error('Anonymous membership Authorization mismatched public key type');",
+    "      anonymousMembershipGets++;",
+    "      return json(scenario === 'anon-member-leak' ? [{business_id:'business-A'}] : []);",
+    "    }",
+    "    const ownBusinessId = 'business-' + who;",
+    "    if (scenario === 'cross-members-leak' && who === 'B' && businessId === 'business-A')",
+    "      return json([{business_id:'business-A',role:'owner'}]);",
+    "    if (businessId !== ownBusinessId || (userId && userId !== 'user-' + who)) return json([]);",
+    "    const role = scenario === 'non-admin-member' && who === 'A' ? 'manager' : 'owner';",
+    "    return json([{business_id:ownBusinessId,role}]);",
+    "  }",
     "  if (table.startsWith('fudo_')) {",
     "    privateGets++;",
     "    if (isAnon) {",
@@ -71,7 +89,9 @@ function runFixture(scenario, overrides = {}) {
     "await import(" + JSON.stringify(gateUrl) + ");",
     "if (privateGets !== 12) throw Error('Expected exactly 12 private-table GETs, got ' + privateGets);",
     "if (anonymousPrivateGets !== 4) throw Error('Expected 4 anonymous private-table GETs, got ' + anonymousPrivateGets);",
-    "if (anonymousEntityGets !== 4) throw Error('Expected 4 anonymous entity GETs, got ' + anonymousEntityGets);", 
+    "if (anonymousEntityGets !== 4) throw Error('Expected 4 anonymous entity GETs, got ' + anonymousEntityGets);",
+    "if (membershipGets !== 6) throw Error('Expected 6 business-members GETs, got ' + membershipGets);",
+    "if (anonymousMembershipGets !== 2) throw Error('Expected 2 anonymous membership GETs, got ' + anonymousMembershipGets);", 
   ].join('\n');
   const env = {
     ...process.env,
@@ -181,6 +201,29 @@ test('Gate rechaza descubrimiento anónimo del ID de un negocio A/B', () => {
   const run = runFixture('anon-business-leak');
   assert.notEqual(run.status, 0);
   assert.match(run.stderr, /Consulta anónima expuso un identificador privado de businesses/);
+  assert.doesNotMatch(run.stdout, /PASS: 4 tablas Fudo/);
+  assert.doesNotMatch(run.stdout + run.stderr, /fixture-password|mock-token/);
+});
+
+
+test('Gate requiere membresía propia owner/admin del negocio QA, no sólo acceso al negocio', () => {
+  const run = runFixture('non-admin-member');
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /La cuenta QA debe ser owner\/admin de su propio negocio/);
+  assert.doesNotMatch(run.stdout, /PASS:/);
+});
+
+test('Gate falla si un usuario QA puede enumerar las membresías del otro negocio', () => {
+  const run = runFixture('cross-members-leak');
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /Usuario QA accede a membresías de otro negocio/);
+  assert.doesNotMatch(run.stdout, /PASS:/);
+});
+
+test('Gate falla si la clave pública expone membresías del negocio por business_id', () => {
+  const run = runFixture('anon-member-leak');
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /Consulta anónima expuso membresías del negocio/);
   assert.doesNotMatch(run.stdout, /PASS: 4 tablas Fudo/);
   assert.doesNotMatch(run.stdout + run.stderr, /fixture-password|mock-token/);
 });
