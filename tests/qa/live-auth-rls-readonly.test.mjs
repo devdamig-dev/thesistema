@@ -20,9 +20,11 @@ function runFixture(scenario, overrides = {}) {
     "  const url = new URL(String(input));",
     "  if (init.redirect !== 'error') throw Error('QA fetch must reject provider redirects');",
     "  const headers = new Headers(init.headers || {});",
+    "  if (headers.get('apikey') !== process.env.QA_PUBLIC_KEY) throw Error('QA fetch missing public apikey');",
     "  const auth = headers.get('Authorization') || '';",
     "  const who = auth.includes('mock-token-A') ? 'A' : 'B';",
-    "  const isAnon = !auth || auth === 'Bearer ' + process.env.QA_PUBLIC_KEY;", 
+    "  const isAnon = !auth || auth === 'Bearer ' + process.env.QA_PUBLIC_KEY;",
+    "  const anonAuthorization = process.env.QA_PUBLIC_KEY.startsWith('sb_publishable_') ? '' : 'Bearer ' + process.env.QA_PUBLIC_KEY;", 
     "  const json = (body, status = 200) => new Response(JSON.stringify(body), {status, headers:{'content-type':'application/json'}});",
     "  if (url.pathname === '/auth/v1/token') {",
     "    if (init.method !== 'POST') throw Error('Auth must use POST');",
@@ -34,13 +36,13 @@ function runFixture(scenario, overrides = {}) {
     "  if (init.method && init.method !== 'GET') throw Error('Business write detected');",
     "  const table = url.pathname.slice('/rest/v1/'.length);",
     "  if (isAnon && (table === 'organizations' || table === 'businesses')) {",
-    "    if (auth !== 'Bearer ' + process.env.QA_PUBLIC_KEY) throw Error('Legacy anon JWT probe must use bearer');",
+    "    if (auth !== anonAuthorization) throw Error('Anonymous entity probe Authorization mismatched public key type');",
     "    anonymousEntityGets++;",
     "  }",  
     "  if (table.startsWith('fudo_')) {",
     "    privateGets++;",
     "    if (isAnon) {",
-    "      if (auth !== 'Bearer ' + process.env.QA_PUBLIC_KEY) throw Error('Legacy anon JWT missing on private GET');",
+    "      if (auth !== anonAuthorization) throw Error('Anonymous private GET Authorization mismatched public key type');",
     "      anonymousPrivateGets++;",
     "    }",
     "    if (scenario === 'private-200') return json([]);",
@@ -105,6 +107,21 @@ test('Gate rechaza 401 en tablas privadas con sesión A/B: podría ser un JWT in
 
 test('Gate permite 401 anónimo con bearer anon válido y A/B denegados con 403', () => {
   const run = runFixture('anon-401');
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /12 GET/);
+  assert.doesNotMatch(run.stdout + run.stderr, /fixture-password|mock-token/);
+});
+
+test('Gate con clave sb_publishable_ ejecuta 4 GET anónimos de tenants y 4 privados sin usar Bearer', () => {
+  const run = runFixture('success', { QA_PUBLIC_KEY: 'sb_publishable_fixture_public_only' });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /12 GET/);
+  assert.match(run.stdout, /4 GET/);
+  assert.doesNotMatch(run.stdout + run.stderr, /fixture-password|mock-token/);
+});
+
+test('Gate con clave sb_publishable_ admite HTTP 401 sólo en las 4 tablas anónimas', () => {
+  const run = runFixture('anon-401', { QA_PUBLIC_KEY: 'sb_publishable_fixture_public_only' });
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, /12 GET/);
   assert.doesNotMatch(run.stdout + run.stderr, /fixture-password|mock-token/);
