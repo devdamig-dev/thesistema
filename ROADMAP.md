@@ -45,6 +45,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — preservar números de proveedor antes del parseo (08/11/2026; PR en revisión)
+
+- **Resultado observable:** el adaptador rechaza respuestas Fudo GET con literales JSON numéricos de precisión ambigua (más de 15 cifras significativas en decimales/exponentes), enteros fuera del rango seguro, overflow o underflow a cero **antes de JSON.parse**, evitando almacenar valores redondeados/hashes no fieles en el staging read-only.
+- **IMPLEMENTADO EN RAMA:** `fix/fudo-o1-numeric-literals-before-jsonparse-20261108`: escáner léxico de números fuera de strings JSON, incluyendo comillas escapadas; invocado sólo en GETs de recursos, sin alterar el contrato de autenticación. Regresiones sintéticas de rechazo, casos seguros y código de error sanitizado sin datos del proveedor.
+- **PROBADO:** pendiente de Quality Gate del HEAD del PR. **DESPLEGADO:** no para este cambio. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no.
+- **Riesgo:** criterio conservador: puede rechazar decimales legítimos de alta precisión, aunque sean representables, hasta verificar el contrato real y desarrollar un parser lossless. No se normaliza ni reescribe el origen, ni se avanza el cursor ante fallo. **Rollback:** revert de este guard, sólo luego de reemplazarlo por tratamiento lossless validado. La compatibilidad real sigue pendiente de cuenta Fudo Plan Pro/API autorizada y QA A/B.
+- **O1 piloto:** continúa **NO-GO** por conexión real autorizada, conciliación de cinco recursos, dos identidades QA independientes y segunda lectura idempotente. O2+ pendiente.
+
 ### O1 — fidelidad numérica del staging Fudo (08/11/2026; en rama)
 
 - **Resultado observable:** una respuesta Fudo HTTP 200 con JSON válido pero con un número entero que JavaScript no puede representar exactamente, o una magnitud que `JSON.parse` convierte en `Infinity`, se rechaza como `invalid_fudo_record` **antes del hash, el RPC atómico o el avance del cursor**. Evita almacenar un monto redondeado o un `null` inventado por `JSON.stringify` en el staging read-only.
