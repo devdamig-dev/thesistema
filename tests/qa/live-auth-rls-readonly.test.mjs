@@ -79,6 +79,21 @@ test('Gate sintético A/B: organizaciones separadas y 12 GET privados denegados'
   assert.doesNotMatch(run.stdout + run.stderr, /fixture-password|mock-token/);
 });
 
+
+test('Gate rechaza 401 en tablas privadas con sesión A/B: podría ser un JWT inválido', () => {
+  const run = runFixture('authenticated-401');
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /sesión QA autenticada no acredita RLS mediante HTTP 401/);
+  assert.doesNotMatch(run.stdout, /PASS:/);
+});
+
+test('Gate permite 401 anónimo cuando A/B reciben denegación 403', () => {
+  const run = runFixture('anon-401');
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /12 GET/);
+  assert.doesNotMatch(run.stdout + run.stderr, /fixture-password|mock-token/);
+});
+
 test('Gate falla ante HTTP 200 aunque la tabla privada devuelva filas vacías', () => {
   const run = runFixture('private-200');
   assert.notEqual(run.status, 0);
