@@ -1,6 +1,6 @@
 # GastroPilot O1 — QA manual con dos sesiones y RLS real
 
-Este gate **prepara** la comprobación manual de aislamiento del piloto read-only Fudo. El workflow `.github/workflows/qa-live-auth.yml` se ejecuta únicamente mediante `workflow_dispatch`. En PR se revisa la sintaxis y se ejecutan **cinco fixtures sintéticas** (1 caso positivo y 4 negativos: HTTP 200 indebido en tabla privada, lectura cruzada A/B, clave de servicio y cuenta QA ausente), sin secretos ni acceso a datos reales. Estos tests sólo validan que el gate falla de forma segura; **no equivalen a sesiones A/B productivas**.
+Este gate **prepara** la comprobación manual de aislamiento del piloto read-only Fudo. El workflow `.github/workflows/qa-live-auth.yml` se ejecuta únicamente mediante `workflow_dispatch`. En PR se revisa la sintaxis y se ejecutan **13 escenarios sintéticos**, incluyendo claves públicas `anon` JWT y `sb_publishable_`, sesiones Auth inválidas, acceso cruzado por `organization_id` y `business_id`, descubrimiento anónimo de IDs, errores HTTP y redirecciones. Son pruebas con `fetch` simulado, sin secretos ni acceso a datos reales. Estos tests sólo validan que el gate falla de forma segura; **no equivalen a sesiones A/B productivas**.
 
 ## Requisitos
 
@@ -13,7 +13,7 @@ Este gate **prepara** la comprobación manual de aislamiento del piloto read-onl
 
 - Autentica A y B en Supabase Auth y confirma identidades distintas.
 - Comprueba que cada usuario ve **sus** organizaciones y negocios de QA, sin ver por RLS los del otro; falla si se comparten organizaciones o no existen registros de prueba.
-- Realiza 12 GET de sólo lectura en PostgREST (sesiones A, B y anónimo × cuatro tablas privadas Fudo: conexiones, syncs, staging y cursores). Cada consulta **debe** recibir HTTP 401/403; una respuesta HTTP 200 con lista vacía **NO** se acepta como seguridad suficiente.
+- Realiza **12 GET** a cuatro tablas privadas Fudo (A, B y anónimo × cuatro) y **cuatro GET anónimos** adicionales por ID de organización/negocio de A/B, todos de sólo lectura. Cada consulta Fudo con token autenticado A/B debe devolver **HTTP 403**: HTTP 401 indica que la sesión no acredita la prueba. Sólo las consultas privadas anónimas pueden devolver 401/403. Un HTTP 200 con lista vacía en tablas privadas **NO** es suficiente; los cuatro GET anónimos por ID deben devolver 401/403 o HTTP 200 sin filas. Las claves `sb_publishable_` se envían sólo como `apikey`, no como Bearer.
 - La consola informa solo PASS/fallo y estado HTTP; no imprime contraseñas, tokens, correos, credenciales Fudo, payloads ni filas privadas.
 - La autenticación genera sesiones y auditoría Auth, pero **no altera datos de negocio ni llama a Fudo**. No ejecutar contra cuentas de clientes.
 
