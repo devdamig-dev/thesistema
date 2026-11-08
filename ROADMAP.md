@@ -52,6 +52,12 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - **PROBADO:** pendiente de Quality Gate completo para el HEAD del PR; no usar un fixture como prueba de integración real.
 - **DESPLEGADO / VALIDADO EN PRODUCCIÓN:** no. El piloto permanece **NO-GO** hasta contar con Fudo Plan Pro/API del negocio autorizado, dos usuarios QA independientes, conciliación de cinco recursos, segundo ciclo sin duplicados y aislamiento autenticado A/B. Sin migraciones ni escrituras hacia Fudo o datos comerciales.
 
+### O1 — validez JSONB del staging de Fudo (08/11/2026; PR en revisión)
+
+- **Resultado observable:** rechazar con `invalid_fudo_record` sanitizado toda página cuyo JSON válido contenga U+0000 en claves o valores anidados; rechazar IDs externos con caracteres de control antes de llamar a `fudo_commit_sync_page`. PostgreSQL `jsonb` no almacena U+0000: el fallo no debe confundirse con indisponibilidad del storage ni avanzar cursores. No eliminar históricos ni modificar Fudo.
+- **IMPLEMENTADO:** rama `fix/fudo-o1-jsonb-nul-validation-20261108` con validación y regresiones sintéticas, sin SQL de escritura ni acceso a credenciales reales.
+- **PROBADO / DESPLEGADO / VALIDADO EN PRODUCCIÓN:** pendiente de Quality Gate del PR; no constituye prueba con Fudo real. **O1 ACTIVO / PILOTO NO-GO** por falta de cuenta Fudo autorizada, conciliación de cinco recursos y QA A/B real.
+
 ### O1 — cobertura QA de membresías por negocio (08/11/2026; publicada)
 
 - **IMPLEMENTADO:** [PR #284](https://github.com/devdamig-dev/thesistema/pull/284) integrado a `main` mediante squash `20e5b5d22b6440466d4522c16892c84719e9ddd6`. El gate manual Auth/RLS incorpora seis GET **exclusivamente de lectura** a `business_members`: comprobar rol owner/admin propio, denegar enumeración de membresías de negocio ajeno por `business_id` y denegar descubrimiento anónimo. Tres regresiones negativas verifican que no apruebe con rol insuficiente ni filtraciones de membresías. No se agregan llamadas a Fudo, SQL de escritura ni cambios funcionales del runtime.
