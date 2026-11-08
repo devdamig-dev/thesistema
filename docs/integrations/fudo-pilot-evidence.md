@@ -8,7 +8,7 @@ Referencia canónica: [ROADMAP.md](../../ROADMAP.md), [issue O1 #162](https://gi
 
 1. Confirmar, fuera del repositorio, autorización del negocio piloto y acceso Fudo **Plan Pro con API Pública General habilitada**. El usuario técnico del proveedor debe tener permisos mínimos de lectura para `products`, `ingredients`, `providers`, `orders` y `sales`.
 2. Usar una sesión owner/admin real en GastroPilot y acceder a `/ajustes/integraciones/fudo`. El negocio introduce API Key y Secret **en el formulario autenticado**, no por chat, captura, correo, ticket, logs, commit o fixture.
-3. Tener dos negocios de QA segregados (**A/B**) y perfiles owner/admin y empleado. No utilizar datos de otras empresas para fabricar una prueba positiva. No modificar ventas, stock, pedidos, caja ni información comercial nativa.
+3. Tener dos negocios de QA segregados (**A/B**) y perfiles owner/admin y empleado. El gate read-only de PostgREST debe exigir **HTTP 403** para la denegación de tablas Fudo con token autenticado de A/B; un **HTTP 401** indica sesión/credencial no acreditada y **NO** pasa QA. Para la solicitud anónima se admite 401 o 403. Los tests sintéticos no sustituyen la ejecución manual del workflow con dos sesiones reales. No utilizar datos de otras empresas para fabricar una prueba positiva. No modificar ventas, stock, pedidos, caja ni información comercial nativa.
 4. Conservar evidencias de ejecución en un almacenamiento interno restringido. En el issue público registrar solo fecha, ambiente, versión/commit, códigos de resultado, conteos agregados y enlaces a evidencia autorizada. **Nunca** incluir token, ciphertext, API Key, API Secret, payload bruto, datos personales, emails, teléfono ni external IDs de clientes.
 
 ## Secuencia verificable
