@@ -45,6 +45,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — fidelidad numérica del staging Fudo (08/11/2026; en rama)
+
+- **Resultado observable:** una respuesta Fudo HTTP 200 con JSON válido pero con un número entero que JavaScript no puede representar exactamente, o una magnitud que `JSON.parse` convierte en `Infinity`, se rechaza como `invalid_fudo_record` **antes del hash, el RPC atómico o el avance del cursor**. Evita almacenar un monto redondeado o un `null` inventado por `JSON.stringify` en el staging read-only.
+- **IMPLEMENTADO EN RAMA:** `fix/fudo-o1-staging-numeric-fidelity-20261108`; validación recursiva iterativa de valores de registro y regresiones sintéticas con importes anidados; los enteros seguros, decimales comunes y números exactos enviados como cadenas continúan intactos.
+- **PROBADO:** pendiente de Quality Gate del HEAD del PR. **DESPLEGADO:** no para este cambio. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no. Las pruebas no reemplazan conciliación con datos del proveedor.
+- **Límite explícito:** validar números **después** de `JSON.parse` no detecta toda posible pérdida de precisión en decimales con muchas cifras significativas o underflow. Si el contrato real entrega esos valores, considerar un parser lossless antes de normalizar. El rechazo es intencional y no modifica origen, ventas/stock nativos ni registros históricos. **Rollback:** revertir el validador sólo si se implementa tratamiento lossless equivalente y se verifica el contrato.
+- **O1 / piloto:** sigue **NO-GO** por cuenta Fudo Plan Pro/API autorizada, identidades QA A/B independientes, conciliación de cinco recursos y segunda sincronización idempotente. O2+ bloqueado.
+
 ### O1 — compatibilidad Unicode del staging JSONB (08/11/2026; PR en revisión)
 
 - **Resultado observable:** el importador rechaza antes de `fudo_commit_sync_page` páginas con caracteres U+0000 o surrogates UTF-16 sin pareja, incluso en IDs externos, valores anidados y claves JSON. PostgreSQL `jsonb` no acepta esas secuencias aunque JSON.parse sí. Los pares válidos (emoji y otros caracteres suplementarios) y saltos de línea normales siguen permitidos.
