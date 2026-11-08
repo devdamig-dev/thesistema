@@ -56,6 +56,7 @@
 ### 4. Multiempresa, roles y no regresión operativa
 
 - [ ] B/owner no puede ver estado, registros, cursores, sync ni credenciales de A, ni mediante parámetros API manipulados.
+- [ ] Gate Auth A/B: verificar acceso directo por `businesses.id` con la sesión del otro tenant, además de filtros por `organization_id`. Dos credenciales QA deben resolver a dos identidades Auth distintas; no publicar UUIDs de negocios/usuarios en el artefacto de CI.
 - [ ] A/colaborador no puede administrar Fudo; probar 401/403 reales con sesiones independientes A/B, además de tests automáticos RLS.
 - [ ] Un retest, rotación, desconexión o sync concurrente de A no cambia el resumen de B; tampoco reaparecen checks de una generación anterior.
 - [ ] Constatar que la integración **sólo emitió GET** hacia recursos Fudo (más POST de autenticación), sin POST/PATCH/PUT/DELETE de operaciones Fudo.
