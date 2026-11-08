@@ -112,8 +112,13 @@ async function assertPrivateFudoTableDenied(client, table) {
   });
   const status = response.status;
   try { await response.body?.cancel(); } catch { /* la respuesta puede estar cerrada */ }
-  assert.ok(status === 401 || status === 403,
-    'Acceso directo inesperado a tabla Fudo ' + table + ' (HTTP ' + status + ').');
+  // Con token Auth válido la denegación de privilegios en PostgREST es 403.
+  // Un 401 en A/B podría ser sesión expirada o JWT rechazado: NO acredita RLS.
+  // Sólo la solicitud sin sesión admite 401 (o 403, según el gateway).
+  const deniedForRole = client.accessToken ? status === 403 : (status === 401 || status === 403);
+  assert.ok(deniedForRole,
+    'Acceso directo inesperado a tabla Fudo ' + table + ' (HTTP ' + status + ').' +
+    (client.accessToken && status === 401 ? ' La sesión QA autenticada no acredita RLS mediante HTTP 401.' : ''));
 }
 for (const account of [a, b, { accessToken: '' }]) {
   for (const table of privateFudoTables) await assertPrivateFudoTableDenied(account, table);
