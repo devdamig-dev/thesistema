@@ -45,6 +45,12 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — cobertura QA de membresías por negocio (08/11/2026; en revisión)
+
+- **IMPLEMENTADO EN RAMA:** ampliación del gate manual A/B de sólo lectura con seis GET a `business_members` (owner/admin propio, cross-tenant por `business_id` y lectura anónima), más tres regresiones sintéticas que hacen fallar el gate ante rol no autorizado o fuga de membresías. No se leen secretos ni se llaman endpoints Fudo; las consultas sólo abarcan dos identidades/negocios QA autorizados.
+- **PROBADO:** pendiente ejecutar `QA Auth syntax-only` y `Quality` del nuevo PR. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN:** no; faltan sesiones A/B reales y Fudo Plan Pro/API. **PILOTO NO-GO**, O2+ pendiente.
+- Riesgo/rollback: prueba y runbook exclusivamente; sin SQL, cambios runtime, permisos productivos ni escrituras comerciales. Si el esquema de membresías real no coincide con el supuesto de QA, corregir el test tras observar evidencia, nunca relajar RLS.
+
 ### Estado vigente de O1 (08/11/2026)
 
 - **IMPLEMENTADO / PROBADO EN CI / DESPLEGADO:** [PR #282](https://github.com/devdamig-dev/thesistema/pull/282) fusionado a `main` (squash `d7661d1d68a8e397fd63c42a97eba253c24d7453`). El gate Auth/RLS tiene regresiones sintéticas para ambas clases de clave pública: JWT legacy `anon` con Bearer y `sb_publishable_` sólo en `apikey`. [Quality #42469784840](https://github.com/devdamig-dev/thesistema/actions/runs/42469784840) finalizó `success` con `verify` (incluye tests, typecheck, lint, build y Playwright), `postgres17` y `postgrest`; [QA Auth #42469784775](https://github.com/devdamig-dev/thesistema/actions/runs/42469784775) pasó `syntax-only`, mientras `two-tenant` real quedó `skipped` por diseño en PR. [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/3vLBGMRt51sZeyQK4ZGY97rzxa87) para el mismo SHA. Cambios de pruebas/documentación; sin runtime Fudo, SQL ni escritura comercial.
