@@ -108,7 +108,10 @@ async function assertAnonymousTenantIdHidden(table, id) {
   const url = origin + '/rest/v1/' + table
     + '?select=id&id=eq.' + encodeURIComponent(id) + '&limit=1';
   const response = await fetch(url, {
-    headers: apiHeaders(),
+    // Legacy anon JWT must be sent as a Bearer: otherwise a gateway 401
+    // for missing Authorization could falsely appear to prove RLS.
+    // Supabase publishable keys are API keys, not JWT bearers.
+    headers: apiHeaders(key.startsWith('sb_publishable_') ? '' : key),
     redirect: 'error',
     signal: AbortSignal.timeout(15000),
   });
