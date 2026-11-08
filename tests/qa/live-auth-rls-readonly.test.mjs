@@ -16,6 +16,7 @@ function runFixture(scenario, overrides = {}) {
     "let privateGets = 0;",
     "globalThis.fetch = async (input, init = {}) => {",
     "  const url = new URL(String(input));",
+    "  if (init.redirect !== 'error') throw Error('QA fetch must reject provider redirects');",
     "  const headers = new Headers(init.headers || {});",
     "  const auth = headers.get('Authorization') || '';",
     "  const who = auth.includes('mock-token-A') ? 'A' : 'B';",

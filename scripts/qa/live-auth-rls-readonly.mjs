@@ -37,12 +37,14 @@ async function signIn(email, password) {
     method:'POST',
     headers: {...apiHeaders(),'Content-Type':'application/json'},
     body: JSON.stringify({email,password}),
+    redirect: 'error',
     signal: AbortSignal.timeout(15000),
   });
   const data = await readResponse(response,'Autenticación QA');
   assert.ok(data.access_token,'No se obtuvo sesión');
   const who = await readResponse(await fetch(origin+'/auth/v1/user',{
     headers:apiHeaders(data.access_token),
+    redirect: 'error',
     signal: AbortSignal.timeout(15000),
   }), 'Confirmar identidad');
   assert.ok(who.id,'Sesión sin identidad');
@@ -53,6 +55,7 @@ async function select(client,table,filter=''){
   const url=origin+'/rest/v1/'+table+'?select='+encodeURIComponent(columns)+'&limit=100'+filter;
   const rows=await readResponse(await fetch(url,{
     headers:apiHeaders(client.accessToken),
+    redirect: 'error',
     signal:AbortSignal.timeout(15000),
   }), 'Consulta RLS '+table);
   assert.ok(Array.isArray(rows),'Se esperaba lista de filas');
@@ -108,6 +111,7 @@ const privateFudoTables = [
 async function assertPrivateFudoTableDenied(client, table) {
   const response = await fetch(origin + '/rest/v1/' + table + '?select=*&limit=1', {
     headers: apiHeaders(client.accessToken),
+    redirect: 'error',
     signal: AbortSignal.timeout(15000),
   });
   const status = response.status;
