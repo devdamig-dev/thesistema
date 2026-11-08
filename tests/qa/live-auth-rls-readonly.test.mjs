@@ -20,6 +20,7 @@ function runFixture(scenario, overrides = {}) {
     "  const url = new URL(String(input));",
     "  if (init.redirect !== 'error') throw Error('QA fetch must reject provider redirects');",
     "  const headers = new Headers(init.headers || {});",
+    "  if (headers.get('apikey') !== process.env.QA_PUBLIC_KEY) throw Error('QA fetch missing public apikey');",
     "  const auth = headers.get('Authorization') || '';",
     "  const who = auth.includes('mock-token-A') ? 'A' : 'B';",
     "  const isAnon = !auth || auth === 'Bearer ' + process.env.QA_PUBLIC_KEY;",
