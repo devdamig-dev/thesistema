@@ -165,3 +165,22 @@ test("Fudo O1 rejects malformed JSON:API attributes rather than silently staging
     );
   }
 });
+
+
+test("Fudo O1 rejects provider NUL bytes before JSONB staging while preserving valid text", () => {
+  const good = { id: "product-1", type: "Product", attributes: { description: "Línea uno\nLínea dos" } };
+  assert.equal(parseFudoPage({ data: [good] }, "products").length, 1);
+  for (const id of ["sku\u0000hidden", "sku\nsecond-line", "sku\rreturn", "sku\tpart", "sku\u007fdel"]) {
+    assert.throws(() => parseFudoPage({ data: [{ ...good, id }] }, "products"),
+      /invalid_fudo_record/, "control characters cannot become external IDs");
+  }
+  const nulCases = [
+    { ...good, attributes: { description: "normal", nested: { notes: "bad\u0000value" } } },
+    { ...good, attributes: { variants: [{ sku: "ok" }, { sku: "bad\u0000value" }] } },
+    { ...good, attributes: { ["bad\u0000key"]: "value" } },
+  ];
+  for (const record of nulCases) {
+    assert.throws(() => parseFudoPage({ data: [good, record] }, "products"),
+      /invalid_fudo_record/, "reject the page before an atomic SQL write");
+  }
+});
