@@ -98,9 +98,9 @@ test("Fudo copy does not present a legacy cursor 0 as a verified full scan", () 
     seenThisCycleCounts: { ...view.seenThisCycleCounts, products: null },
   };
   const report = buildFudoPilotEvidence(legacy, { revision: REVISION, result: probe });
-  assert.match(report, /\\| Productos \\| GET compatible \\| 7 \\| No verificable \\| No verificable \\| Cursor 0 sin cierre verificable \\|/);
-  assert.doesNotMatch(report, /\\| Productos \\|[^\\n]*Ciclo leído/);
-  assert.match(report, /\\| Ingredientes \\| GET compatible \\| 0 \\| 0 \\| 0 \\| Ciclo leído \\|/);
+  assert.match(report, /\| Productos \| GET compatible \| 7 \| No verificable \| No verificable \| Cursor 0 sin cierre verificable \|/);
+  assert.doesNotMatch(report, /\| Productos \|[^\n]*Ciclo leído/);
+  assert.match(report, /\| Ingredientes \| GET compatible \| 0 \| 0 \| 0 \| Ciclo leído \|/);
 });
 
 test("Fudo copy refuses to certify cursor 0 after an incomplete or failed run", () => {
@@ -111,7 +111,7 @@ test("Fudo copy refuses to certify cursor 0 after an incomplete or failed run", 
       recentRuns: [{ ...view.recentRuns[0], status }],
     };
     const report = buildFudoPilotEvidence(interrupted, { revision: REVISION, result: probe });
-    assert.match(report, /\\| Productos \\| GET compatible \\| 7 \\| 7 \\| No verificable \\| Cursor 0 sin cierre verificable \\|/);
-    assert.doesNotMatch(report, /\\| Productos \\|[^\\n]*Ciclo leído/);
+    assert.match(report, /\| Productos \| GET compatible \| 7 \| 7 \| No verificable \| Cursor 0 sin cierre verificable \|/);
+    assert.doesNotMatch(report, /\| Productos \|[^\n]*Ciclo leído/);
   }
 });
