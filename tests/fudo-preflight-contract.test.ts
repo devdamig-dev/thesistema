@@ -43,7 +43,7 @@ const copy = (diagnostic: FudoResourcePreflight) =>
 test("O1 reports five exact unique compatible GETs as only a partial permission check", () => {
   assert.equal(isWellFormedFudoPreflight(green), true);
   assert.equal(state(green), "done");
-  assert.match(copy(green), /\\| Ventas \\| GET compatible \\|/);
+  assert.match(copy(green), /\| Ventas \| GET compatible \|/);
   assert.match(copy(green), /NO-GO/);
 });
 
@@ -86,8 +86,8 @@ test("O1 keeps legitimate 403 statuses visible without inventing permission succ
   assert.equal(isWellFormedFudoPreflight(denied), true);
   assert.equal(state(denied), "blocked");
   const report = copy(denied);
-  assert.match(report, /\\| Proveedores \\| Sin permiso \\|/);
-  assert.match(report, /\\| Productos \\| GET compatible \\|/);
+  assert.match(report, /\| Proveedores \| Sin permiso \|/);
+  assert.match(report, /\| Productos \| GET compatible \|/);
   assert.doesNotMatch(report, /provider diagnostic must not be copied/);
 });
 
