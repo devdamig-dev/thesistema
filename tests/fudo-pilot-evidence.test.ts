@@ -124,6 +124,7 @@ test("pilot acta refuses a completed cursor with uncommitted or reversed run tim
   const variants: FudoConnectionView[] = [
     { ...view, lastSyncedAt: null },
     { ...view, lastSyncedAt: "2026-11-09T04:20:00.000Z" },
+    { ...view, lastSyncedAt: "2026-11-09T04:27:00.000Z" },
     { ...view, recentRuns: [{ ...view.recentRuns[0], finishedAt: null }] },
     { ...view, recentRuns: [{ ...view.recentRuns[0], finishedAt: "invalid" }] },
     { ...view, recentRuns: [{ ...view.recentRuns[0], finishedAt: "2026-11-09T04:20:00.000Z" }] },
