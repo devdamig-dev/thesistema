@@ -116,3 +116,22 @@ test("Fudo copy refuses to certify cursor 0 after an incomplete or failed run", 
     assert.doesNotMatch(report, /\| Productos \|[^\n]*Ciclo leído/);
   }
 });
+
+
+test("pilot acta refuses a completed cursor with uncommitted or reversed run timestamps", () => {
+  const baseline = buildFudoPilotEvidence(view, { revision: REVISION, result: probe });
+  assert.match(baseline, /\| Productos \| GET compatible \| 7 \| 7 \| 0 \| Ciclo leído \|/);
+  const variants: FudoConnectionView[] = [
+    { ...view, lastSyncedAt: null },
+    { ...view, lastSyncedAt: "2026-11-09T04:20:00.000Z" },
+    { ...view, lastSyncedAt: "2026-11-09T04:27:00.000Z" },
+    { ...view, recentRuns: [{ ...view.recentRuns[0], finishedAt: null }] },
+    { ...view, recentRuns: [{ ...view.recentRuns[0], finishedAt: "invalid" }] },
+    { ...view, recentRuns: [{ ...view.recentRuns[0], finishedAt: "2026-11-09T04:20:00.000Z" }] },
+  ];
+  for (const bad of variants) {
+    const report = buildFudoPilotEvidence(bad, { revision: REVISION, result: probe });
+    assert.match(report, /\| Productos \| GET compatible \| 7 \| 7 \| No verificable \| Cursor 0 sin cierre verificable \|/);
+    assert.doesNotMatch(report, /\| Productos \|[^\n]*Ciclo leído/);
+  }
+});

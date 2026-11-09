@@ -49,6 +49,25 @@ export function isWellFormedFudoPreflight(probe: FudoResourcePreflight | null): 
 }
 
 /**
+ * A completed label alone is not proof that a read cycle was durably closed.
+ * The SQL finish RPC writes run.finished_at and connection.last_synced_at in
+ * one transaction. Fail closed for legacy/inconsistent metadata instead of
+ * turning five cursor zeroes into a falsely verified full scan.
+ */
+export function hasVerifiableFudoRunClosure(
+  view: Pick<FudoConnectionView, "status" | "lastSyncStatus" | "lastSyncedAt" | "recentRuns">,
+): boolean {
+  const run = view.recentRuns[0];
+  if (view.status !== "connected" || view.lastSyncStatus !== "completed"
+    || run?.status !== "completed") return false;
+  const startedAt = typeof run.startedAt === "string" ? Date.parse(run.startedAt) : NaN;
+  const finishedAt = typeof run.finishedAt === "string" ? Date.parse(run.finishedAt) : NaN;
+  const lastSyncedAt = typeof view.lastSyncedAt === "string" ? Date.parse(view.lastSyncedAt) : NaN;
+  return Number.isFinite(startedAt) && Number.isFinite(finishedAt)
+    && Number.isFinite(lastSyncedAt) && finishedAt >= startedAt && lastSyncedAt >= finishedAt;
+}
+
+/**
  * Advisory readiness only: never turn a product probe or synthetic CI run into
  * a claim that a real Fudo account, tenant isolation or counts were validated.
  * The server never persists diagnostic credentials or browser-derived approval.
@@ -67,8 +86,7 @@ export function evaluateFudoPilotReadiness(
   // The server exposes a null seen-count for such a cursor: it is NOT a
   // reconciliable full cycle even when the newest run says "completed".
   // Empty resources legitimately have a seen-count of zero.
-  const cycleComplete = connectionOk && view.lastSyncStatus === "completed"
-    && view.recentRuns[0]?.status === "completed"
+  const cycleComplete = hasVerifiableFudoRunClosure(view)
     && FUDO_SYNC_RESOURCES.every((resource) => {
       const seen = view.seenThisCycleCounts[resource];
       return view.nextPages[resource] === 0

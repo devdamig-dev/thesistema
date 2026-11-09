@@ -45,6 +45,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — cierre temporal verificable de la última corrida (09/11/2026; PR de revisión)
+
+- **Resultado observable:** ni el checklist ni el acta copiable rotulan el ciclo como leído sólo por el estado `completed` y cinco cursores cero: requieren además hora de inicio, cierre de corrida y marca de última sincronización válidas, con cierre posterior al inicio y última sincronización no anterior al cierre. Un `finished_at` ausente/inválido o cronológicamente imposible y un `last_synced_at` ausente/anterior no certifican el ciclo.
+- **Causa raíz:** ambos consumidores comprobaban estados y conteos, pero no que el RPC hubiera dejado una evidencia cronológica de cierre consistente, aunque SQL escribe `finished_at` y `last_synced_at` conjuntamente.
+- **IMPLEMENTADO EN RAMA:** helper compartido para readiness y acta; regresiones sintéticas de estado completado sin cierre y tiempos inconsistentes. No cambia SQL, cursor, credenciales, Fudo ni operaciones comerciales.
+- **PROBADO:** pendiente ejecución del Quality Gate en CI y revisión del PR. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no; piloto NO-GO. Pendientes cuenta Plan Pro/API autorizada, cinco recursos conciliados, doble sync idempotente y QA A/B.
+- **Riesgo/rollback:** datos heredados inconsistentes pasarán a «No verificable» sin perder staging; revertir exclusivamente el guard de aplicación no requiere migración.
+
 ### O1 — cursor cero no implica ciclo conciliable en el acta privada (09/11/2026; [PR #303](https://github.com/devdamig-dev/thesistema/pull/303))
 
 - **Resultado observable:** el resumen copiable del piloto sólo presenta «Ciclo leído» y posibles ausencias cuando hay conteo válido del ciclo actual, conexión activa y la última ejecución y conexión indican cierre `completed`. Un cursor `next_page=0` heredado sin conteo de ciclo, o una ejecución parcial, fallida o en curso, se muestra como «Cursor 0 sin cierre verificable» y «No verificable» para posibles ausencias.
