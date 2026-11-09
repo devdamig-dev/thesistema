@@ -33,8 +33,10 @@ function safeCount(value: unknown): string {
     ? String(value) : "No verificable";
 }
 
-function safePage(value: unknown): string {
-  if (value === 0) return "Ciclo leído";
+function safePage(value: unknown, cycleClosed: boolean): string {
+  // A legacy or interrupted progress row can hold next_page=0 without a
+  // committed full scan. Cursor exhaustion is not proof of a completed cycle.
+  if (value === 0) return cycleClosed ? "Ciclo leído" : "Cursor 0 sin cierre verificable";
   if (typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= 100000) {
     return `Página ${value} pendiente`;
   }
@@ -77,9 +79,15 @@ export function buildFudoPilotEvidence(
   // five-resource contract; malformed diagnostics never become green checks.
   const trustworthyProbe = isWellFormedFudoPreflight(currentProbe);
 
+  const latestRunClosed = view.status === "connected"
+    && view.lastSyncStatus === "completed"
+    && view.recentRuns[0]?.status === "completed";
   const rows = FUDO_SYNC_RESOURCES.map((resource) => {
     const probe = trustworthyProbe ? probeChecks.find((check) => check.resource === resource) : null;
-    return `| ${RESOURCE_LABELS[resource]} | ${probe ? PROBE_LABELS[probe.code] : "Sin diagnóstico vigente"} | ${safeCount(view.importedCounts[resource])} | ${safeCount(view.seenThisCycleCounts[resource])} | ${safeCount(view.possiblyMissingCounts[resource])} | ${safePage(view.nextPages[resource])} |`;
+    const seen = view.seenThisCycleCounts[resource];
+    const cycleClosed = latestRunClosed
+      && typeof seen === "number" && Number.isSafeInteger(seen) && seen >= 0;
+    return `| ${RESOURCE_LABELS[resource]} | ${probe ? PROBE_LABELS[probe.code] : "Sin diagnóstico vigente"} | ${safeCount(view.importedCounts[resource])} | ${safeCount(seen)} | ${safeCount(cycleClosed && view.nextPages[resource] === 0 ? view.possiblyMissingCounts[resource] : null)} | ${safePage(view.nextPages[resource], cycleClosed)} |`;
   });
 
   return [
