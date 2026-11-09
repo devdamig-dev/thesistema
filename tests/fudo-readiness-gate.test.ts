@@ -24,6 +24,7 @@ test("pilot readiness never says a product-only connection or a completed cursor
   assert.deepEqual(steps.map((step) => step.state), ["done", "pending", "pending", "pending"]);
 
   result.lastSyncStatus = "completed";
+  result.lastSyncedAt = "2026-11-04T12:00:01Z";
   result.nextPages = Object.fromEntries(FUDO_SYNC_RESOURCES.map((resource) => [resource, 0]));
   // Every completed cursor must correspond to a cycle with an actual UUID.
   // The server returns a number (including zero for an empty resource) only
@@ -42,6 +43,7 @@ test("pilot never marks a legacy cursor with unknown cycle provenance as a compl
   const result = view();
   result.status = "connected";
   result.lastSyncStatus = "completed";
+  result.lastSyncedAt = "2026-11-06T03:01:00Z";
   result.recentRuns = [{
     startedAt: "2026-11-06T03:00:00Z", finishedAt: "2026-11-06T03:01:00Z",
     status: "completed", counts: {}, errorCode: null,
@@ -129,3 +131,28 @@ test("permission probes cannot cross businesses with the same status and last te
   assert.equal(selectCurrentFudoPreflight({ ...businessB, connectionRevision: null }, previous), null,
     "missing server revision must fail closed");
 });
+
+test("pilot rejects a completed run without a verified, chronological SQL closure", () => {
+  const base = view();
+  base.status = "connected";
+  base.lastSyncStatus = "completed";
+  base.lastSyncedAt = "2026-11-09T12:05:00Z";
+  base.nextPages = Object.fromEntries(FUDO_SYNC_RESOURCES.map((resource) => [resource, 0]));
+  base.seenThisCycleCounts = Object.fromEntries(FUDO_SYNC_RESOURCES.map((resource) => [resource, 0]));
+  base.recentRuns = [{
+    startedAt: "2026-11-09T12:00:00Z", finishedAt: "2026-11-09T12:05:00Z",
+    status: "completed", counts: {}, errorCode: null,
+  }];
+  assert.equal(evaluateFudoPilotReadiness(base, allAvailable)[2].state, "done");
+  for (const bad of [
+    { ...base, lastSyncedAt: null },
+    { ...base, lastSyncedAt: "2026-11-09T11:59:00Z" },
+    { ...base, recentRuns: [{ ...base.recentRuns[0], finishedAt: null }] },
+    { ...base, recentRuns: [{ ...base.recentRuns[0], finishedAt: "invalid" }] },
+    { ...base, recentRuns: [{ ...base.recentRuns[0], finishedAt: "2026-11-09T11:59:00Z" }] },
+  ]) {
+    assert.equal(evaluateFudoPilotReadiness(bad, allAvailable)[2].state, "pending",
+      "a status or cursor is not a durable completed-cycle certificate");
+  }
+});
+
