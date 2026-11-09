@@ -45,13 +45,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — cierre temporal verificable de la última corrida (09/11/2026; PR de revisión)
+### O1 — cierre temporal verificable de la última corrida (09/11/2026; [PR #305](https://github.com/devdamig-dev/thesistema/pull/305))
 
-- **Resultado observable:** ni el checklist ni el acta copiable rotulan el ciclo como leído sólo por el estado `completed` y cinco cursores cero: requieren además hora de inicio, cierre de corrida y marca de última sincronización válidas, con cierre posterior al inicio y última sincronización no anterior al cierre. Un `finished_at` ausente/inválido o cronológicamente imposible y un `last_synced_at` ausente/anterior no certifican el ciclo.
-- **Causa raíz:** ambos consumidores comprobaban estados y conteos, pero no que el RPC hubiera dejado una evidencia cronológica de cierre consistente, aunque SQL escribe `finished_at` y `last_synced_at` conjuntamente.
-- **IMPLEMENTADO EN RAMA:** helper compartido para readiness y acta; regresiones sintéticas de estado completado sin cierre y tiempos inconsistentes. No cambia SQL, cursor, credenciales, Fudo ni operaciones comerciales.
-- **PROBADO:** pendiente ejecución del Quality Gate en CI y revisión del PR. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no; piloto NO-GO. Pendientes cuenta Plan Pro/API autorizada, cinco recursos conciliados, doble sync idempotente y QA A/B.
-- **Riesgo/rollback:** datos heredados inconsistentes pasarán a «No verificable» sin perder staging; revertir exclusivamente el guard de aplicación no requiere migración.
+- **Resultado observable:** el checklist y el acta copiable sólo muestran ciclo leído cuando los cinco cursores y conteos del ciclo son válidos y la última corrida tiene cierre temporal consistente: `finished_at >= started_at` y `last_synced_at >= finished_at`, con fechas verificables. Un `finished_at` o `last_synced_at` nulo/inválido o cronológicamente anterior deja el ciclo «No verificable», aun con estados `completed` y cursores cero.
+- **Causa raíz:** ambos consumidores comprobaban estados y conteos, pero no que el RPC hubiera dejado una evidencia cronológica de cierre consistente; SQL `fudo_finish_sync` escribe `finished_at` y `last_synced_at` en la misma transacción.
+- **IMPLEMENTADO / FUSIONADO:** [PR #305](https://github.com/devdamig-dev/thesistema/pull/305) fusionado a `main` por squash `80ac7bf86ca7237abe9c158a5340427697e0d1ef`. Helper compartido entre readiness y acta y regresiones sintéticas de cierre ausente, inválido o invertido; sin SQL, GET, credenciales, cursores ni modificaciones de Fudo o de operaciones comerciales.
+- **PROBADO EN CI:** [Quality #42642309534](https://github.com/devdamig-dev/thesistema/actions/runs/42642309534) `completed/success` para HEAD exacto `55ef6a174a67987040c5f24a37d8aaa7c90a550f`; jobs `verify` (tests, typecheck, lint, build, SQL y Playwright), `postgres17` y `postgrest` exitosos. Sólo fixtures sintéticos; no equivalen a cuenta Fudo real ni sesiones QA A/B.
+- **DESPLEGADO:** [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/87b7j4LrfqyxEvPNWGqCeio68SDA), SHA exacto fusionado `80ac7bf86ca7237abe9c158a5340427697e0d1ef`, `target=production`, alias `gastropilot.nexodg.com`, `aliasError=null`. READY no acredita flujo real.
+- **VALIDADO EN PRODUCCIÓN CON FUDO REAL: NO — PILOTO NO-GO.** Faltan cuenta Plan Pro/API autorizada, lecturas y conciliación reales de los cinco recursos, segundo ciclo idempotente, QA A/B autenticado y aceptación documentada. O2+ pospuesto.
+- **Riesgo/rollback:** datos heredados inconsistentes pasarán a «No verificable» sin pérdida de staging; rollback por revert del guard de aplicación, sin migraciones.
 
 ### O1 — cursor cero no implica ciclo conciliable en el acta privada (09/11/2026; [PR #303](https://github.com/devdamig-dev/thesistema/pull/303))
 
