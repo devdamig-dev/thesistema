@@ -45,6 +45,13 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — diagnóstico de permisos consistente entre checklist y acta (09/11/2026; PR en revisión)
+
+- **Resultado observable:** únicamente un diagnóstico vigente de **exactamente cinco GET, uno por cada recurso O1, con código reconocido y bandera `ok` coherente** puede marcar el paso de permisos como «Comprobación parcial» y alimentar el resumen del piloto. Un diagnóstico duplicado, incompleto, desconocido o contradictorio queda como **Requiere revisión** y el acta omite los falsos GET verdes; un 403 auténtico, con `ok=false`, conserva el detalle «Sin permiso».
+- **Hallazgo:** el checklist anterior exigía al menos un `available` por recurso con `ok=true`, pero no verificaba duplicados, recuento exacto ni contradicciones; la exportación del acta ya tenía validaciones más estrictas. La nueva función pura compartida elimina esa divergencia (sin nuevos GET, mutaciones, SQL ni datos reales).
+- **IMPLEMENTADO EN RAMA:** `fix/fudo-o1-fail-closed-permission-diagnostics-20261109`; validador de contrato reutilizado por preparación del piloto y acta privada; pruebas sintéticas de cinco recursos, sexto duplicado contradictorio, omisiones/códigos desconocidos, 403 genuino y desconexión. **PROBADO:** pendiente de Quality Gate del PR. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no; **PILOTO NO-GO**.
+- **Riesgo/rollback:** sólo cambia la evaluación local de resultados ya autorizados: un diagnóstico malformado que antes parecía válido ahora requiere repetir la comprobación. Revertir este cambio no modifica tablas, cursores, credenciales, ventas, caja, stock ni la API de Fudo. Continúan pendientes una cuenta Pro/API autorizada, 5 recursos reales conciliados, dos ciclos idempotentes y sesiones QA A/B.
+
 ### O1 — resumen copiable de conciliación para el acta privada (09/11/2026; #297 publicado)
 
 - **Resultado observable:** el owner/admin, desde `/ajustes/integraciones/fudo`, puede copiar al portapapeles un resumen técnico de cinco recursos para el acta privada del piloto. Incluye sólo conexión, fechas, último estado, códigos de probes de la generación/test vigentes, conteos históricos/vistos/posibles ausencias y cursores. No copia `business_id`, `external_id`, UUID/hash de revisión, token, credenciales, payloads, IDs de ventas, mensajes crudos ni errores de proveedor. No ejecuta nuevos GET ni writes, no crea acta persistente y nunca convierte estos datos en GO automático.
