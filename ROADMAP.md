@@ -45,6 +45,13 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — impedir claves JSON duplicadas del proveedor (08/11/2026; PR en revisión)
+
+- **Resultado observable:** si Fudo devuelve JSON sintácticamente válido con claves repetidas en el mismo objeto (por ejemplo dos precios o IDs distintos), rechazar ese GET **antes de JSON.parse**, hash, staging y cursor. JSON.parse sobreescribe silenciosamente el primer valor; la fidelidad para la conciliación exige fallar cerrado. Las claves equivalentes con escapes Unicode también se detectan; claves iguales de objetos distintos se admiten.
+- **IMPLEMENTADO EN RAMA:** `fix/fudo-o1-reject-duplicate-json-keys-20261108` incorpora un scanner de claves sobre el JSON ya acotado por bytes, habilitado en autenticación y GETs read-only, con regresiones sintéticas de claves anidadas, Unicode, string escapado, error sanitizado y denegación de GET ante token duplicado.
+- **PROBADO:** Quality pendiente para el HEAD de la rama. **DESPLEGADO:** no para este cambio. **VALIDADO EN PRODUCCIÓN CON FUDO REAL: NO — PILOTO NO-GO.** Sigue faltando cuenta Plan Pro/API autorizada, QA de dos negocios A/B, conciliación de cinco recursos y segunda sincronización idempotente.
+- **Riesgo/rollback:** un proveedor que emita claves duplicadas será rechazado, sin normalizarlo silenciosamente. No hay cambio de esquema, nuevos endpoints, escritura a Fudo ni mutación de ventas/stock/caja. Revertir sólo si se reemplaza por un parser con integridad equivalente y contrato del proveedor validado.
+
 ### O1 — diagnóstico read-only con concurrencia acotada (08/11/2026; #292 publicado)
 
 - **Resultado observable:** la revisión de permisos de los cinco recursos Fudo no inicia más de tres GET simultáneos, como la sincronización. Mantiene el orden original y devuelve un resultado sanitizado por recurso incluso si uno devuelve 403 o falla su formato, sin suprimir los demás. El límite real de la API requiere validación con la cuenta autorizada.
