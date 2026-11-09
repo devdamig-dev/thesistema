@@ -45,7 +45,7 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — conteos SQL desconocidos no equivalen a cero (09/11/2026; PR de QA abierto)
+### O1 — conteos SQL desconocidos no equivalen a cero (09/11/2026; [PR #301](https://github.com/devdamig-dev/thesistema/pull/301))
 
 - **Resultado observable:** si una consulta privada `HEAD/count=exact` de registros o de presencias del ciclo retorna `count=null`, negativo, fraccionario o fuera del entero seguro sin error, el acta y el panel no muestran un falso cero ni infieren eliminaciones. Un cero observado, válido y entero se mantiene como cero.
 - **Causa raíz:** la agregación usaba `Number(count ?? 0)` para históricos y `Math.max(0, seen)` para ciclo; ambas conversiones transformaban metadatos inválidos en conteos aparentemente reconciliables.
