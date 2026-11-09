@@ -45,6 +45,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — cursor cero no implica ciclo conciliable en el acta privada (09/11/2026)
+
+- **Resultado observable:** el resumen copiable del piloto solo presenta «Ciclo leído» y posibles ausencias cuando hay conteo válido del ciclo actual y la última ejecución y conexión indican cierre `completed`. Un cursor `next_page=0` heredado sin UUID/conteo de ciclo, o una ejecución parcial, fallida o en curso, se muestra como «Cursor 0 sin cierre verificable» y «No verificable» para posibles ausencias.
+- **Causa raíz:** el panel de preparación ya exige ciclo actual y ejecución completada, pero el acta copiaba «Ciclo leído» directamente desde el cursor cero, incluso si el cierre nunca se había verificado.
+- **IMPLEMENTADO EN RAMA:** helper privado de exportación con gate de cierre basado en la información autorizada, más regresiones sintéticas para cursor heredado y ejecuciones interrumpidas; sin nuevas consultas a Fudo, mutaciones SQL, cambios de permisos, credenciales o movimientos comerciales.
+- **PROBADO:** pendiente Quality Gate del HEAD de este cambio; no asumir CI ni UI de producción aprobados.
+- **DESPLEGADO:** no confirmado. **VALIDADO EN PRODUCCIÓN CON FUDO REAL: NO — PILOTO NO-GO.** Falta cuenta Fudo Pro/API autorizada, cinco recursos reales, dos ciclos idempotentes, QA A/B y acta firmada.
+- **Riesgo/rollback:** al copiar, algunos cursores cero previamente etiquetados como leídos figurarán como no verificables hasta aportar evidencia de cierre. Revertir únicamente el helper no afecta tablas, cursores, Fudo ni operación real. O2+ pospuesto.
+
 ### O1 — conteos SQL desconocidos no equivalen a cero (09/11/2026; [PR #301](https://github.com/devdamig-dev/thesistema/pull/301))
 
 - **Resultado observable:** si una consulta privada `HEAD/count=exact` de registros o de presencias del ciclo retorna `count=null`, negativo, fraccionario o fuera del entero seguro sin error, el acta y el panel no muestran un falso cero ni infieren eliminaciones. Un cero observado, válido y entero se mantiene como cero.
