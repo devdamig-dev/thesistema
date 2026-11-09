@@ -14,6 +14,7 @@
 
 import { nextFudoPage, parseFudoPage } from "./snapshot";
 import { assertSafeFudoJsonNumbers } from "./json-numbers";
+import { assertUniqueFudoJsonKeys } from "./json-keys";
 import { runFudoReadBatch } from "./read-batch";
 
 export type FudoCredentials = {
@@ -206,6 +207,10 @@ async function readBoundedJson(response: Response, maxBytes: number, enforceNume
     offset += chunk.byteLength;
   }
   const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  // JSON.parse silently overwrites duplicate object keys, which would alter
+  // provider prices/IDs before staging and make reconciliation unreliable.
+  // Inspect both auth and read JSON before parsing; never reveal payload bytes.
+  assertUniqueFudoJsonKeys(source);
   if (enforceNumericFidelity) assertSafeFudoJsonNumbers(source);
   return JSON.parse(source);
 }
