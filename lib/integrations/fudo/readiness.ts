@@ -1,4 +1,5 @@
 import { FUDO_SYNC_RESOURCES } from "./snapshot";
+import { parseStrictFudoTimestamp } from "./timestamp";
 import type { FudoConnectionView, FudoResourcePreflight } from "./service";
 
 export type FudoReadinessStep = {
@@ -60,11 +61,13 @@ export function hasVerifiableFudoRunClosure(
   const run = view.recentRuns[0];
   if (view.status !== "connected" || view.lastSyncStatus !== "completed"
     || run?.status !== "completed") return false;
-  const startedAt = typeof run.startedAt === "string" ? Date.parse(run.startedAt) : NaN;
-  const finishedAt = typeof run.finishedAt === "string" ? Date.parse(run.finishedAt) : NaN;
-  const lastSyncedAt = typeof view.lastSyncedAt === "string" ? Date.parse(view.lastSyncedAt) : NaN;
-  return Number.isFinite(startedAt) && Number.isFinite(finishedAt)
-    && Number.isFinite(lastSyncedAt) && finishedAt >= startedAt && lastSyncedAt >= finishedAt;
+  // SQL writes zoned RFC3339 instants. Date.parse would also accept impossible
+  // calendar dates or local-time strings, yielding a false green closure.
+  const startedAt = parseStrictFudoTimestamp(run.startedAt);
+  const finishedAt = parseStrictFudoTimestamp(run.finishedAt);
+  const lastSyncedAt = parseStrictFudoTimestamp(view.lastSyncedAt);
+  return startedAt !== null && finishedAt !== null && lastSyncedAt !== null
+    && finishedAt >= startedAt && lastSyncedAt >= finishedAt;
 }
 
 /**

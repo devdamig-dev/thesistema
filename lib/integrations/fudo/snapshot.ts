@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { parseStrictFudoTimestamp } from "./timestamp";
 
 export const FUDO_SYNC_RESOURCES = ["products", "ingredients", "providers", "orders", "sales"] as const;
 export type FudoSyncResource = typeof FUDO_SYNC_RESOURCES[number];
@@ -55,33 +56,6 @@ function hasUnsafeStagingValue(root: unknown): boolean {
     }
   }
   return false;
-}
-
-/**
- * The provider timestamp is optional provenance, NOT a machine-local guess.
- * Date.parse accepts ambiguous locale dates and timezone-free timestamps,
- * and normalizes impossible calendar dates on some JS engines. A fabricated
- * update instant can undermine cross-system reconciliation: keep null instead.
- * Never reflect the rejected provider value to errors or logs.
- */
-function parseSourceTimestamp(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/.exec(value);
-  if (!match) return null;
-  const [, rawYear, rawMonth, rawDay, rawHour, rawMinute, rawSecond, zone] = match;
-  const [year, month, day, hour, minute, second] =
-    [rawYear, rawMonth, rawDay, rawHour, rawMinute, rawSecond].map(Number);
-  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  if (month < 1 || month > 12 || day < 1 || day > days[month - 1]
-    || hour > 23 || minute > 59 || second > 59) return null;
-  if (zone !== "Z") {
-    const zoneHours = Number(zone.slice(1, 3));
-    const zoneMinutes = Number(zone.slice(4, 6));
-    if (zoneHours > 14 || zoneMinutes > 59 || (zoneHours === 14 && zoneMinutes !== 0)) return null;
-  }
-  const instant = Date.parse(value);
-  return Number.isFinite(instant) ? new Date(instant).toISOString() : null;
 }
 
 /**
@@ -165,7 +139,7 @@ export function parseFudoPage(value: unknown, expectedResource?: string): FudoSn
     }
     const attributes = (body.attributes ?? {}) as Record<string, unknown>;
     const rawDate = attributes.updatedAt ?? attributes.updated_at;
-    const sourceUpdatedAt = parseSourceTimestamp(rawDate);
+    const sourceUpdatedAt = parseStrictFudoTimestamp(rawDate);
     const serialized = JSON.stringify(body);
     // JSON.stringify().length counts UTF-16 code units, not UTF-8 bytes.
     // A multibyte product description must not bypass the 128 KiB staging limit.

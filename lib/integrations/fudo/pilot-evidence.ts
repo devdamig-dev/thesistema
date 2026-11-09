@@ -1,4 +1,5 @@
 import { FUDO_SYNC_RESOURCES } from "./snapshot";
+import { parseStrictFudoTimestamp } from "./timestamp";
 import { hasVerifiableFudoRunClosure, isWellFormedFudoPreflight, selectCurrentFudoPreflight } from "./readiness";
 import type { FudoConnectionView, FudoResourcePreflight } from "./service";
 
@@ -44,8 +45,7 @@ function safePage(value: unknown, cycleClosed: boolean): string {
 }
 
 function safeDate(value: unknown): string {
-  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return "No registrada";
-  return new Date(value).toISOString();
+  return parseStrictFudoTimestamp(value) ?? "No registrada";
 }
 
 function safeConnectionStatus(status: FudoConnectionView["status"]): string {

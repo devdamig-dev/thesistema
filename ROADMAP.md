@@ -45,6 +45,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — cierre de sincronización con fechas RFC3339 verificables (09/11/2026; en rama)
+
+- **Resultado observable:** un cierre de sync sólo se clasifica como «Ciclo leído» cuando inicio, fin y última sincronización tienen instantes RFC3339 con zona horaria explícita y fecha real. Un día inexistente, un timestamp sin zona u offset inválido debe dejar el checklist y el acta en «No verificable», aun con cinco cursores en cero. La evidencia copiable tampoco presenta como válida una fecha ambigua.
+- **Causa raíz:** el guard de cierre implementado en #305 y el acta privada usaban `Date.parse`: JavaScript puede normalizar un día inexistente o aceptar instantes sin zona como hora local. El staging ya usaba un parser estricto diferente, por lo que la evidencia de cierre quedaba con garantías menores.
+- **IMPLEMENTADO EN RAMA:** `fix/fudo-o1-strict-run-timestamps-20261109`; factoriza el parser estricto de provenance para reutilizarlo en snapshot, readiness y acta. Añade regresión para fechas imposibles, offset, zona ausente, comparación cronológica y persistencia del payload fuente. No cambia tablas, roles, claves, endpoints, cursores ni movimientos comerciales.
+- **PROBADO:** Quality del HEAD pendiente. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no — PILOTO NO-GO. Mantener O2+ pospuesto.
+- **Riesgo/rollback:** registros históricos de fechas inconsistentes se mostrarán «No verificable» hasta una ejecución nueva válida. Revert del guard/refactor sin migración; confirmar comportamiento en Fudo real durante piloto autorizado.
+
 ### O1 — hash semántico estable para relecturas read-only (09/11/2026; [PR #309](https://github.com/devdamig-dev/thesistema/pull/309), integrado y publicado)
 
 - **Resultado observable:** dos respuestas Fudo con los mismos atributos JSON pero distinto orden de claves (incluidas claves anidadas) producen el mismo `content_hash`, conservando el payload fuente; modificar un valor o reordenar elementos de un array cambia la huella. Evita falsos cambios de origen en relecturas idempotentes.
