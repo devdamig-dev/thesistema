@@ -1,5 +1,5 @@
 import { FUDO_SYNC_RESOURCES } from "./snapshot";
-import { selectCurrentFudoPreflight } from "./readiness";
+import { isWellFormedFudoPreflight, selectCurrentFudoPreflight } from "./readiness";
 import type { FudoConnectionView, FudoResourcePreflight } from "./service";
 
 /**
@@ -73,13 +73,9 @@ export function buildFudoPilotEvidence(
 ): string {
   const currentProbe = selectCurrentFudoPreflight(view, storedProbe);
   const probeChecks = currentProbe?.checks ?? [];
-  const uniqueChecks = new Set(probeChecks.map((check) => check.resource));
-  const trustworthyProbe = currentProbe !== null
-    && currentProbe.ok === probeChecks.every((check) => check.code === "available")
-    && probeChecks.length === FUDO_SYNC_RESOURCES.length
-    && uniqueChecks.size === FUDO_SYNC_RESOURCES.length
-    && FUDO_SYNC_RESOURCES.every((resource) =>
-      probeChecks.some((check) => check.resource === resource && typeof PROBE_LABELS[check.code] === "string"));
+  // The readiness checklist and private evidence must use the same strict
+  // five-resource contract; malformed diagnostics never become green checks.
+  const trustworthyProbe = isWellFormedFudoPreflight(currentProbe);
 
   const rows = FUDO_SYNC_RESOURCES.map((resource) => {
     const probe = trustworthyProbe ? probeChecks.find((check) => check.resource === resource) : null;
