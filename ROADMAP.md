@@ -45,14 +45,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — cursor cero no implica ciclo conciliable en el acta privada (09/11/2026)
+### O1 — cursor cero no implica ciclo conciliable en el acta privada (09/11/2026; [PR #303](https://github.com/devdamig-dev/thesistema/pull/303))
 
-- **Resultado observable:** el resumen copiable del piloto solo presenta «Ciclo leído» y posibles ausencias cuando hay conteo válido del ciclo actual y la última ejecución y conexión indican cierre `completed`. Un cursor `next_page=0` heredado sin UUID/conteo de ciclo, o una ejecución parcial, fallida o en curso, se muestra como «Cursor 0 sin cierre verificable» y «No verificable» para posibles ausencias.
-- **Causa raíz:** el panel de preparación ya exige ciclo actual y ejecución completada, pero el acta copiaba «Ciclo leído» directamente desde el cursor cero, incluso si el cierre nunca se había verificado.
-- **IMPLEMENTADO EN RAMA:** helper privado de exportación con gate de cierre basado en la información autorizada, más regresiones sintéticas para cursor heredado y ejecuciones interrumpidas; sin nuevas consultas a Fudo, mutaciones SQL, cambios de permisos, credenciales o movimientos comerciales.
-- **PROBADO:** pendiente Quality Gate del HEAD de este cambio; no asumir CI ni UI de producción aprobados.
-- **DESPLEGADO:** no confirmado. **VALIDADO EN PRODUCCIÓN CON FUDO REAL: NO — PILOTO NO-GO.** Falta cuenta Fudo Pro/API autorizada, cinco recursos reales, dos ciclos idempotentes, QA A/B y acta firmada.
-- **Riesgo/rollback:** al copiar, algunos cursores cero previamente etiquetados como leídos figurarán como no verificables hasta aportar evidencia de cierre. Revertir únicamente el helper no afecta tablas, cursores, Fudo ni operación real. O2+ pospuesto.
+- **Resultado observable:** el resumen copiable del piloto sólo presenta «Ciclo leído» y posibles ausencias cuando hay conteo válido del ciclo actual, conexión activa y la última ejecución y conexión indican cierre `completed`. Un cursor `next_page=0` heredado sin conteo de ciclo, o una ejecución parcial, fallida o en curso, se muestra como «Cursor 0 sin cierre verificable» y «No verificable» para posibles ausencias.
+- **Causa raíz:** el checklist de preparación ya exigía ciclo actual y ejecución completada, pero el acta copiaba «Ciclo leído» directamente desde el cursor cero, incluso si el cierre nunca se había verificado.
+- **IMPLEMENTADO / FUSIONADO:** [PR #303](https://github.com/devdamig-dev/thesistema/pull/303) integrado a `main` por squash `3b6cc326ec5f43cb6b31eb16fcfc4fef9af7b74b`; helper privado de exportación alineado al checklist, regresiones sintéticas para cursor heredado, desconexión y ejecuciones incompletas. No incorpora nuevos GET ni escrituras a Fudo, migraciones, permisos o movimientos comerciales.
+- **PROBADO EN CI:** [Quality #42614224746](https://github.com/devdamig-dev/thesistema/actions/runs/42614224746) `completed/success` para HEAD exacto `26ea0fd230cd49ad24b3388b543f6b3d6bb7287e`. Jobs `verify`, `postgres17` y `postgrest` completos/success. **Fixtures sintéticos:** no equivalen a pruebas con Fudo real ni aislamiento QA A/B.
+- **DESPLEGADO:** [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/7WprpX3zjTCk4jshxJNHknP5iA2L) confirmó SHA exacto `3b6cc326ec5f43cb6b31eb16fcfc4fef9af7b74b`, `target=production`, alias `gastropilot.nexodg.com` y `aliasError=null`. La compilación de preview de #303 recibió inicialmente `build-rate-limit`, pero el deploy de producción posterior terminó `READY`. **READY no acredita flujo Fudo real.**
+- **VALIDADO EN PRODUCCIÓN CON FUDO REAL: NO — PILOTO NO-GO.** Siguen pendientes cuenta Fudo Pro/API autorizada, lecturas y conciliación de cinco recursos, dos ciclos idempotentes, QA autenticado de dos negocios y aceptación documentada. O2+ pospuesto.
+- **Riesgo/rollback:** al copiar, cursores cero previamente rotulados como leídos podrán aparecer como no verificables hasta contar con evidencia de cierre. Revertir el helper no modifica tablas, cursores, claves, Fudo ni operación real.
 
 ### O1 — conteos SQL desconocidos no equivalen a cero (09/11/2026; [PR #301](https://github.com/devdamig-dev/thesistema/pull/301))
 
