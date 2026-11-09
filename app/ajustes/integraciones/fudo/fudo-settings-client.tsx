@@ -139,6 +139,12 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
               if (connectionRevision && result.checks.length > 0) {
                 setPreflightState({ revision: connectionRevision, result });
               }
+              // Do not leave a green success notice if an inconsistent set of
+              // five permissions comes back from the server. Preserve normal
+              // upstream errors with no checks, and valid per-resource 403s.
+              if (result.checks.length > 0 && !isWellFormedFudoPreflight(result)) {
+                return { ok: false, message: "El diagnóstico fue inconsistente. Volvé a revisar los cinco recursos." };
+              }
               return result;
             })}>
               <ShieldCheck className="h-4 w-4" /> Revisar permisos de importación
