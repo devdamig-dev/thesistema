@@ -66,7 +66,7 @@ function hasUnsafeStagingValue(root: unknown): boolean {
  */
 function parseSourceTimestamp(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  const match = /^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.\\d{1,9})?(Z|[+-]\\d{2}:\\d{2})$/.exec(value);
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/.exec(value);
   if (!match) return null;
   const [, rawYear, rawMonth, rawDay, rawHour, rawMinute, rawSecond, zone] = match;
   const [year, month, day, hour, minute, second] =
