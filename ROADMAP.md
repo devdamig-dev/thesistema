@@ -45,14 +45,16 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — fidelidad de fechas de origen (09/11/2026; [PR #307](https://github.com/devdamig-dev/thesistema/pull/307), en revisión)
+### O1 — fidelidad de fechas de origen (09/11/2026; [PR #307](https://github.com/devdamig-dev/thesistema/pull/307), integrado y publicado)
 
-- **Resultado observable:** `source_updated_at` sólo refleja instantes RFC3339 con zona explícita y calendario válido, normalizados a UTC. Una fecha local ambigua, imposible o con offset inválido queda como `null` (desconocida), no como fecha inventada; el payload externo original y su hash permanecen sin cambios.
-- **Causa raíz:** `Date.parse` permitía timestamps sin zona dependientes del runtime e incluso normalizaba fechas calendario inexistentes antes de persistir provenance.
-- **IMPLEMENTADO EN RAMA:** PR #307 en borrador; helper puro de validación del timestamp y tres regresiones sintéticas de zonas, fechas, año bisiesto y conservación del payload. No modifica endpoint Fudo, autenticación, permisos, sync/cursor, staging histórico, SQL ni operación comercial.
-- **PROBADO:** pendiente de verificar el Quality Gate del HEAD definitivo del PR; los tests aportados todavía no equivalen a una ejecución exitosa. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no.
-- **Riesgo/rollback:** fechas entregadas sin zona explícita pasan a metadato desconocido, preservando íntegro el valor en el JSON fuente. Revert del helper si el contrato real confirma un esquema diferente y se define una zona explícita por negocio; sin migración.
-- **PILOTO NO-GO:** cuenta Fudo Pro/API autorizada, cinco recursos conciliados, segundo ciclo idempotente y QA A/B autenticado pendientes; O2+ pospuesto.
+- **Resultado observable:** `source_updated_at` sólo representa instantes RFC3339 con zona explícita y calendario válido normalizados a UTC. Una fecha local ambigua, imposible o con offset inválido queda en `null` (desconocida), nunca se inventa una fecha. Se conserva el payload fuente y su hash.
+- **Causa raíz:** `Date.parse` podía aceptar timestamps locales dependientes de la máquina e incluso normalizar fechas calendario inexistentes, presentándolas como provenance confiable.
+- **IMPLEMENTADO / FUSIONADO:** [PR #307](https://github.com/devdamig-dev/thesistema/pull/307) integrado por squash en `main`, SHA `d3f83b2c4639f95ec30011d8334a1481e80df1cd`; helper conservador y tres regresiones sintéticas. Sin cambio de endpoint Fudo, autorización, sincronización/cursor, SQL ni operaciones comerciales.
+- **PROBADO EN CI:** [Quality #42661659536](https://github.com/devdamig-dev/thesistema/actions/runs/42661659536) `completed/success` para HEAD exacto `dda5005ea9724717e669aacfb6e26be63de9efe9`; jobs `verify` (tests, typecheck, lint, build, SQL, Playwright), `postgres17` y `postgrest` aprobados. Tests sintéticos, no conexión con Fudo real ni sesiones QA A/B.
+- **DESPLEGADO:** [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/CNUAsNgXmeALknyz2z4P97cWyZQq), SHA exacto de `main` `d3f83b2c4639f95ec30011d8334a1481e80df1cd`, `target=production`, alias `gastropilot.nexodg.com` y `aliasError=null` confirmados. READY no demuestra piloto funcional.
+- **DB real inspeccionada sólo en lectura (09/11/2026):** 0 conexiones Fudo, 0 sync runs, 0 registros importados, 0 cursores. RLS habilitada en cuatro tablas privadas; sin SELECT directo para `anon` / `authenticated`. No constituye test autenticado A/B.
+- **VALIDADO EN PRODUCCIÓN CON FUDO REAL: NO — PILOTO NO-GO.** Faltan cuenta Fudo Pro/API autorizada, cinco recursos reales conciliados, segunda sync idempotente, QA A/B con identidades independientes y acta de aceptación. O2+ pospuesto.
+- **Riesgo/rollback:** fechas sin zona pasan a desconocidas sin alterar el JSON fuente; rollback mediante revert sin migración.
 
 ### O1 — cierre temporal verificable de la última corrida (09/11/2026; [PR #305](https://github.com/devdamig-dev/thesistema/pull/305))
 
