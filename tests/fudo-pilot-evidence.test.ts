@@ -90,3 +90,28 @@ test("Fudo copy does not promote a contradictory failed diagnostic to five green
   assert.match(report, /Sin diagnóstico vigente/);
   assert.doesNotMatch(report, /GET compatible/);
 });
+
+test("Fudo copy does not present a legacy cursor 0 as a verified full scan", () => {
+  const legacy = {
+    ...view,
+    // A pre-cycle UUID legacy cursor can be zero without any stable scan ID.
+    seenThisCycleCounts: { ...view.seenThisCycleCounts, products: null },
+  };
+  const report = buildFudoPilotEvidence(legacy, { revision: REVISION, result: probe });
+  assert.match(report, /\\| Productos \\| GET compatible \\| 7 \\| No verificable \\| No verificable \\| Cursor 0 sin cierre verificable \\|/);
+  assert.doesNotMatch(report, /\\| Productos \\|[^\\n]*Ciclo leído/);
+  assert.match(report, /\\| Ingredientes \\| GET compatible \\| 0 \\| 0 \\| 0 \\| Ciclo leído \\|/);
+});
+
+test("Fudo copy refuses to certify cursor 0 after an incomplete or failed run", () => {
+  for (const status of ["running", "partial", "failed"] as const) {
+    const interrupted: FudoConnectionView = {
+      ...view,
+      lastSyncStatus: status,
+      recentRuns: [{ ...view.recentRuns[0], status }],
+    };
+    const report = buildFudoPilotEvidence(interrupted, { revision: REVISION, result: probe });
+    assert.match(report, /\\| Productos \\| GET compatible \\| 7 \\| 7 \\| No verificable \\| Cursor 0 sin cierre verificable \\|/);
+    assert.doesNotMatch(report, /\\| Productos \\|[^\\n]*Ciclo leído/);
+  }
+});
