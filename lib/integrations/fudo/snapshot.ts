@@ -84,6 +84,24 @@ function parseSourceTimestamp(value: unknown): string | null {
   return Number.isFinite(instant) ? new Date(instant).toISOString() : null;
 }
 
+/**
+ * JSONB and JSON:API both treat object member order as semantically irrelevant.
+ * A provider can reorder keys between reads without changing a product/sale.
+ * Hash a canonical object representation so a repeated scan does not report
+ * phantom source changes. Array order remains significant. The original
+ * provider object is still retained unchanged as the staging payload.
+ */
+function canonicalFudoJson(value: Record<string, unknown>): string {
+  return JSON.stringify(value, (_key, current: unknown) => {
+    if (current && typeof current === "object" && !Array.isArray(current)) {
+      return Object.fromEntries(
+        Object.entries(current).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0),
+      );
+    }
+    return current;
+  });
+}
+
 export type FudoSnapshot = {
   externalId: string;
   payload: Record<string, unknown>;
@@ -155,7 +173,7 @@ export function parseFudoPage(value: unknown, expectedResource?: string): FudoSn
     return {
       externalId: id,
       payload: body,
-      contentHash: createHash("sha256").update(serialized).digest("hex"),
+      contentHash: createHash("sha256").update(canonicalFudoJson(body)).digest("hex"),
       sourceUpdatedAt,
     };
   });
