@@ -79,7 +79,8 @@ export function buildFudoPilotEvidence(
   // five-resource contract; malformed diagnostics never become green checks.
   const trustworthyProbe = isWellFormedFudoPreflight(currentProbe);
 
-  const latestRunClosed = view.lastSyncStatus === "completed"
+  const latestRunClosed = view.status === "connected"
+    && view.lastSyncStatus === "completed"
     && view.recentRuns[0]?.status === "completed";
   const rows = FUDO_SYNC_RESOURCES.map((resource) => {
     const probe = trustworthyProbe ? probeChecks.find((check) => check.resource === resource) : null;
