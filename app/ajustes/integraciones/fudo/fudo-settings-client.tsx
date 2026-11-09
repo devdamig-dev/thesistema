@@ -2,11 +2,12 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { DatabaseZap, PlugZap, RefreshCcw, ShieldCheck, Unplug } from "lucide-react";
+import { ClipboardCopy, DatabaseZap, PlugZap, RefreshCcw, ShieldCheck, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/ajustes/setting-row";
 import type { FudoConnectionView, FudoResourcePreflight } from "@/lib/integrations/fudo/service";
 import { evaluateFudoPilotReadiness, fudoConnectionRevision, selectCurrentFudoPreflight } from "@/lib/integrations/fudo/readiness";
+import { buildFudoPilotEvidence } from "@/lib/integrations/fudo/pilot-evidence";
 import { runFudoActionSafely, runFudoPreflightSafely, runFudoSyncBatches } from "@/lib/integrations/fudo/action-feedback";
 import {
   connectFudoAction, testFudoConnectionAction, inspectFudoPermissionsAction, disconnectFudoAction, syncFudoAction,
@@ -33,6 +34,7 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
   const [secret, setSecret] = useState("");
   const [working, startTransition] = useTransition();
   const [notice, setNotice] = useState<{ ok: boolean; message: string } | null>(null);
+  const [evidenceNotice, setEvidenceNotice] = useState<string | null>(null);
   // The permission probe is advisory and applies only to the tested connection.
   // A server refresh after retest/rotation must not re-use old green checks.
   const connectionRevision = fudoConnectionRevision(status);
@@ -53,6 +55,17 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
       if (result.ok && clear) { setKey(""); setSecret(""); }
       router.refresh();
     });
+  };
+
+  const copyPilotEvidence = async () => {
+    // A manual clipboard action: no Fudo GET, no external upload and no local
+    // persistence. The formatter only includes sanitized server-side counts.
+    try {
+      await navigator.clipboard.writeText(buildFudoPilotEvidence(status, preflightState));
+      setEvidenceNotice("Resumen técnico copiado. Pegalo únicamente en el acta privada del piloto.");
+    } catch {
+      setEvidenceNotice("No se pudo copiar el resumen. Revisá los permisos del portapapeles y reintentá.");
+    }
   };
 
   const executeBoundedSync = () => {
@@ -183,6 +196,15 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
           Los pasos técnicos son orientativos. Ningún indicador automático certifica por sí mismo
           la prueba con Fudo real, los conteos conciliados ni la autorización para reemplazar Fudo.
         </p>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <Button variant="outline" disabled={working} onClick={() => { void copyPilotEvidence(); }}>
+            <ClipboardCopy className="h-4 w-4" /> Copiar resumen técnico para el acta
+          </Button>
+          <p className="text-xs text-ink-muted">
+            Sólo metadatos y conteos de este negocio; conservá el resumen en el acta privada.
+          </p>
+        </div>
+        {evidenceNotice && <p role="status" className="mt-2 text-xs text-ink-muted">{evidenceNotice}</p>}
       </SettingsCard>
 
       <SettingsCard title="Importación de lectura" description="Importamos por páginas con ID externo y origen, sin cargar ventas, pedidos o stock como movimientos nativos.">

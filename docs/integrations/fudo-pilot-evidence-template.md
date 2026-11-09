@@ -21,6 +21,12 @@
 | Resultado general | **NO-GO hasta completar todas las verificaciones** |
 | Evidencia privada (ubicación y responsable, sin URL pública sensible) | PENDIENTE |
 
+## Copia de metadatos desde GastroPilot (evidencia auxiliar)
+
+Cuando el owner/admin del negocio autorizado esté en `/ajustes/integraciones/fudo`, puede seleccionar **Copiar resumen técnico para el acta** y pegarlo en el registro **privado** del piloto. El reporte contiene un estado técnico de cinco recursos, sus códigos de diagnóstico de GET y conteos/cursor del negocio en la sesión; no contiene claves, tokens, IDs externos, hashes de revisión ni payloads. Los conteos pueden ser comercialmente confidenciales: no pegarlos en GitHub o un canal público.
+
+La copia no llama a Fudo, no escribe en la base ni activa una aprobación automática. Si se rota o desconecta la cuenta, repetir el diagnóstico y volver a generar el resumen: los checks antiguos no cuentan. **«Ciclo leído» no equivale a paridad**; cotejar en Fudo la misma ventana, permisos e IDs en evidencia privada. Los valores `No verificable` exigen investigación y nunca se convierten en cero para facilitar el GO.
+
 ## Prueba end-to-end segura
 
 ### 1. Autorización y conexión
