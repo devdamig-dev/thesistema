@@ -883,3 +883,56 @@ test("Fudo connection and five-resource preflight fail closed on malformed JSON:
   assert.ok(methods.length === 6 && methods.every((method) => method === "GET"));
   assert.doesNotMatch(JSON.stringify(checks), /fixture-key|fixture-secret|fixture-bearer|safe-fixture/);
 });
+
+test("Fudo GET refuses duplicate JSON object keys without leaking amounts or parsing a lossy record", async () => {
+  const raw = '{"data":[{"id":"fixture","attributes":{"amount":10,"amount":20}}]}';
+  let reads = 0;
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    {
+      now: () => 1_700_000_000_000,
+      fetchImpl: async (input, init) => {
+        if (String(input) === "https://auth.fu.do/api") {
+          assert.equal(init?.method, "POST");
+          return jsonResponse({ token: "synthetic-bearer", exp: 2_000_000_000 });
+        }
+        assert.equal(init?.method, "GET");
+        reads++;
+        return new Response(raw, { status: 200 });
+      },
+    },
+  );
+  await assert.rejects(() => client.products(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "invalid_response");
+    assert.equal(error.retryable, false);
+    assert.doesNotMatch(error.message, /fixture|amount|synthetic-key|synthetic-secret/);
+    return true;
+  });
+  assert.equal(reads, 1);
+});
+
+test("Fudo auth rejects ambiguous duplicate token keys before sending any GET", async () => {
+  let reads = 0;
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    {
+      now: () => 1_700_000_000_000,
+      fetchImpl: async (input, init) => {
+        if (String(input) === "https://auth.fu.do/api") {
+          assert.equal(init?.method, "POST");
+          return new Response('{"token":"synthetic-a","token":"synthetic-b","exp":2000000000}', { status: 200 });
+        }
+        reads++;
+        return jsonResponse({ data: [] });
+      },
+    },
+  );
+  await assert.rejects(() => client.testConnection(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "invalid_response");
+    assert.doesNotMatch(error.message, /synthetic-a|synthetic-b|synthetic-secret/);
+    return true;
+  });
+  assert.equal(reads, 0, "ambiguous auth JSON must never authorize provider GET");
+});
