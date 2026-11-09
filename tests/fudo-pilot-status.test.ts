@@ -15,6 +15,9 @@ let isMember = true;
 let profileActive = true;
 let duringProgressRead: (() => void) | null = null;
 let duringConnectionRead: (() => void) | null = null;
+// Synthetic PostgREST HEAD count overrides: undefined = ordinary exact count.
+let historicalProductsCountOverride: unknown = undefined;
+let cycleProductsCountOverride: unknown = undefined;
 
 const connections = [
   { business_id: A, connection_generation: GA, status: "connected", last_tested_at: null,
@@ -79,7 +82,13 @@ function query(table: string) {
       // concurrent write mutate data already returned by a previous query.
       const data = get().map((row) => table === "fudo_sync_runs" ? { ...row } : row);
       if (table === "fudo_sync_progress") duringProgressRead?.();
-      return Promise.resolve({ data: countOnly ? null : data, count: countOnly ? data.length : null, error: null }).then(resolve,reject);
+      let count: unknown = countOnly ? data.length : null;
+      if (countOnly && table === "fudo_external_records" && filters.resource_type === "products") {
+        const cycleQuery = Object.prototype.hasOwnProperty.call(filters, "last_seen_cycle_id");
+        const override = cycleQuery ? cycleProductsCountOverride : historicalProductsCountOverride;
+        if (override !== undefined) count = override;
+      }
+      return Promise.resolve({ data: countOnly ? null : data, count, error: null }).then(resolve,reject);
     },
   };
   return q;
@@ -366,5 +375,62 @@ test("Fudo disconnected view also rejects a revoked owner after the connection l
     duringConnectionRead = null;
     if (!connections.includes(original)) connections.unshift(original);
     tenant = A; role = "owner"; isMember = true; profileActive = true;
+  }
+});
+
+
+test("Fudo O1 reports unknown SQL count metrics as unverified, never zero or removed", async () => {
+  tenant = A; role = "owner"; isMember = true;
+  const originalPage = progress[0].next_page;
+  try {
+    // Cursor zero would otherwise allow an inferred removal total.
+    progress[0].next_page = 0;
+    for (const invalidCount of [null, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      historicalProductsCountOverride = invalidCount;
+      cycleProductsCountOverride = undefined;
+      const report = await getFudoConnectionView();
+      assert.ok(report);
+      assert.equal(report.importedCounts.products, undefined, "unknown totals cannot become zero");
+      assert.equal(report.seenThisCycleCounts.products, 1);
+      assert.equal(report.possiblyMissingCounts.products, null, "unknown history cannot certify absences");
+      assert.equal(report.importedCounts.ingredients, 1, "other resources keep their valid counts");
+    }
+
+    historicalProductsCountOverride = undefined;
+    for (const invalidCount of [null, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      cycleProductsCountOverride = invalidCount;
+      const report = await getFudoConnectionView();
+      assert.ok(report);
+      assert.equal(report.importedCounts.products, 2);
+      assert.equal(report.seenThisCycleCounts.products, null, "unknown cycle count is not an empty cycle");
+      assert.equal(report.possiblyMissingCounts.products, null, "cannot infer absences without a verified cycle");
+    }
+
+    historicalProductsCountOverride = 0;
+    cycleProductsCountOverride = 0;
+    const genuinelyEmpty = await getFudoConnectionView();
+    assert.ok(genuinelyEmpty);
+    assert.equal(genuinelyEmpty.importedCounts.products, 0, "a genuine exact SQL zero stays zero");
+    assert.equal(genuinelyEmpty.seenThisCycleCounts.products, 0);
+    assert.equal(genuinelyEmpty.possiblyMissingCounts.products, 0);
+  } finally {
+    historicalProductsCountOverride = undefined;
+    cycleProductsCountOverride = undefined;
+    progress[0].next_page = originalPage;
+  }
+});
+
+test("Fudo O1 refuses fractional or unsafe per-run counts in the private report", async () => {
+  tenant = A; role = "owner"; isMember = true;
+  const previous = runs[0].counts;
+  try {
+    runs[0].counts = { products: 1.5, ingredients: Number.MAX_SAFE_INTEGER + 1, sales: 0 };
+    const report = await getFudoConnectionView();
+    assert.ok(report);
+    assert.equal(report.lastCounts.products, undefined);
+    assert.equal(report.lastCounts.ingredients, undefined);
+    assert.equal(report.lastCounts.sales, 0);
+  } finally {
+    runs[0].counts = previous;
   }
 });

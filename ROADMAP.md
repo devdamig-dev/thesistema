@@ -45,6 +45,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — conteos SQL desconocidos no equivalen a cero (09/11/2026; [PR #301](https://github.com/devdamig-dev/thesistema/pull/301))
+
+- **Resultado observable:** si una consulta privada `HEAD/count=exact` de registros o de presencias del ciclo retorna `count=null`, negativo, fraccionario o fuera del entero seguro sin error, el acta y el panel no muestran un falso cero ni infieren eliminaciones. Un cero observado, válido y entero se mantiene como cero.
+- **Causa raíz:** la agregación usaba `Number(count ?? 0)` para históricos y `Math.max(0, seen)` para ciclo; ambas conversiones transformaban metadatos inválidos en conteos aparentemente reconciliables.
+- **IMPLEMENTADO EN RAMA:** validación estricta de `Number.isSafeInteger` y no negatividad, omisión del conteo histórico desconocido, conteo de ciclo `null` y posibles ausencias `null`; regresiones sintéticas para nulos, negativos, fraccionarios, overflow y cero real. Cambios sólo en el reporte autorizado; sin nuevas llamadas Fudo, RPC, migraciones ni writes.
+- **PROBADO:** Quality del HEAD del PR pendiente; no declarar CI aprobado hasta comprobar `verify`, `postgres17` y `postgrest`.
+- **DESPLEGADO:** no para este cambio. **VALIDADO EN PRODUCCIÓN CON FUDO REAL: NO — PILOTO NO-GO.**
+- **Riesgo/rollback:** los conteos que antes se veían como cero podrían aparecer «No verificable» al faltar una cifra confiable. Revertir este cambio no altera staging, cursores, ventas, stock, credenciales ni la API externa. Siguen faltando cuenta Fudo Plan Pro/API, conciliación real de cinco recursos, segundo ciclo y QA autenticado A/B. O2+ pospuesto.
+
 ### O1 — diagnóstico de permisos consistente entre checklist y acta (09/11/2026; #299 publicado)
 
 - **Resultado observable:** únicamente un diagnóstico vigente de **exactamente cinco GET, uno por cada recurso O1, con código reconocido y bandera `ok` coherente** puede marcar el paso de permisos como «Comprobación parcial» y alimentar el resumen del piloto. Un diagnóstico duplicado, incompleto, desconocido o contradictorio queda como **Requiere revisión** y el acta omite los falsos GET verdes; un 403 auténtico, con `ok=false`, conserva el detalle «Sin permiso».

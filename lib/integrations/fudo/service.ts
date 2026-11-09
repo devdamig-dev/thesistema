@@ -161,7 +161,7 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
     if (raw && typeof raw === "object" && !Array.isArray(raw)) {
       for (const resource of FUDO_SYNC_RESOURCES) {
         const n = (raw as Record<string, unknown>)[resource];
-        if (typeof n === "number" && Number.isFinite(n) && n >= 0) result[resource] = n;
+        if (typeof n === "number" && Number.isSafeInteger(n) && n >= 0) result[resource] = n;
       }
     }
     return result;
@@ -200,9 +200,15 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
       nextPages[progress.resource_type] = page;
     }
   }
+  // PostgREST can return a null count without a row-level error. Unknown,
+  // fractional or unsafe totals are NOT an observed zero; omit them so the
+  // private pilot worksheet says "No verificable" instead of false parity.
   const importedCounts: Record<string, number> = {};
   FUDO_SYNC_RESOURCES.forEach((resource, index) => {
-    importedCounts[resource] = Math.max(0, Number(countResults[index].count ?? 0));
+    const count: unknown = countResults[index].count;
+    if (typeof count === "number" && Number.isSafeInteger(count) && count >= 0) {
+      importedCounts[resource] = count;
+    }
   });
   // Historical staging IDs remain for audit; only the same immutable scan
   // UUID counts as present in a resource's current full-scan cycle. This is
@@ -228,10 +234,15 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
   const latestRunSettled = recentRuns[0]?.status === "completed" || recentRuns[0]?.status === "partial";
   FUDO_SYNC_RESOURCES.forEach((resource, index) => {
     const seen = seenResults[index].count;
-    seenThisCycleCounts[resource] = typeof seen === "number" && Number.isFinite(seen) ? Math.max(0, seen) : null;
-    // A partial/failed scan does not prove a provider ID has been removed.
-    possiblyMissingCounts[resource] = latestRunSettled && nextPages[resource] === 0 && seenThisCycleCounts[resource] !== null
-      ? Math.max(0, importedCounts[resource] - seenThisCycleCounts[resource]!) : null;
+    seenThisCycleCounts[resource] = typeof seen === "number"
+      && Number.isSafeInteger(seen) && seen >= 0 ? seen : null;
+    // An unavailable historical total or cycle count cannot prove absences.
+    // Never replace an unknown metric with zero when estimating removals.
+    const historical = importedCounts[resource];
+    const currentCycle = seenThisCycleCounts[resource];
+    possiblyMissingCounts[resource] = latestRunSettled && nextPages[resource] === 0
+      && typeof historical === "number" && typeof currentCycle === "number"
+      ? Math.max(0, historical - currentCycle) : null;
   });
   // A second owner can also retest credentials or finish a sync WITHOUT
   // changing the generation. A stale connected/complete status must not be
