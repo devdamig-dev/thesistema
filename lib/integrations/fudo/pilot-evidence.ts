@@ -86,7 +86,7 @@ export function buildFudoPilotEvidence(
     const seen = view.seenThisCycleCounts[resource];
     const cycleClosed = latestRunClosed
       && typeof seen === "number" && Number.isSafeInteger(seen) && seen >= 0;
-    return `| ${RESOURCE_LABELS[resource]} | ${probe ? PROBE_LABELS[probe.code] : "Sin diagnóstico vigente"} | ${safeCount(view.importedCounts[resource])} | ${safeCount(seen)} | ${safeCount(view.possiblyMissingCounts[resource])} | ${safePage(view.nextPages[resource], cycleClosed)} |`;
+    return `| ${RESOURCE_LABELS[resource]} | ${probe ? PROBE_LABELS[probe.code] : "Sin diagnóstico vigente"} | ${safeCount(view.importedCounts[resource])} | ${safeCount(seen)} | ${safeCount(cycleClosed && view.nextPages[resource] === 0 ? view.possiblyMissingCounts[resource] : null)} | ${safePage(view.nextPages[resource], cycleClosed)} |`;
   });
 
   return [
