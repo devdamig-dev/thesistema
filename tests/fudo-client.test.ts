@@ -345,7 +345,7 @@ test("Fudo connection probe accepts compatible empty and one-record JSON:API pag
 });
 
 
-test("Fudo five concurrent probes share one refresh after an expired bearer", async () => {
+test("Fudo bounded probes share one refresh after an expired bearer", async () => {
   const now = 1_800_000_000_000;
   const resources = ["products", "ingredients", "providers", "orders", "sales"] as const;
   let authCount = 0;
@@ -367,8 +367,8 @@ test("Fudo five concurrent probes share one refresh after an expired bearer", as
     const bearer = new Headers(init?.headers).get("authorization");
     if (bearer === "Bearer bearer-1") {
       oldBearerReads++;
-      if (oldBearerReads === resources.length) releaseOldReads();
-      // All first requests reach Fudo before the revoked token is rejected.
+      if (oldBearerReads === 3) releaseOldReads();
+      // All three first-wave requests reach Fudo before the revoked token is rejected.
       await allOldReads;
       return jsonResponse({ error: "revoked (must not leak)" }, 401);
     }
@@ -384,9 +384,58 @@ test("Fudo five concurrent probes share one refresh after an expired bearer", as
   const checks = await client.probeReadAccess(resources);
   assert.deepEqual(checks, resources.map((resource) => ({ resource, code: "available" })));
   assert.equal(authCount, 2, "initial authentication plus ONE coalesced refresh");
-  assert.equal(oldBearerReads, 5);
-  assert.equal(newBearerReads, 5);
+  assert.equal(oldBearerReads, 3, "only the first bounded wave uses the expired token");
+  assert.equal(newBearerReads, 5, "each resource is retried/read with the refreshed token");
   assert.doesNotMatch(JSON.stringify(checks), /private-test|bearer|revoked/i);
+});
+
+test("Fudo read-permission diagnostics cap concurrent GETs at three and retain every resource outcome", async () => {
+  const resources = ["products", "ingredients", "providers", "orders", "sales"] as const;
+  const now = 1_800_000_000_000;
+  let active = 0;
+  let peak = 0;
+  let issued = 0;
+  let authCount = 0;
+  let releaseFirstWave: () => void = () => {};
+  let firstWaveStarted: () => void = () => {};
+  const holdFirstWave = new Promise<void>((resolve) => { releaseFirstWave = resolve; });
+  const firstWave = new Promise<void>((resolve) => { firstWaveStarted = resolve; });
+
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      authCount++;
+      return jsonResponse({ token: "private-probe-bearer", exp: Math.floor((now + 86400000) / 1000) });
+    }
+    assert.equal(init?.method, "GET", "permission check must remain read-only");
+    active++;
+    peak = Math.max(active, peak);
+    issued++;
+    if (issued === 3) firstWaveStarted();
+    if (issued <= 3) await holdFirstWave;
+    active--;
+    const resource = new URL(String(input)).pathname.split("/").at(-1);
+    return resource === "providers"
+      ? jsonResponse({ provider: "sensitive" }, 403)
+      : jsonResponse({ data: [], links: { next: null } });
+  };
+
+  const client = new FudoClient(
+    { apiKey: "private-probe-key", apiSecret: "private-probe-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+  const pending = client.probeReadAccess(resources);
+  await firstWave;
+  assert.equal(issued, 3, "remaining two resource GETs must not start while the first three are blocked");
+  assert.equal(peak, 3);
+  releaseFirstWave();
+  const results = await pending;
+  assert.equal(authCount, 1);
+  assert.equal(issued, 5, "a denied resource must not suppress the remaining diagnostic checks");
+  assert.equal(peak, 3);
+  assert.deepEqual(results, resources.map((resource) => ({
+    resource, code: resource === "providers" ? "forbidden" : "available",
+  })));
+  assert.doesNotMatch(JSON.stringify(results), /private|sensitive|bearer|secret/i);
 });
 
 test("Fudo failed auth single-flight is cleared so a later read can retry", async () => {
