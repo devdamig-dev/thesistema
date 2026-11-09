@@ -79,6 +79,7 @@ test("Fudo disconnected state cannot certify a probe even with matching stale re
   const report = buildFudoPilotEvidence(disconnected, { revision: REVISION, result: probe });
   assert.match(report, /Conexión: Sin conexión/);
   assert.doesNotMatch(report, /GET compatible/);
+  assert.match(report, /\| Productos \| Sin diagnóstico vigente \| 7 \| 7 \| No verificable \| Cursor 0 sin cierre verificable \|/);
   assert.match(report, /NO-GO/);
 });
 
