@@ -17,7 +17,19 @@ Centro de ayuda: https://soporte.fu.do/es/articles/11939789-api-publica-de-propo
 - No implementar escrituras en esta fase.
 
 ## Fase 2 — conexión
-Ruta propuesta: `/ajustes/integraciones/fudo`.
+Ruta implementada: `/ajustes/integraciones/fudo`.
+
+### Activación autónoma del negocio piloto (verificado 09/11/2026)
+
+Fudo documenta [habilitación autogestionada de la API Pública General](https://soporte.fu.do/es/articles/11939789-api-publica-de-proposito-general) para **Plan Pro** (artículo oficial del 02/10/2026). El bloqueo del piloto es tener una cuenta real autorizada, no esperar una habilitación manual de soporte cuando el negocio ya tiene Plan Pro.
+
+1. El **titular del negocio**, en su sesión de Fudo, abre **Aplicaciones externas > API Pública General**, confirma el uso y habilita la API. Si el plan no es Pro, debe contratarlo por los canales propios de Fudo; no modificar el plan desde GastroPilot.
+2. En **Administración > Usuarios**, crea un usuario exclusivo para la integración, con los permisos **mínimos de consulta** requeridos por los cinco recursos O1: `products`, `ingredients`, `providers`, `orders` y `sales`. El alcance efectivo se confirma con el diagnóstico real, no por el nombre del rol.
+3. Desde ese usuario obtiene la **API Key** y usa **Establecer** para generar su **API Secret**. Fudo informa que el secreto se muestra una sola vez. No enviarlo por chat, correo, GitHub, tickets o logs.
+4. El owner/admin del **mismo negocio** en GastroPilot entra en **Ajustes > Integraciones > Fudo**, ingresa ambas credenciales sólo en la UI segura, ejecuta **Conectar y validar** y después **Revisar permisos de importación**. No usar credenciales de otro negocio.
+5. Con 5/5 recursos disponibles, ejecutar lectura paginada, conciliación de conteos e IDs, una segunda lectura idempotente y QA de dos sesiones/negocios independientes conforme al [acta del piloto](./fudo-pilot-evidence-template.md). **No aprobar GO por un test de conexión ni por un 5/5 sin conciliación.**
+
+La autenticación emite un POST **únicamente a auth.fu.do**; los recursos de la API se consultan con GET. O1 no permite escrituras operativas a Fudo. Las claves se almacenan cifradas por negocio y el servicio no las revela en respuestas o registros. La ausencia de una cuenta autorizada sigue bloqueando la validación de producción.
 
 La configuración debe:
 - requerir owner/admin;

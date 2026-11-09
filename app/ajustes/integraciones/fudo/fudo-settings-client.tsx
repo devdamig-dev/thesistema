@@ -88,9 +88,12 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
             {hasCredentials ? "Reemplazar credenciales (rotación)" : "Conectar cuenta Fudo"}
           </div>
           <p className="mb-4 text-xs leading-relaxed text-ink-muted">
-            Necesitás el Plan Pro y la API Pública General habilitada desde Fudo. Generá una cuenta API
-            con permisos de lectura. Las claves se transmiten al servidor y se guardan cifradas;
-            nunca se muestran nuevamente ni se incluyen en los registros de sincronización.
+            En Fudo con Plan Pro, activá la API Pública General desde «Aplicaciones externas &gt; API Pública General».
+            Después, en «Administración &gt; Usuarios», creá un usuario exclusivo para la integración con
+            permisos mínimos de lectura para productos, ingredientes, proveedores, pedidos y ventas.
+            Generá su API Key y API Secret; copiá el secreto cuando Fudo lo muestre, porque no podrás recuperarlo.
+            Pegá ambas claves únicamente acá: GastroPilot las envía al servidor y las guarda cifradas;
+            nunca las vuelve a mostrar ni las incluye en los registros de sincronización.
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block text-xs text-ink-muted">

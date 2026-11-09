@@ -45,6 +45,13 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — guía operativa de habilitación autoservicio Fudo (09/11/2026; en revisión)
+
+- **Resultado observable:** la UI de conexión y el runbook explican el recorrido oficial para habilitar la API de Fudo desde **Aplicaciones externas > API Pública General** (Plan Pro), crear un usuario con permisos mínimos desde **Administración > Usuarios** y generar sus credenciales de una sola visualización. La activación la hace el titular del negocio; GastroPilot nunca pide secretos por chats ni tickets. Fuente: [soporte oficial Fudo, 02/10/2026](https://soporte.fu.do/es/articles/11939789-api-publica-de-proposito-general).
+- **IMPLEMENTADO EN RAMA:** actualización documental y copy de UI para preparar el piloto; no se altera el adaptador, cifrado, autorización, SQL, migraciones ni operaciones de Fudo. **PROBADO:** pendiente del Quality Gate del PR. **DESPLEGADO:** no para este cambio. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no.
+- **Inspección de sólo lectura Supabase `thesistema` (09/11/2026):** 0 conexiones Fudo, 0 ejecuciones, 0 registros staging y 0 cursores. La cuenta autorizada y dos sesiones QA independientes siguen siendo dependencias externas. **PILOTO NO-GO / O2+ PENDIENTE.**
+- **Riesgo/rollback:** cambio únicamente informativo; revertir copy y documentación si Fudo cambia su recorrido oficial. No guardar credenciales reales en el repositorio.
+
 ### O1 — impedir claves JSON duplicadas del proveedor (09/11/2026; #294 publicado)
 
 - **Resultado observable:** si Fudo entrega JSON sintácticamente válido con claves repetidas en un mismo objeto (por ejemplo dos precios o IDs distintos), la autenticación o el GET se rechazan **antes de JSON.parse**, hash, staging y cursor. Se detectan claves equivalentes tras decodificar escapes Unicode y se permiten nombres repetidos en objetos independientes. El error al usuario es fijo/sanitizado y no incluye valores ni secretos.
