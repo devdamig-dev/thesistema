@@ -1,5 +1,5 @@
 import { FUDO_SYNC_RESOURCES } from "./snapshot";
-import { isWellFormedFudoPreflight, selectCurrentFudoPreflight } from "./readiness";
+import { hasVerifiableFudoRunClosure, isWellFormedFudoPreflight, selectCurrentFudoPreflight } from "./readiness";
 import type { FudoConnectionView, FudoResourcePreflight } from "./service";
 
 /**
@@ -79,9 +79,7 @@ export function buildFudoPilotEvidence(
   // five-resource contract; malformed diagnostics never become green checks.
   const trustworthyProbe = isWellFormedFudoPreflight(currentProbe);
 
-  const latestRunClosed = view.status === "connected"
-    && view.lastSyncStatus === "completed"
-    && view.recentRuns[0]?.status === "completed";
+  const latestRunClosed = hasVerifiableFudoRunClosure(view);
   const rows = FUDO_SYNC_RESOURCES.map((resource) => {
     const probe = trustworthyProbe ? probeChecks.find((check) => check.resource === resource) : null;
     const seen = view.seenThisCycleCounts[resource];
