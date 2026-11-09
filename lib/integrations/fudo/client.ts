@@ -14,6 +14,7 @@
 
 import { nextFudoPage, parseFudoPage } from "./snapshot";
 import { assertSafeFudoJsonNumbers } from "./json-numbers";
+import { runFudoReadBatch } from "./read-batch";
 
 export type FudoCredentials = {
   apiKey: string;
@@ -452,7 +453,10 @@ export class FudoClient {
    */
   async probeReadAccess(resources: readonly FudoResource[]): Promise<FudoReadResourceStatus[]> {
     await this.ensureAuthenticated();
-    return Promise.all(resources.map(async (resource): Promise<FudoReadResourceStatus> => {
+    // Bound preflight bursts just like sync imports. A five-resource probe must
+    // not issue five simultaneous GETs against a rate-limited Fudo account.
+    // Per-resource errors remain sanitized results, so all checks still run.
+    return runFudoReadBatch(resources, async (resource): Promise<FudoReadResourceStatus> => {
       try {
         const response = await this.list(resource, { "page[number]": 1, "page[size]": 1 });
         // A 200 alone is not enough: invalid JSON:API shape would break a sync.
@@ -464,7 +468,7 @@ export class FudoClient {
       } catch (error) {
         return { resource, code: error instanceof FudoApiError ? error.code : "invalid_response" };
       }
-    }));
+    });
   }
 
   /**
