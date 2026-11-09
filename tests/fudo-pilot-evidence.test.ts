@@ -81,3 +81,12 @@ test("Fudo disconnected state cannot certify a probe even with matching stale re
   assert.doesNotMatch(report, /GET compatible/);
   assert.match(report, /NO-GO/);
 });
+
+test("Fudo copy does not promote a contradictory failed diagnostic to five green GETs", () => {
+  const report = buildFudoPilotEvidence(view, {
+    revision: REVISION,
+    result: { ...probe, ok: false },
+  });
+  assert.match(report, /Sin diagnóstico vigente/);
+  assert.doesNotMatch(report, /GET compatible/);
+});
