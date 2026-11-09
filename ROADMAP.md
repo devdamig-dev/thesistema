@@ -45,6 +45,13 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — diagnóstico read-only con concurrencia acotada (08/11/2026; PR pendiente)
+
+- **Resultado observable:** la revisión de permisos de los cinco recursos Fudo no inicia más de tres GET simultáneos, como la sincronización. Mantiene el orden original y devuelve un resultado sanitizado por recurso incluso cuando uno falla (403, formato inválido, etc.), sin bloquear el diagnóstico de los demás. Se reduce la ráfaga de cinco lecturas, que podría activar límites del proveedor; el límite exacto de Fudo aún debe contrastarse con el piloto.
+- **IMPLEMENTADO EN RAMA:** `fix/fudo-o1-bounded-permission-probes-20261108` cambia sólo el worker de preflight e incorpora regresión sintética de límite de concurrencia, respuesta parcial y refresh compartido de bearer tras 401. No agrega endpoints ni mutaciones; autenticación server-side y cinco GET read-only.
+- **PROBADO:** Quality pendiente para el HEAD de este PR. **DESPLEGADO:** no para este cambio. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no. No se modificaron datos reales, secretos ni SQL.
+- **Riesgo/rollback:** el diagnóstico puede demorar más que cinco GET en paralelo, pero es menos agresivo con cuotas; revertir el worker del probe si un contrato Fudo validado justifica otra política con tests. El resultado final de `O1` sigue **PILOTO NO-GO** sin cuenta autorizada, conciliación de cinco recursos, segunda sync idempotente y QA autenticado A/B.
+
 ### O1 — estado canónico y liberación de fidelidad numérica (08/11/2026; #290 publicado)
 
 - **Resultado observable:** el adaptador Fudo GET inspecciona los literales numéricos JSON **antes de `JSON.parse`**. Rechaza enteros fuera del rango seguro, overflow, underflow a cero y decimales/exponentes con más de 15 cifras significativas. Evita guardar un importe alterado, un hash infiel o avanzar el cursor en una página rechazada. Los textos numéricos exactos como strings se conservan. Errores sanitizados, sin payload ni secretos de proveedor en el mensaje.
