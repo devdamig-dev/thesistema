@@ -45,6 +45,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — hash semántico estable para relecturas read-only (09/11/2026; en rama)
+
+- **Resultado observable:** dos respuestas Fudo con los mismos atributos JSON pero distinto orden de claves (incluidas claves anidadas) deben producir el **mismo `content_hash`**, sin perder el payload fuente; modificar un valor o reordenar elementos de un array debe cambiarlo. Evita falsos cambios de origen en la conciliación por relecturas idempotentes.
+- **Causa raíz:** el hash anterior usaba `JSON.stringify(body)`, que conserva el orden de inserción del proveedor. PostgreSQL `jsonb` no considera significativo el orden de claves de objetos; el mismo registro podía cambiar de fingerprint entre sincronizaciones sin cambio semántico.
+- **IMPLEMENTADO EN RAMA:** `fix/fudo-o1-stable-provenance-hash-20261109`, canonicalización sólo para el cálculo SHA-256 y regresiones sintéticas de orden de claves, valores modificados y orden de arrays. Se conserva el payload original; no modifica permisos, auth, SQL, cursores, endpoints de Fudo, ventas o stock.
+- **PROBADO:** Quality Gate del HEAD pendiente. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no. El hash nuevo se recalculará en la próxima importación autorizada de cada registro; no se ejecuta migración ni reescritura inmediata de históricos.
+- **Riesgo/rollback:** cambia la huella de los registros cuyo orden de claves no era canónico. Eso puede producir una actualización del hash al primer reescaneo, pero no crea IDs duplicados ni nuevas entidades nativas. Revertir el helper revierte el algoritmo, sin cambios de esquema; falta comprobar paridad contra un negocio Fudo autorizado. **PILOTO NO-GO / O2+ pospuesto.**
+
 ### O1 — fidelidad de fechas de origen (09/11/2026; [PR #307](https://github.com/devdamig-dev/thesistema/pull/307), integrado y publicado)
 
 - **Resultado observable:** `source_updated_at` sólo representa instantes RFC3339 con zona explícita y calendario válido normalizados a UTC. Una fecha local ambigua, imposible o con offset inválido queda en `null` (desconocida), nunca se inventa una fecha. Se conserva el payload fuente y su hash.
