@@ -64,7 +64,7 @@ export function hasVerifiableFudoRunClosure(
   const finishedAt = typeof run.finishedAt === "string" ? Date.parse(run.finishedAt) : NaN;
   const lastSyncedAt = typeof view.lastSyncedAt === "string" ? Date.parse(view.lastSyncedAt) : NaN;
   return Number.isFinite(startedAt) && Number.isFinite(finishedAt)
-    && Number.isFinite(lastSyncedAt) && finishedAt >= startedAt && lastSyncedAt >= startedAt;
+    && Number.isFinite(lastSyncedAt) && finishedAt >= startedAt && lastSyncedAt >= finishedAt;
 }
 
 /**
