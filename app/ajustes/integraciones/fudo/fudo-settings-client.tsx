@@ -6,7 +6,7 @@ import { ClipboardCopy, DatabaseZap, PlugZap, RefreshCcw, ShieldCheck, Unplug } 
 import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/ajustes/setting-row";
 import type { FudoConnectionView, FudoResourcePreflight } from "@/lib/integrations/fudo/service";
-import { evaluateFudoPilotReadiness, fudoConnectionRevision, selectCurrentFudoPreflight } from "@/lib/integrations/fudo/readiness";
+import { evaluateFudoPilotReadiness, fudoConnectionRevision, isWellFormedFudoPreflight, selectCurrentFudoPreflight } from "@/lib/integrations/fudo/readiness";
 import { buildFudoPilotEvidence } from "@/lib/integrations/fudo/pilot-evidence";
 import { runFudoActionSafely, runFudoPreflightSafely, runFudoSyncBatches } from "@/lib/integrations/fudo/action-feedback";
 import {
@@ -42,6 +42,8 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
     revision: string; result: FudoResourcePreflight;
   } | null>(null);
   const preflight = selectCurrentFudoPreflight(status, preflightState);
+  const malformedPreflight = preflight !== null && !isWellFormedFudoPreflight(preflight);
+  const visiblePreflight = malformedPreflight ? null : preflight;
   const connected = status.status === "connected";
   const hasCredentials = status.status !== "disconnected";
   const readiness = evaluateFudoPilotReadiness(status, preflight);
@@ -137,6 +139,12 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
               if (connectionRevision && result.checks.length > 0) {
                 setPreflightState({ revision: connectionRevision, result });
               }
+              // Do not leave a green success notice if an inconsistent set of
+              // five permissions comes back from the server. Preserve normal
+              // upstream errors with no checks, and valid per-resource 403s.
+              if (result.checks.length > 0 && !isWellFormedFudoPreflight(result)) {
+                return { ok: false, message: "El diagnóstico fue inconsistente. Volvé a revisar los cinco recursos." };
+              }
               return result;
             })}>
               <ShieldCheck className="h-4 w-4" /> Revisar permisos de importación
@@ -149,11 +157,16 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
             {notice.message}
           </p>
         )}
-        {preflight && preflight.checks.length > 0 && (
+        {malformedPreflight && (
+          <p role="alert" className="mt-3 rounded-xl border border-warn-500/30 p-3 text-xs text-warn-400">
+            El diagnóstico de Fudo es incompleto o inconsistente. Volvé a revisar los cinco recursos.
+          </p>
+        )}
+        {visiblePreflight && visiblePreflight.checks.length > 0 && (
           <div className="mt-3 rounded-xl border border-line p-4" aria-live="polite">
             <p className="mb-3 text-xs font-semibold text-ink">Lectura por recurso (sin importar datos)</p>
             <div className="grid gap-2 sm:grid-cols-2">
-              {preflight.checks.map(({ resource, code }) => (
+              {visiblePreflight.checks.map(({ resource, code }) => (
                 <p key={resource} className="flex items-center justify-between gap-3 text-xs">
                   <span className="text-ink">{LABELS[resource] ?? resource}</span>
                   <span className={code === "available" ? "text-success-400" : "text-warn-400"}>
