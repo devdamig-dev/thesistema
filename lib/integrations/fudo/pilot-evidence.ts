@@ -74,7 +74,9 @@ export function buildFudoPilotEvidence(
   const currentProbe = selectCurrentFudoPreflight(view, storedProbe);
   const probeChecks = currentProbe?.checks ?? [];
   const uniqueChecks = new Set(probeChecks.map((check) => check.resource));
-  const trustworthyProbe = probeChecks.length === FUDO_SYNC_RESOURCES.length
+  const trustworthyProbe = currentProbe !== null
+    && currentProbe.ok === probeChecks.every((check) => check.code === "available")
+    && probeChecks.length === FUDO_SYNC_RESOURCES.length
     && uniqueChecks.size === FUDO_SYNC_RESOURCES.length
     && FUDO_SYNC_RESOURCES.every((resource) =>
       probeChecks.some((check) => check.resource === resource && typeof PROBE_LABELS[check.code] === "string"));
