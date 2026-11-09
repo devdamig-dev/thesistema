@@ -147,6 +147,7 @@ test("pilot rejects a completed run without a verified, chronological SQL closur
   for (const bad of [
     { ...base, lastSyncedAt: null },
     { ...base, lastSyncedAt: "2026-11-09T11:59:00Z" },
+    { ...base, lastSyncedAt: "2026-11-09T12:02:00Z" },
     { ...base, recentRuns: [{ ...base.recentRuns[0], finishedAt: null }] },
     { ...base, recentRuns: [{ ...base.recentRuns[0], finishedAt: "invalid" }] },
     { ...base, recentRuns: [{ ...base.recentRuns[0], finishedAt: "2026-11-09T11:59:00Z" }] },
