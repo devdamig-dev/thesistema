@@ -45,13 +45,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — hash semántico estable para relecturas read-only (09/11/2026; en rama)
+### O1 — hash semántico estable para relecturas read-only (09/11/2026; [PR #309](https://github.com/devdamig-dev/thesistema/pull/309), integrado y publicado)
 
-- **Resultado observable:** dos respuestas Fudo con los mismos atributos JSON pero distinto orden de claves (incluidas claves anidadas) deben producir el **mismo `content_hash`**, sin perder el payload fuente; modificar un valor o reordenar elementos de un array debe cambiarlo. Evita falsos cambios de origen en la conciliación por relecturas idempotentes.
-- **Causa raíz:** el hash anterior usaba `JSON.stringify(body)`, que conserva el orden de inserción del proveedor. PostgreSQL `jsonb` no considera significativo el orden de claves de objetos; el mismo registro podía cambiar de fingerprint entre sincronizaciones sin cambio semántico.
-- **IMPLEMENTADO EN RAMA:** `fix/fudo-o1-stable-provenance-hash-20261109`, canonicalización sólo para el cálculo SHA-256 y regresiones sintéticas de orden de claves, valores modificados y orden de arrays. Se conserva el payload original; no modifica permisos, auth, SQL, cursores, endpoints de Fudo, ventas o stock.
-- **PROBADO:** Quality Gate del HEAD pendiente. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no. El hash nuevo se recalculará en la próxima importación autorizada de cada registro; no se ejecuta migración ni reescritura inmediata de históricos.
-- **Riesgo/rollback:** cambia la huella de los registros cuyo orden de claves no era canónico. Eso puede producir una actualización del hash al primer reescaneo, pero no crea IDs duplicados ni nuevas entidades nativas. Revertir el helper revierte el algoritmo, sin cambios de esquema; falta comprobar paridad contra un negocio Fudo autorizado. **PILOTO NO-GO / O2+ pospuesto.**
+- **Resultado observable:** dos respuestas Fudo con los mismos atributos JSON pero distinto orden de claves (incluidas claves anidadas) producen el mismo `content_hash`, conservando el payload fuente; modificar un valor o reordenar elementos de un array cambia la huella. Evita falsos cambios de origen en relecturas idempotentes.
+- **Causa raíz:** el hash anterior usaba `JSON.stringify(body)`, dependiente del orden de inserción del proveedor. PostgreSQL `jsonb` no considera significativo el orden de las claves de objetos.
+- **IMPLEMENTADO / FUSIONADO:** [PR #309](https://github.com/devdamig-dev/thesistema/pull/309) fusionado por squash a `main`, SHA `579d97645f18731e42df108a362e2f522c689c38`. Canonicalización sólo del input SHA-256 y regresiones sintéticas; payload original intacto. No se modifican permisos, auth, SQL, cursores, endpoints Fudo, ventas ni stock.
+- **PROBADO EN CI:** [Quality #42679078742](https://github.com/devdamig-dev/thesistema/actions/runs/42679078742) `completed/success` para HEAD exacto `6d12725b496452adf1d74cca28f3bf7687c17b7d`, con jobs `verify` (tests, typecheck, lint, build, SQL y UI), `postgres17` y `postgrest` aprobados. Fixtures sintéticos, **sin Fudo real ni sesiones QA A/B**.
+- **DESPLEGADO:** [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/4pg8oTDKX7yUDvJcU2LrYmcNeo9t), deployment `dpl_4pg8oTDKX7yUDvJcU2LrYmcNeo9t`, `target=production`, SHA `579d97645f18731e42df108a362e2f522c689c38`, alias `gastropilot.nexodg.com` y `aliasError=null` confirmados. READY no acredita conexión o conciliación real.
+- **VALIDADO EN PRODUCCIÓN CON FUDO REAL: NO — PILOTO NO-GO.** Pendientes la cuenta Plan Pro/API autorizada, cinco recursos conciliados, segundo ciclo idempotente, sesiones QA independientes de negocios A/B y acta de aceptación. O2+ pospuesto.
+- **Riesgo/rollback:** en la primera sync autorizada posterior a este cambio, hashes históricos pueden actualizarse por el nuevo algoritmo sin duplicar `external_id` ni crear nuevas entidades. Revert del helper, sin migración ni reescritura inmediata de históricos.
 
 ### O1 — fidelidad de fechas de origen (09/11/2026; [PR #307](https://github.com/devdamig-dev/thesistema/pull/307), integrado y publicado)
 
