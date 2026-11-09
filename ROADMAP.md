@@ -45,13 +45,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — preservar números de proveedor antes del parseo (08/11/2026; PR en revisión)
+### O1 — estado canónico y liberación de fidelidad numérica (08/11/2026; #290 publicado)
 
-- **Resultado observable:** el adaptador rechaza respuestas Fudo GET con literales JSON numéricos de precisión ambigua (más de 15 cifras significativas en decimales/exponentes), enteros fuera del rango seguro, overflow o underflow a cero **antes de JSON.parse**, evitando almacenar valores redondeados/hashes no fieles en el staging read-only.
-- **IMPLEMENTADO EN RAMA:** `fix/fudo-o1-numeric-literals-before-jsonparse-20261108`: escáner léxico de números fuera de strings JSON, incluyendo comillas escapadas; invocado sólo en GETs de recursos, sin alterar el contrato de autenticación. Regresiones sintéticas de rechazo, casos seguros y código de error sanitizado sin datos del proveedor.
-- **PROBADO:** pendiente de Quality Gate del HEAD del PR. **DESPLEGADO:** no para este cambio. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no.
-- **Riesgo:** criterio conservador: puede rechazar decimales legítimos de alta precisión, aunque sean representables, hasta verificar el contrato real y desarrollar un parser lossless. No se normaliza ni reescribe el origen, ni se avanza el cursor ante fallo. **Rollback:** revert de este guard, sólo luego de reemplazarlo por tratamiento lossless validado. La compatibilidad real sigue pendiente de cuenta Fudo Plan Pro/API autorizada y QA A/B.
-- **O1 piloto:** continúa **NO-GO** por conexión real autorizada, conciliación de cinco recursos, dos identidades QA independientes y segunda lectura idempotente. O2+ pendiente.
+- **Resultado observable:** el adaptador Fudo GET inspecciona los literales numéricos JSON **antes de `JSON.parse`**. Rechaza enteros fuera del rango seguro, overflow, underflow a cero y decimales/exponentes con más de 15 cifras significativas. Evita guardar un importe alterado, un hash infiel o avanzar el cursor en una página rechazada. Los textos numéricos exactos como strings se conservan. Errores sanitizados, sin payload ni secretos de proveedor en el mensaje.
+- **IMPLEMENTADO:** [PR #290](https://github.com/devdamig-dev/thesistema/pull/290) fusionado a `main` por squash `eff2d9f02823f177dd0f64ddccd986858caf4be1`. Los guardas anteriores de #286–#289 ya estaban fusionados en `main`; las subsecciones de abajo conservan contexto histórico y no definen el estado de publicación actual.
+- **PROBADO EN CI:** [Quality #42528641581](https://github.com/devdamig-dev/thesistema/actions/runs/42528641581) `completed/success` para HEAD `a37a50ba0438f806d6e33065586d8dde992147a5`; jobs `verify` (incluye tests, TypeScript, lint, build y Playwright), `postgres17` y `postgrest` aprobados. Regresiones sintéticas; **no es prueba con Fudo real**.
+- **DESPLEGADO:** [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/FYoefBCYNpUbabEWfEEynwETEtZn) verificado para SHA exacto `eff2d9f02823f177dd0f64ddccd986858caf4be1` y alias `gastropilot.nexodg.com`. La evidencia de deploy confirma publicación del código, **no** una ejecución autenticada.
+- **VALIDADO EN PRODUCCIÓN CON FUDO REAL: NO. PILOTO NO-GO.** Falta autorización de una cuenta Fudo Plan Pro/API; dos identidades QA owner/admin de negocios independientes; diagnóstico de los cinco recursos; primera y segunda sincronización read-only; conciliación de IDs, conteos, páginas y posibles ausencias; test de no cruce A/B. No marcar criterios de aceptación sin evidencia de esos recorridos. O2+ permanece pendiente.
+- **Límite y rollback:** el guard es conservador y puede rechazar decimales legítimos de alta precisión. Si Fudo entrega ese formato, desarrollar parser decimal lossless y validarlo contra el contrato real antes de sustituir el guard. No se introdujeron migraciones ni escrituras a Fudo, ventas, stock o caja.
 
 ### O1 — fidelidad numérica del staging Fudo (08/11/2026; en rama)
 
