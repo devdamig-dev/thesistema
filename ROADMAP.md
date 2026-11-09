@@ -45,6 +45,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — fidelidad de fechas de origen (09/11/2026; [PR #307](https://github.com/devdamig-dev/thesistema/pull/307), en revisión)
+
+- **Resultado observable:** `source_updated_at` sólo refleja instantes RFC3339 con zona explícita y calendario válido, normalizados a UTC. Una fecha local ambigua, imposible o con offset inválido queda como `null` (desconocida), no como fecha inventada; el payload externo original y su hash permanecen sin cambios.
+- **Causa raíz:** `Date.parse` permitía timestamps sin zona dependientes del runtime e incluso normalizaba fechas calendario inexistentes antes de persistir provenance.
+- **IMPLEMENTADO EN RAMA:** PR #307 en borrador; helper puro de validación del timestamp y tres regresiones sintéticas de zonas, fechas, año bisiesto y conservación del payload. No modifica endpoint Fudo, autenticación, permisos, sync/cursor, staging histórico, SQL ni operación comercial.
+- **PROBADO:** pendiente de verificar el Quality Gate del HEAD definitivo del PR; los tests aportados todavía no equivalen a una ejecución exitosa. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no.
+- **Riesgo/rollback:** fechas entregadas sin zona explícita pasan a metadato desconocido, preservando íntegro el valor en el JSON fuente. Revert del helper si el contrato real confirma un esquema diferente y se define una zona explícita por negocio; sin migración.
+- **PILOTO NO-GO:** cuenta Fudo Pro/API autorizada, cinco recursos conciliados, segundo ciclo idempotente y QA A/B autenticado pendientes; O2+ pospuesto.
+
 ### O1 — cierre temporal verificable de la última corrida (09/11/2026; [PR #305](https://github.com/devdamig-dev/thesistema/pull/305))
 
 - **Resultado observable:** el checklist y el acta copiable sólo muestran ciclo leído cuando los cinco cursores y conteos del ciclo son válidos y la última corrida tiene cierre temporal consistente: `finished_at >= started_at` y `last_synced_at >= finished_at`, con fechas verificables. Un `finished_at` o `last_synced_at` nulo/inválido o cronológicamente anterior deja el ciclo «No verificable», aun con estados `completed` y cursores cero.
