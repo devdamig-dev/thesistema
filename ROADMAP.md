@@ -47,7 +47,7 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 
 ### O1 — cierre temporal verificable de la última corrida (09/11/2026; PR de revisión)
 
-- **Resultado observable:** ni el checklist ni el acta copiable rotulan el ciclo como leído sólo por el estado `completed` y cinco cursores cero: requieren además hora de inicio, cierre de corrida y marca de última sincronización válidas y no anteriores al inicio. Un `finished_at` ausente/inválido o cronológicamente imposible y un `last_synced_at` ausente/anterior no certifican el ciclo.
+- **Resultado observable:** ni el checklist ni el acta copiable rotulan el ciclo como leído sólo por el estado `completed` y cinco cursores cero: requieren además hora de inicio, cierre de corrida y marca de última sincronización válidas, con cierre posterior al inicio y última sincronización no anterior al cierre. Un `finished_at` ausente/inválido o cronológicamente imposible y un `last_synced_at` ausente/anterior no certifican el ciclo.
 - **Causa raíz:** ambos consumidores comprobaban estados y conteos, pero no que el RPC hubiera dejado una evidencia cronológica de cierre consistente, aunque SQL escribe `finished_at` y `last_synced_at` conjuntamente.
 - **IMPLEMENTADO EN RAMA:** helper compartido para readiness y acta; regresiones sintéticas de estado completado sin cierre y tiempos inconsistentes. No cambia SQL, cursor, credenciales, Fudo ni operaciones comerciales.
 - **PROBADO:** pendiente ejecución del Quality Gate en CI y revisión del PR. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no; piloto NO-GO. Pendientes cuenta Plan Pro/API autorizada, cinco recursos conciliados, doble sync idempotente y QA A/B.
