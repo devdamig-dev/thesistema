@@ -126,18 +126,26 @@ async function assertBusinessMembership(client, businessId, own) {
   const rows = await response.json();
   assert.ok(Array.isArray(rows), 'La consulta de membresías QA no devolvió una lista');
   if (own) {
-    assert.ok(rows.length === 1 && ['owner', 'admin'].includes(rows[0]?.role)
-      && rows[0]?.business_id === businessId,
-    'La cuenta QA debe ser owner/admin de su propio negocio para acreditar el gate Fudo');
-  } else {
-    assert.equal(rows.length, 0, 'Usuario QA accede a membresías de otro negocio');
+    assert.ok(rows.every(row => row.business_id === businessId),
+      'La membresía propia QA devolvió otro negocio');
+    return rows.some(row => ['owner', 'admin'].includes(row.role));
   }
+  assert.equal(rows.length, 0, 'Usuario QA accede a membresías de otro negocio');
+  return false;
 }
-// One owner/admin business per QA account is enough to exercise the Fudo
-// action role, but CROSS-TENANT membership denial must cover EVERY business
-// visible to each account (not only the first returned row).
-await assertBusinessMembership(a, childA[0].id, true);
-await assertBusinessMembership(b, childB[0].id, true);
+// Una sola membresía owner/admin por cuenta acredita la precondición de
+// rol Fudo; no asumir que businesses[0] es la sucursal administrada.
+// Comprobar todos los negocios propios y mantener denegación cruzada total.
+let adminA = false;
+let adminB = false;
+for (const row of childA) {
+  if (await assertBusinessMembership(a, row.id, true)) adminA = true;
+}
+for (const row of childB) {
+  if (await assertBusinessMembership(b, row.id, true)) adminB = true;
+}
+assert.ok(adminA && adminB,
+  'La cuenta QA debe ser owner/admin de al menos un negocio propio para acreditar el gate Fudo');
 for (const row of childA) await assertBusinessMembership(b, row.id, false);
 for (const row of childB) await assertBusinessMembership(a, row.id, false);
 
@@ -229,6 +237,6 @@ console.log('PASS: 2 sesiones Auth QA reales, organizaciones y negocios separado
 console.log('PASS: organizaciones y negocios A/B no descubribles anónimamente (' +
   (orgIdsA.size + orgIdsB.size + childA.length + childB.length) + ' GET).');
 console.log('PASS: membresías owner/admin propias y acceso cruzado/anónimo bloqueado (' +
-  (2 + 2 * (childA.length + childB.length)) + ' GET).');
+  (3 * (childA.length + childB.length)) + ' GET).');
 console.log('PASS: 4 tablas Fudo denegadas por PostgREST para A, B y anon (12 GET sin escrituras).');
 console.log('Alcance: sólo Auth QA y GET a Supabase; no certifica acciones server-side de GastroPilot, permisos Fudo ni conciliación real.');
