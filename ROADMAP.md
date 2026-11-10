@@ -45,6 +45,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — expiración explícita nula en autenticación (10/11/2026; PR en revisión)
+
+- **Resultado observable:** si Fudo responde HTTP 200 con bearer válido pero `"exp": null` (o cualquier vencimiento explícito inválido), el adaptador rechaza la autenticación con `invalid_response` antes de realizar GET a productos u otros recursos. Un `exp` realmente ausente mantiene la lease conservadora de 10 minutos.
+- **Causa raíz:** el guard `payload.exp !== undefined && payload.exp !== null` confundía un campo explícitamente nulo con un campo ausente, autorizando lecturas mediante la lease de fallback. JSON `null` no acredita vencimiento.
+- **IMPLEMENTADO EN RAMA:** distinguir ausencia de propiedad con `hasOwnProperty`, sin modificar la política para respuestas válidas. Regresión sintética con `exp: null` y otros valores inválidos; prueba existente del caso omitido. Sólo código server-side y tests; sin Fudo real, SQL, nuevas APIs ni cambios operativos.
+- **PROBADO:** Quality Gate del HEAD de este PR pendiente. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no — **PILOTO NO-GO**.
+- **Riesgo / rollback:** una respuesta real con `exp: null` dejará de funcionar hasta que el proveedor entregue un instante válido o omita el campo; rollback por revert, sin migración. Requiere confirmación del contrato con cuenta Fudo piloto autorizada.
+
 ### O1 — expiraciones de bearer Fudo no representables (10/11/2026; [PR #317](https://github.com/devdamig-dev/thesistema/pull/317), fusionado y publicado)
 
 - **Resultado observable:** autenticación Fudo con `exp` explícito desbordado, fraccionario o fuera del rango temporal de JavaScript se rechaza como `invalid_response` antes de emitir cualquier GET, sin reflejar token ni payload. Valores válidos en segundos/milisegundos y `exp` ausente (lease conservadora) mantienen el comportamiento.
