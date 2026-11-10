@@ -57,9 +57,13 @@ function runFixture(scenario, overrides = {}) {
     "    if (who === 'B' && (scenario === 'cross-members-leak' && businessId === 'business-A'",
     "      || scenario === 'secondary-cross-members-leak' && businessId === 'business-A2'))",
     "      return json([{business_id:businessId,role:'owner'}]);",
-    "    if (businessId !== ownBusinessId || (userId && userId !== 'user-' + who)) return json([]);",
-    "    const role = scenario === 'non-admin-member' && who === 'A' ? 'manager' : 'owner';",
-    "    return json([{business_id:ownBusinessId,role}]);",
+    "    const secondaryOwn = secondary && who === 'A' && businessId === 'business-A2';",
+    "    if ((businessId !== ownBusinessId && !secondaryOwn) || (userId && userId !== 'user-' + who)) return json([]);",
+    "    if (secondaryOwn && !['secondary-admin-later','secondary-no-admin'].includes(scenario)) return json([]);",
+    "    const nonAdmin = who === 'A' && (scenario === 'non-admin-member'",
+    "      || scenario === 'secondary-no-admin'",
+    "      || (scenario === 'secondary-admin-later' && businessId === ownBusinessId));",
+    "    return json([{business_id:businessId,role:nonAdmin ? 'manager' : 'owner'}]);",
     "  }",
     "  if (table.startsWith('fudo_')) {",
     "    privateGets++;",
@@ -99,7 +103,7 @@ function runFixture(scenario, overrides = {}) {
     "if (privateGets !== 12) throw Error('Expected exactly 12 private-table GETs, got ' + privateGets);",
     "if (anonymousPrivateGets !== 4) throw Error('Expected 4 anonymous private-table GETs, got ' + anonymousPrivateGets);",
     "if (anonymousEntityGets !== (secondary ? 5 : 4)) throw Error('Unexpected anonymous entity GET count ' + anonymousEntityGets);",
-    "if (membershipGets !== (secondary ? 8 : 6)) throw Error('Unexpected business-members GET count ' + membershipGets);",
+    "if (membershipGets !== (secondary ? 9 : 6)) throw Error('Unexpected business-members GET count ' + membershipGets);",
     "if (anonymousMembershipGets !== (secondary ? 3 : 2)) throw Error('Unexpected anonymous membership GET count ' + anonymousMembershipGets);", 
   ].join('\n');
   const env = {
@@ -218,7 +222,7 @@ test('Gate rechaza descubrimiento anónimo del ID de un negocio A/B', () => {
 test('Gate requiere membresía propia owner/admin del negocio QA, no sólo acceso al negocio', () => {
   const run = runFixture('non-admin-member');
   assert.notEqual(run.status, 0);
-  assert.match(run.stderr, /La cuenta QA debe ser owner\/admin de su propio negocio/);
+  assert.match(run.stderr, /La cuenta QA debe ser owner\/admin de al menos un negocio propio/);
   assert.doesNotMatch(run.stdout, /PASS:/);
 });
 
@@ -241,7 +245,7 @@ test('Gate recorre todos los negocios visibles aunque A tenga una segunda sucurs
   const run = runFixture('secondary-success');
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, /5 GET/);
-  assert.match(run.stdout, /8 GET/);
+  assert.match(run.stdout, /9 GET/);
   assert.match(run.stdout, /12 GET/);
   assert.doesNotMatch(run.stdout + run.stderr, /fixture-password|mock-token/);
 });
@@ -264,5 +268,19 @@ test('Gate detecta ID anónimo expuesto sólo en el SEGUNDO negocio de A', () =>
   const run = runFixture('secondary-anon-business-leak');
   assert.notEqual(run.status, 0);
   assert.match(run.stderr, /Consulta anónima expuso un identificador privado de businesses/);
+  assert.doesNotMatch(run.stdout, /PASS:/);
+});
+
+test('Gate acepta owner/admin en segunda sucursal aunque la primera sea manager', () => {
+  const run = runFixture('secondary-admin-later');
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /9 GET/);
+  assert.doesNotMatch(run.stdout + run.stderr, /fixture-password|mock-token/);
+});
+
+test('Gate falla si no hay owner/admin en ninguna sucursal propia', () => {
+  const run = runFixture('secondary-no-admin');
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /owner\/admin de al menos un negocio propio/);
   assert.doesNotMatch(run.stdout, /PASS:/);
 });
