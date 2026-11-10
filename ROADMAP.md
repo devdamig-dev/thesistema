@@ -45,6 +45,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — estado real de cursores y conteos en la UI (09/11/2026; en rama, QA pendiente)
+
+- **Resultado observable:** la pantalla `/ajustes/integraciones/fudo` no muestra un cursor `next_page=0` como «Ciclo leído» ni en verde si falta el cierre cronológico verificable de la última corrida o la evidencia de ciclo de alguno de los cinco recursos. En lugar de un éxito falso, muestra «Cursor 0 sin cierre verificable». Un `HEAD/count` no disponible se muestra «No verificable» y un cero auténtico se muestra `0`.
+- **Causa raíz:** el checklist y el acta ya usaban el guard del ciclo completo (#305/#311), pero el componente de paginación coloreaba cada cursor cero como éxito sin consultar ese guard. La columna de registros «Guardados» convertía explícitamente un conteo desconocido en cero mediante `?? 0`; había desacuerdo entre la pantalla y el cálculo conservador del servidor.
+- **IMPLEMENTADO EN RAMA:** `fix/fudo-o1-truthful-cursor-counts-20261109` comparte un único guard entre readiness y la UI, representa estados incompletos sin falso verde y formatea conteos verificados. Añade regresiones sintéticas para cierre válido, fallido, sin timestamp, fuera de calendario, ciclo heredado y conteos inválidos. Solo afecta la presentación autorizada y helpers; sin nuevas consultas a Fudo, SQL, credenciales, migración, cambios de roles ni escrituras operativas.
+- **PROBADO:** Quality del HEAD pendiente; CI sintética no equivale a un piloto real. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no — **PILOTO NO-GO**. Aún faltan cuenta Plan Pro/API autorizada, conciliación real de cinco recursos, dos ciclos idempotentes, QA autenticado A/B y aceptación.
+- **Riesgo/rollback:** un cursor cero antes presentado como éxito puede pasar a «sin cierre verificable» hasta completar la sincronización actual. Rollback por revert del PR, sin cambios de datos.
+
 ### O1 — cierre de sincronización con fechas RFC3339 verificables (09/11/2026; [PR #311](https://github.com/devdamig-dev/thesistema/pull/311), integrado y publicado)
 
 - **Resultado observable:** un cierre de sync sólo se clasifica como «Ciclo leído» cuando inicio, fin y última sincronización tienen instantes RFC3339 con zona horaria explícita y fecha real. Un día inexistente, un timestamp sin zona u offset inválido deja el checklist y el acta en «No verificable», aun con cinco cursores en cero. La evidencia copiable tampoco presenta como válida una fecha ambigua.
