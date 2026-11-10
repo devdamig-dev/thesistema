@@ -45,12 +45,16 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — expiraciones de bearer Fudo no representables (10/11/2026; PR en revisión)
+### O1 — expiraciones de bearer Fudo no representables (10/11/2026; [PR #317](https://github.com/devdamig-dev/thesistema/pull/317), fusionado y publicado)
 
-- **Resultado observable:** autenticación Fudo con `exp` explícito desbordado, fraccionario o fuera del rango temporal de JavaScript se rechaza como `invalid_response` antes de emitir cualquier GET, sin reflejar token ni payload. Fechas válidas, y `exp` ausente (lease conservadora), conservan el comportamiento existente.
-- **Causa raíz:** `normalizeExpiration` convertía strings numéricos enormes a `Infinity` o a enteros redondeados; `Math.min` limitaba esa expiración falsa a 24 h, aceptando un bearer sin vencimiento verificable.
-- **IMPLEMENTADO EN RAMA:** validar un entero seguro y un instante representable antes del cache de token. Regresiones sintéticas en `tests/fudo-client.test.ts`; sin SQL, secretos reales, nuevos endpoints, operaciones comerciales ni escrituras hacia Fudo.
-- **PROBADO:** pendiente de Quality Gate del HEAD exacto del PR. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no — **PILOTO NO-GO**. Faltan cuenta Pro/API autorizada, conciliación real 5/5, segundo ciclo idempotente, QA A/B autenticada y acta.
+- **Resultado observable:** autenticación Fudo con `exp` explícito desbordado, fraccionario o fuera del rango temporal de JavaScript se rechaza como `invalid_response` antes de emitir cualquier GET, sin reflejar token ni payload. Valores válidos en segundos/milisegundos y `exp` ausente (lease conservadora) mantienen el comportamiento.
+- **Causa raíz:** `normalizeExpiration` convertía cadenas numéricas enormes a `Infinity` o a enteros redondeados; `Math.min` limitaba esa expiración falsa a 24 horas y habilitaba un bearer sin vencimiento verificable.
+- **IMPLEMENTADO / FUSIONADO:** [PR #317](https://github.com/devdamig-dev/thesistema/pull/317), squash en `main` SHA `332d58d1bca163d18fed85db49dc55a011b55a03`. Validación de entero seguro y timestamp representable antes de cachear el token; regresiones sintéticas con casos inválidos y expiraciones válidas. Sin SQL, cambios de permisos, secretos reales, endpoints de escritura ni operaciones comerciales.
+- **PROBADO EN CI:** [Quality #42759648021](https://github.com/devdamig-dev/thesistema/actions/runs/42759648021) `completed/success` para HEAD exacto `5da77f7f1916237518b57e766245d5ecebd8fc0d`; `verify`, `postgres17` y `postgrest` completados con éxito. Incluye tests, TypeScript, lint, build y Playwright según `.github/workflows/quality.yml`. Se probaron fixtures sintéticos; no Fudo real ni sesiones QA A/B.
+- **DESPLEGADO:** [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/7CcfPhtX7yWACbEyCHS3hhiAsHWG), deployment `dpl_7CcfPhtX7yWACbEyCHS3hhiAsHWG`, `target=production`, SHA exacto del merge `332d58d1bca163d18fed85db49dc55a011b55a03`, alias `gastropilot.nexodg.com`, `aliasError=null`. La preview del PR había informado cuota `build-rate-limit`; no se considera un fallo de CI. READY no prueba la conexión real.
+- **SUPABASE (inspección read-only 10/11/2026):** en el proyecto `thesistema` hay 0 conexiones en `fudo_connections`, 0 sincronizaciones en `fudo_sync_runs`, 0 registros en `fudo_external_records`, 0 cursores en `fudo_sync_progress`. RLS habilitada en las cuatro tablas, sin SELECT directo de `anon` o `authenticated`; no sustituye pruebas con sesiones autenticadas A/B.
+- **VALIDADO EN PRODUCCIÓN CON FUDO REAL: NO — PILOTO NO-GO.** Continúan pendientes una cuenta Plan Pro/API autorizada, conciliación 5/5 de recursos reales, dos ciclos read-only idempotentes, QA A/B independiente y acta de aceptación. O2+ pospuesto.
+- **Riesgo / rollback:** respuestas de autenticación con expiración inválida antes aceptadas ahora se rechazan; revert del PR si aparece incompatibilidad contractual comprobada. No requiere migración ni modifica ventas, caja, pedidos o stock.
 
 ### O1 — acta privada y UI coherentes sobre cierre global (09/11/2026; [PR #315](https://github.com/devdamig-dev/thesistema/pull/315), integrado y publicado)
 
