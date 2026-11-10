@@ -222,7 +222,7 @@ test('Gate rechaza descubrimiento anónimo del ID de un negocio A/B', () => {
 test('Gate requiere membresía propia owner/admin del negocio QA, no sólo acceso al negocio', () => {
   const run = runFixture('non-admin-member');
   assert.notEqual(run.status, 0);
-  assert.match(run.stderr, /La cuenta QA debe ser owner\/admin de su propio negocio/);
+  assert.match(run.stderr, /La cuenta QA debe ser owner\/admin de al menos un negocio propio/);
   assert.doesNotMatch(run.stdout, /PASS:/);
 });
 
