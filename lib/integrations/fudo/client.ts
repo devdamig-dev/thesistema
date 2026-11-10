@@ -120,14 +120,20 @@ function safeError(status: number): FudoApiError {
 }
 
 function normalizeExpiration(exp: unknown): number {
-  if (typeof exp === "number" && Number.isFinite(exp)) {
-    // JWT-style exp is normally seconds since epoch. Accept ms too.
-    return exp < 10_000_000_000 ? exp * 1000 : exp;
+  // Explicit expirations must be exact, representable UTC instants. Number()
+  // can turn a huge numeric string into Infinity or silently round an epoch;
+  // either used to be capped to a seemingly valid 24-hour lease. Fail closed
+  // rather than authorize provider GETs with an unverifiable expiration.
+  const parsed = typeof exp === "string" && /^\d+$/.test(exp)
+    ? Number(exp) : exp;
+  if (typeof parsed !== "number" || !Number.isSafeInteger(parsed) || parsed <= 0) {
+    return 0;
   }
-  if (typeof exp === "string" && /^\d+$/.test(exp)) {
-    return normalizeExpiration(Number(exp));
-  }
-  return 0;
+  // JWT-style exp is normally seconds; older Fudo payloads may use ms.
+  const millis = parsed < 10_000_000_000 ? parsed * 1000 : parsed;
+  // Date's representable timestamp range ends at +/-8.64e15ms.
+  return Number.isSafeInteger(millis) && millis <= 8_640_000_000_000_000
+    ? millis : 0;
 }
 
 function toQuery(params: FudoListParams): string {

@@ -79,7 +79,13 @@ test("Fudo missing exp reuses one short-lived bearer for all five read-only prob
 
 test("Fudo rejects malformed or expired explicit auth expiry without any resource GET", async () => {
   const now = 1_800_000_000_000;
-  for (const exp of ["not-a-timestamp", 0, -1, Math.floor((now - 1000) / 1000)]) {
+  for (const exp of [
+    "not-a-timestamp", 0, -1, Math.floor((now - 1000) / 1000),
+    // Before this guard, Number(veryLongString) became Infinity and Math.min
+    // silently granted a 24h bearer lease despite malformed explicit expiry.
+    "9".repeat(400), "9007199254740993", Number.MAX_SAFE_INTEGER + 1,
+    1.25, 9_000_000_000_000_000, 
+  ]) {
     let authCalls = 0;
     let reads = 0;
     const fakeFetch: typeof fetch = async (input) => {
@@ -103,6 +109,35 @@ test("Fudo rejects malformed or expired explicit auth expiry without any resourc
     });
     assert.equal(authCalls, 1);
     assert.equal(reads, 0, "a stale or malformed explicit expiry cannot authorize GET");
+  }
+});
+
+test("Fudo accepts exact string expirations in seconds or milliseconds", async () => {
+  const now = 1_800_000_000_000;
+  for (const exp of [
+    String(Math.floor((now + 86_400_000) / 1000)),
+    String(now + 86_400_000),
+  ]) {
+    let authCalls = 0;
+    let reads = 0;
+    const fakeFetch: typeof fetch = async (input, init) => {
+      if (String(input) === "https://auth.fu.do/api") {
+        authCalls++;
+        return jsonResponse({ token: "synthetic-valid-bearer", exp });
+      }
+      assert.equal(init?.method, "GET");
+      assert.equal(new Headers(init?.headers).get("authorization"), "Bearer synthetic-valid-bearer");
+      reads++;
+      return jsonResponse({ data: [] });
+    };
+    const client = new FudoClient(
+      { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+      { fetchImpl: fakeFetch, now: () => now },
+    );
+    await client.products();
+    await client.products();
+    assert.equal(authCalls, 1, "valid explicit expiry should cache the bearer");
+    assert.equal(reads, 2);
   }
 });
 
