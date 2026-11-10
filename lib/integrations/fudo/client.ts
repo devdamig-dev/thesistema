@@ -317,7 +317,9 @@ export class FudoClient {
     }
 
     const now = this.now();
-    const hasExplicitExpiration = payload.exp !== undefined && payload.exp !== null;
+    // JSON null explicitly supplied by Fudo is invalid, not an omitted exp.
+    // Only an absent property may use the bounded fallback lease.
+    const hasExplicitExpiration = Object.prototype.hasOwnProperty.call(payload, "exp");
     const explicitExpiration = hasExplicitExpiration ? normalizeExpiration(payload.exp) : null;
     // An explicit but malformed/expired timestamp is not a usable token:
     // fail before sending it to Fudo. An omitted timestamp is different:
