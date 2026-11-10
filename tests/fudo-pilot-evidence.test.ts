@@ -101,7 +101,32 @@ test("Fudo copy does not present a legacy cursor 0 as a verified full scan", () 
   const report = buildFudoPilotEvidence(legacy, { revision: REVISION, result: probe });
   assert.match(report, /\| Productos \| GET compatible \| 7 \| No verificable \| No verificable \| Cursor 0 sin cierre verificable \|/);
   assert.doesNotMatch(report, /\| Productos \|[^\n]*Ciclo leído/);
-  assert.match(report, /\| Ingredientes \| GET compatible \| 0 \| 0 \| 0 \| Ciclo leído \|/);
+  // A single untraceable resource invalidates the global five-resource cycle,
+  // so the acta must agree with the UI/readiness guard for every other row.
+  assert.match(report, /\| Ingredientes \| GET compatible \| 0 \| 0 \| No verificable \| Cursor 0 sin cierre verificable \|/);
+  assert.doesNotMatch(report, /\| [^\n]*Ciclo leído \|/);
+});
+
+test("Fudo acta does not certify one completed resource while another still has pages", () => {
+  const partial = {
+    ...view,
+    nextPages: { ...view.nextPages, orders: 2 },
+  };
+  const report = buildFudoPilotEvidence(partial, { revision: REVISION, result: probe });
+  assert.match(report, /\| Pedidos \| GET compatible \| 1 \| 1 \| No verificable \| Página 2 pendiente \|/);
+  assert.match(report, /\| Productos \| GET compatible \| 7 \| 7 \| No verificable \| Cursor 0 sin cierre verificable \|/);
+  assert.doesNotMatch(report, /\| [^\n]*Ciclo leído \|/);
+});
+
+test("Fudo acta does not certify a cycle with missing provenance in a different resource", () => {
+  const unknown = {
+    ...view,
+    seenThisCycleCounts: { ...view.seenThisCycleCounts, sales: null },
+  };
+  const report = buildFudoPilotEvidence(unknown, { revision: REVISION, result: probe });
+  assert.match(report, /\| Productos \| GET compatible \| 7 \| 7 \| No verificable \| Cursor 0 sin cierre verificable \|/);
+  assert.match(report, /\| Ventas \| GET compatible \| 9 \| No verificable \| No verificable \| Cursor 0 sin cierre verificable \|/);
+  assert.doesNotMatch(report, /\| [^\n]*Ciclo leído \|/);
 });
 
 test("Fudo copy refuses to certify cursor 0 after an incomplete or failed run", () => {
