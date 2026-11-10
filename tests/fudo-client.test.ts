@@ -112,6 +112,35 @@ test("Fudo rejects malformed or expired explicit auth expiry without any resourc
   }
 });
 
+test("Fudo accepts exact string expirations in seconds or milliseconds", async () => {
+  const now = 1_800_000_000_000;
+  for (const exp of [
+    String(Math.floor((now + 86_400_000) / 1000)),
+    String(now + 86_400_000),
+  ]) {
+    let authCalls = 0;
+    let reads = 0;
+    const fakeFetch: typeof fetch = async (input, init) => {
+      if (String(input) === "https://auth.fu.do/api") {
+        authCalls++;
+        return jsonResponse({ token: "synthetic-valid-bearer", exp });
+      }
+      assert.equal(init?.method, "GET");
+      assert.equal(new Headers(init?.headers).get("authorization"), "Bearer synthetic-valid-bearer");
+      reads++;
+      return jsonResponse({ data: [] });
+    };
+    const client = new FudoClient(
+      { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+      { fetchImpl: fakeFetch, now: () => now },
+    );
+    await client.products();
+    await client.products();
+    assert.equal(authCalls, 1, "valid explicit expiry should cache the bearer");
+    assert.equal(reads, 2);
+  }
+});
+
 test("Fudo client refreshes once after a 401 and retries the same read", async () => {
   let authCount = 0;
   let apiCount = 0;
