@@ -45,13 +45,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — expiración explícita nula en autenticación (10/11/2026; PR en revisión)
+### O1 — expiración explícita nula en autenticación (10/11/2026; [PR #319](https://github.com/devdamig-dev/thesistema/pull/319), fusionado)
 
-- **Resultado observable:** si Fudo responde HTTP 200 con bearer válido pero `"exp": null` (o cualquier vencimiento explícito inválido), el adaptador rechaza la autenticación con `invalid_response` antes de realizar GET a productos u otros recursos. Un `exp` realmente ausente mantiene la lease conservadora de 10 minutos.
-- **Causa raíz:** el guard `payload.exp !== undefined && payload.exp !== null` confundía un campo explícitamente nulo con un campo ausente, autorizando lecturas mediante la lease de fallback. JSON `null` no acredita vencimiento.
-- **IMPLEMENTADO EN RAMA:** distinguir ausencia de propiedad con `hasOwnProperty`, sin modificar la política para respuestas válidas. Regresión sintética con `exp: null` y otros valores inválidos; prueba existente del caso omitido. Sólo código server-side y tests; sin Fudo real, SQL, nuevas APIs ni cambios operativos.
-- **PROBADO:** Quality Gate del HEAD de este PR pendiente. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no — **PILOTO NO-GO**.
-- **Riesgo / rollback:** una respuesta real con `exp: null` dejará de funcionar hasta que el proveedor entregue un instante válido o omita el campo; rollback por revert, sin migración. Requiere confirmación del contrato con cuenta Fudo piloto autorizada.
+- **Resultado observable:** un HTTP 200 de auth con `"exp": null` o cualquier vencimiento explícito inválido no autoriza GET de recursos; `invalid_response` se devuelve sanitizado. Si `exp` no está presente, se mantiene la lease conservadora de diez minutos.
+- **Causa raíz:** la condición `payload.exp !== undefined && payload.exp !== null` confundía nulidad explícita con ausencia, concediendo una lease sin expiración verificable.
+- **IMPLEMENTADO / FUSIONADO:** [PR #319](https://github.com/devdamig-dev/thesistema/pull/319), squash a `main` SHA `06be8ad926be3d18b1bae90ec2339a041133d0a8`. `hasOwnProperty` distingue propiedad explícita y valor inválido; regresiones sintéticas para `null`, `false`, string vacío, expiraciones malformadas y cero GET. Sin cambios SQL, permisos, secretos ni escrituras a Fudo.
+- **PROBADO EN CI:** [Quality #42772845403](https://github.com/devdamig-dev/thesistema/actions/runs/42772845403), `completed/success` para HEAD exacto `11a1d39ac0bff58c37b7c74efc6ab2bb48de5675`: jobs `verify`, `postgres17` y `postgrest` completos/success. `verify` cubre tests, typecheck, lint, build y Playwright según el workflow. **No son pruebas con Fudo real ni sesiones A/B autenticadas.**
+- **DESPLEGADO:** pendiente de confirmar un deployment Vercel production `READY` con SHA del merge `06be8ad9` y alias válido; último deployment production READY observado durante esta revisión corresponde a #318, SHA `4702b076`. No atribuir despliegue de #319 a una preview rechazada por `build-rate-limit`.
+- **VALIDADO EN PRODUCCIÓN CON FUDO REAL: NO — PILOTO NO-GO.** Bloqueo externo: conectar una cuenta Fudo Plan Pro/API autorizada; después conciliar cinco recursos reales, dos ciclos read-only idempotentes, QA A/B y acta aceptada. O2+ pospuesto.
+- **Riesgo/rollback:** una respuesta real con `exp: null` dejará de aceptarse hasta que Fudo omita el campo o entregue timestamp válido; revert del PR sin migración si la documentación y un ensayo autorizado muestran un contrato distinto.
 
 ### O1 — expiraciones de bearer Fudo no representables (10/11/2026; [PR #317](https://github.com/devdamig-dev/thesistema/pull/317), fusionado y publicado)
 
