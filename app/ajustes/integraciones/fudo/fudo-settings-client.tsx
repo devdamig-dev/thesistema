@@ -6,7 +6,8 @@ import { ClipboardCopy, DatabaseZap, PlugZap, RefreshCcw, ShieldCheck, Unplug } 
 import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/ajustes/setting-row";
 import type { FudoConnectionView, FudoResourcePreflight } from "@/lib/integrations/fudo/service";
-import { evaluateFudoPilotReadiness, fudoConnectionRevision, isWellFormedFudoPreflight, selectCurrentFudoPreflight } from "@/lib/integrations/fudo/readiness";
+import type { FudoSyncResource } from "@/lib/integrations/fudo/snapshot";
+import { evaluateFudoPilotReadiness, formatVerifiedFudoCount, fudoConnectionRevision, fudoCursorDisplay, isWellFormedFudoPreflight, selectCurrentFudoPreflight } from "@/lib/integrations/fudo/readiness";
 import { buildFudoPilotEvidence } from "@/lib/integrations/fudo/pilot-evidence";
 import { runFudoActionSafely, runFudoPreflightSafely, runFudoSyncBatches } from "@/lib/integrations/fudo/action-feedback";
 import {
@@ -257,8 +258,8 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
                 <div key={code} className="rounded-lg border border-line/60 p-3 text-xs text-ink">
                   <p className="mb-2 font-semibold">{label}</p>
                   <div className="grid grid-cols-3 gap-2">
-                    <div><p className="text-ink-muted">Guardados</p><p className="tabular-nums">{(status.importedCounts[code] ?? 0).toLocaleString("es-AR")}</p></div>
-                    <div><p className="text-ink-muted">Vistos en ciclo</p><p className="tabular-nums">{typeof seen === "number" ? seen.toLocaleString("es-AR") : "No verificable"}</p></div>
+                    <div><p className="text-ink-muted">Guardados</p><p className="tabular-nums">{formatVerifiedFudoCount(status.importedCounts[code])}</p></div>
+                    <div><p className="text-ink-muted">Vistos en ciclo</p><p className="tabular-nums">{formatVerifiedFudoCount(seen)}</p></div>
                     <div><p className="text-ink-muted">Posibles ausencias</p><p className="tabular-nums">{typeof missing === "number" ? missing.toLocaleString("es-AR") : "Pendiente"}</p></div>
                   </div>
                 </div>
@@ -273,12 +274,12 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
           </p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {Object.entries(LABELS).map(([resource, label]) => {
-              const nextPage = status.nextPages[resource];
+              const cursor = fudoCursorDisplay(status, resource as FudoSyncResource);
               return (
                 <p key={resource} className="flex justify-between gap-2 text-xs text-ink">
                   <span>{label}</span>
-                  <span className={nextPage === 0 ? "text-success-400" : "text-ink-muted"}>
-                    {nextPage === 0 ? "Ciclo leído" : typeof nextPage === "number" ? `Pendiente: página ${nextPage}` : "Sin iniciar"}
+                  <span className={cursor.verified ? "text-success-400" : "text-ink-muted"}>
+                    {cursor.label}
                   </span>
                 </p>
               );

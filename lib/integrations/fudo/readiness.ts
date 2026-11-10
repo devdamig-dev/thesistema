@@ -1,4 +1,4 @@
-import { FUDO_SYNC_RESOURCES } from "./snapshot";
+import { FUDO_SYNC_RESOURCES, type FudoSyncResource } from "./snapshot";
 import { parseStrictFudoTimestamp } from "./timestamp";
 import type { FudoConnectionView, FudoResourcePreflight } from "./service";
 
@@ -70,6 +70,45 @@ export function hasVerifiableFudoRunClosure(
     && finishedAt >= startedAt && lastSyncedAt >= finishedAt;
 }
 
+
+type FudoCycleView = Pick<FudoConnectionView,
+  "status" | "lastSyncStatus" | "lastSyncedAt" | "recentRuns" | "nextPages" | "seenThisCycleCounts">;
+
+/**
+ * A zero cursor proves only that pagination reached an end marker. A green
+ * "Ciclo leído" additionally requires an auditable run close and a current
+ * cycle marker (including a legitimate zero-count resource) for all five
+ * resources. Keep the settings UI and the pilot readiness gate in sync.
+ */
+export function hasVerifiableFudoFullCycle(view: FudoCycleView): boolean {
+  return hasVerifiableFudoRunClosure(view)
+    && FUDO_SYNC_RESOURCES.every((resource) => {
+      const seen = view.seenThisCycleCounts[resource];
+      return view.nextPages[resource] === 0
+        && typeof seen === "number" && Number.isSafeInteger(seen) && seen >= 0;
+    });
+}
+
+export function fudoCursorDisplay(view: FudoCycleView, resource: FudoSyncResource): {
+  label: string; verified: boolean;
+} {
+  const page = view.nextPages[resource];
+  if (page === 0) {
+    const verified = hasVerifiableFudoFullCycle(view);
+    return { label: verified ? "Ciclo leído" : "Cursor 0 sin cierre verificable", verified };
+  }
+  if (typeof page === "number" && Number.isSafeInteger(page) && page >= 1 && page <= 100000) {
+    return { label: `Pendiente: página ${page}`, verified: false };
+  }
+  return { label: "Sin iniciar", verified: false };
+}
+
+/** A missing or malformed HEAD/count is not evidence of zero imported records. */
+export function formatVerifiedFudoCount(count: unknown): string {
+  return typeof count === "number" && Number.isSafeInteger(count) && count >= 0
+    ? count.toLocaleString("es-AR") : "No verificable";
+}
+
 /**
  * Advisory readiness only: never turn a product probe or synthetic CI run into
  * a claim that a real Fudo account, tenant isolation or counts were validated.
@@ -89,12 +128,7 @@ export function evaluateFudoPilotReadiness(
   // The server exposes a null seen-count for such a cursor: it is NOT a
   // reconciliable full cycle even when the newest run says "completed".
   // Empty resources legitimately have a seen-count of zero.
-  const cycleComplete = hasVerifiableFudoRunClosure(view)
-    && FUDO_SYNC_RESOURCES.every((resource) => {
-      const seen = view.seenThisCycleCounts[resource];
-      return view.nextPages[resource] === 0
-        && typeof seen === "number" && Number.isSafeInteger(seen) && seen >= 0;
-    });
+  const cycleComplete = hasVerifiableFudoFullCycle(view);
 
   return [
     {
