@@ -1,6 +1,6 @@
 import { FUDO_SYNC_RESOURCES } from "./snapshot";
 import { parseStrictFudoTimestamp } from "./timestamp";
-import { hasVerifiableFudoRunClosure, isWellFormedFudoPreflight, selectCurrentFudoPreflight } from "./readiness";
+import { hasVerifiableFudoFullCycle, isWellFormedFudoPreflight, selectCurrentFudoPreflight } from "./readiness";
 import type { FudoConnectionView, FudoResourcePreflight } from "./service";
 
 /**
@@ -79,12 +79,14 @@ export function buildFudoPilotEvidence(
   // five-resource contract; malformed diagnostics never become green checks.
   const trustworthyProbe = isWellFormedFudoPreflight(currentProbe);
 
-  const latestRunClosed = hasVerifiableFudoRunClosure(view);
+  // The private worksheet must use the same global five-resource close guard as
+  // the owner/admin readiness panel and cursor UI. A per-resource zero cursor
+  // can be genuine progress without certifying a full, reconciliable cycle.
+  const fullCycleClosed = hasVerifiableFudoFullCycle(view);
   const rows = FUDO_SYNC_RESOURCES.map((resource) => {
     const probe = trustworthyProbe ? probeChecks.find((check) => check.resource === resource) : null;
     const seen = view.seenThisCycleCounts[resource];
-    const cycleClosed = latestRunClosed
-      && typeof seen === "number" && Number.isSafeInteger(seen) && seen >= 0;
+    const cycleClosed = fullCycleClosed;
     return `| ${RESOURCE_LABELS[resource]} | ${probe ? PROBE_LABELS[probe.code] : "Sin diagnóstico vigente"} | ${safeCount(view.importedCounts[resource])} | ${safeCount(seen)} | ${safeCount(cycleClosed && view.nextPages[resource] === 0 ? view.possiblyMissingCounts[resource] : null)} | ${safePage(view.nextPages[resource], cycleClosed)} |`;
   });
 
