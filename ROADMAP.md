@@ -45,6 +45,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — cobertura Auth/RLS en todos los negocios visibles (10/11/2026; rama de QA en revisión)
+
+- **Resultado observable:** la prueba manual read-only con sesiones QA A/B verifica acceso cruzado a `business_members`, descubrimiento anónimo de `businesses.id` y membresías anónimas para **todos** los negocios devueltos por cada tenant, no solamente la primera fila. Exige al menos una membresía owner/admin propia por cuenta QA y mantiene la inspección por PK de cada negocio.
+- **Causa raíz:** el gate tenía cobertura completa por `businesses.id` pero tomaba únicamente `childA[0]` y `childB[0]` para membresías y descubrimiento anónimo. En un tenant con varias sucursales, un segundo negocio expuesto podía no ser detectado.
+- **IMPLEMENTADO EN RAMA:** script QA + regresiones sintéticas de segundo negocio (camino sano y fugas en membresía cruzada, membresía anónima e ID anónimo). Sin cambios de runtime, SQL, proveedor, credenciales ni movimientos comerciales.
+- **PROBADO:** pendiente de ejecución de Quality y QA Auth sobre el PR. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN A/B / FUDO REAL:** no; faltan sesiones QA y cuenta Fudo Pro/API autorizada, cinco recursos conciliados y dos ciclos idempotentes. **PILOTO NO-GO.**
+- **Riesgo/rollback:** QA podrá detectar fugas antes no cubiertas en negocios secundarios; un fallo genuino bloquea GO. Revert de la rama/PR sin migración.
+
 ### O1 — expiración explícita nula en autenticación (10/11/2026; [PR #319](https://github.com/devdamig-dev/thesistema/pull/319), fusionado)
 
 - **Resultado observable:** un HTTP 200 de auth con `"exp": null` o cualquier vencimiento explícito inválido no autoriza GET de recursos; `invalid_response` se devuelve sanitizado. Si `exp` no está presente, se mantiene la lease conservadora de diez minutos.
