@@ -45,6 +45,13 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — acta privada y UI coherentes sobre cierre global (09/11/2026; rama en QA)
+
+- **Resultado observable:** «Copiar resumen técnico para el acta» no acredita «Ciclo leído» en ninguno de los cinco recursos cuando falta el ciclo completo verificable de cualquiera de ellos. Si una página sigue pendiente o falta `seenThisCycleCounts` en un solo recurso, los cursores agotados restantes se muestran «Cursor 0 sin cierre verificable»; las posibles ausencias no se consideran conciliables. Sigue siendo **NO-GO**.
+- **Causa raíz:** la UI/checklist ya compartían `hasVerifiableFudoFullCycle` (#313), pero `buildFudoPilotEvidence` usaba `hasVerifiableFudoRunClosure` y comprobaba el ciclo sólo por recurso. Un cursor heredado en ventas podía dejar otras cuatro filas aparentemente verdes en el acta, en contradicción con la pantalla.
+- **IMPLEMENTADO EN RAMA:** `fix/fudo-o1-evidence-full-cycle-20261109` reutiliza el guard global sin ampliar accesos, modificar la base ni consultar Fudo; actualiza regresión heredada y añade escenarios sintéticos de páginas pendientes y provenance faltante en otro recurso.
+- **PROBADO:** pendiente Quality del HEAD exacto; no equivale a Fudo real. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no — **PILOTO NO-GO**. Faltan Plan Pro/API autorizado, conciliación real 5/5, dos ciclos idempotentes, sesiones QA autenticadas A/B y acta aceptada.
+- **Riesgo / rollback:** un acta previa que marcaba individualmente un recurso como leído puede pasar a «No verificable» hasta completar los cinco recursos, sin alterar staging. Reversión mediante revert del PR.
 ### O1 — estado real de cursores y conteos en la UI (09/11/2026; [PR #313](https://github.com/devdamig-dev/thesistema/pull/313), integrado y publicado)
 
 - **Resultado observable:** en `/ajustes/integraciones/fudo`, `next_page=0` ya no se presenta como «Ciclo leído» verde si falta el cierre RFC3339 verificable, corrida `completed` o marcador de ciclo vigente de alguno de los cinco recursos. La UI indica «Cursor 0 sin cierre verificable». Un conteo `HEAD/count` ausente o inválido se muestra «No verificable» y un cero realmente observado se mantiene como `0`.
