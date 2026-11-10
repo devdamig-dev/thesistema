@@ -45,6 +45,13 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — expiraciones de bearer Fudo no representables (10/11/2026; PR en revisión)
+
+- **Resultado observable:** autenticación Fudo con `exp` explícito desbordado, fraccionario o fuera del rango temporal de JavaScript se rechaza como `invalid_response` antes de emitir cualquier GET, sin reflejar token ni payload. Fechas válidas, y `exp` ausente (lease conservadora), conservan el comportamiento existente.
+- **Causa raíz:** `normalizeExpiration` convertía strings numéricos enormes a `Infinity` o a enteros redondeados; `Math.min` limitaba esa expiración falsa a 24 h, aceptando un bearer sin vencimiento verificable.
+- **IMPLEMENTADO EN RAMA:** validar un entero seguro y un instante representable antes del cache de token. Regresiones sintéticas en `tests/fudo-client.test.ts`; sin SQL, secretos reales, nuevos endpoints, operaciones comerciales ni escrituras hacia Fudo.
+- **PROBADO:** pendiente de Quality Gate del HEAD exacto del PR. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no — **PILOTO NO-GO**. Faltan cuenta Pro/API autorizada, conciliación real 5/5, segundo ciclo idempotente, QA A/B autenticada y acta.
+
 ### O1 — acta privada y UI coherentes sobre cierre global (09/11/2026; [PR #315](https://github.com/devdamig-dev/thesistema/pull/315), integrado y publicado)
 
 - **Resultado observable:** «Copiar resumen técnico para el acta» no acredita «Ciclo leído» en ninguno de los cinco recursos cuando falta el ciclo completo verificable de cualquiera de ellos. Si una página sigue pendiente o falta `seenThisCycleCounts` en un solo recurso, los cursores agotados restantes se muestran «Cursor 0 sin cierre verificable»; las posibles ausencias no se consideran conciliables. Sigue siendo **NO-GO**.
