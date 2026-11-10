@@ -133,15 +133,19 @@ async function assertBusinessMembership(client, businessId, own) {
     assert.equal(rows.length, 0, 'Usuario QA accede a membresías de otro negocio');
   }
 }
+// One owner/admin business per QA account is enough to exercise the Fudo
+// action role, but CROSS-TENANT membership denial must cover EVERY business
+// visible to each account (not only the first returned row).
 await assertBusinessMembership(a, childA[0].id, true);
-await assertBusinessMembership(b, childA[0].id, false);
 await assertBusinessMembership(b, childB[0].id, true);
-await assertBusinessMembership(a, childB[0].id, false);
+for (const row of childA) await assertBusinessMembership(b, row.id, false);
+for (const row of childB) await assertBusinessMembership(a, row.id, false);
 
 // También comprobar que la Data API pública no permita descubrir IDs de
 // organizaciones o negocios de A/B. Una sesión autenticada aislada no prueba
 // por sí sola que los mismos IDs sean privados frente a consultas anónimas.
-// Se consulta un ID por tipo y tenant; nunca mostrar IDs ni filas en CI.
+// Revisar todos los IDs observados (hasta 99 por consulta) para que un
+// segundo negocio/sucursal expuesto no pase desapercibido; nunca imprimirlos.
 async function assertAnonymousTenantIdHidden(table, id) {
   const url = origin + '/rest/v1/' + table
     + '?select=id&id=eq.' + encodeURIComponent(id) + '&limit=1';
@@ -162,11 +166,11 @@ async function assertAnonymousTenantIdHidden(table, id) {
   assert.ok(Array.isArray(rows) && rows.length === 0,
     'Consulta anónima expuso un identificador privado de ' + table);
 }
-for (const [table, id] of [
-  [orgTable, orgsA[0].id], [orgTable, orgsB[0].id],
-  [childTable, childA[0].id], [childTable, childB[0].id],
-]) {
-  await assertAnonymousTenantIdHidden(table, id);
+for (const id of [...orgIdsA, ...orgIdsB]) {
+  await assertAnonymousTenantIdHidden(orgTable, id);
+}
+for (const row of [...childA, ...childB]) {
+  await assertAnonymousTenantIdHidden(childTable, row.id);
 }
 // Incluso una consulta sin sesión no debe revelar miembros/roles a partir
 // de los IDs QA. Rechazo HTTP explícito o 200 con filas vacías son seguros.
@@ -187,8 +191,9 @@ async function assertAnonymousMembershipHidden(businessId) {
   assert.ok(Array.isArray(rows) && rows.length === 0,
     'Consulta anónima expuso membresías del negocio');
 }
-await assertAnonymousMembershipHidden(childA[0].id);
-await assertAnonymousMembershipHidden(childB[0].id);
+for (const row of [...childA, ...childB]) {
+  await assertAnonymousMembershipHidden(row.id);
+}
 
 // Las tablas Fudo son exclusivamente de servicio. Una sesión de owner/admin
 // tampoco debe poder recuperar ciphertext, staging, cursores o auditoría
@@ -221,7 +226,9 @@ for (const account of [a, b, { accessToken: '' }]) {
   for (const table of privateFudoTables) await assertPrivateFudoTableDenied(account, table);
 }
 console.log('PASS: 2 sesiones Auth QA reales, organizaciones y negocios separados, lectura cruzada bloqueada.');
-console.log('PASS: organizaciones y negocios A/B no descubribles anónimamente (4 GET).');
-console.log('PASS: membresías owner/admin propias verificadas y acceso cruzado/anónimo bloqueado (6 GET).');
+console.log('PASS: organizaciones y negocios A/B no descubribles anónimamente (' +
+  (orgIdsA.size + orgIdsB.size + childA.length + childB.length) + ' GET).');
+console.log('PASS: membresías owner/admin propias y acceso cruzado/anónimo bloqueado (' +
+  (2 + 2 * (childA.length + childB.length)) + ' GET).');
 console.log('PASS: 4 tablas Fudo denegadas por PostgREST para A, B y anon (12 GET sin escrituras).');
 console.log('Alcance: sólo Auth QA y GET a Supabase; no certifica acciones server-side de GastroPilot, permisos Fudo ni conciliación real.');

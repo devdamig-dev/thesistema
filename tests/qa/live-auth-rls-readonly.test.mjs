@@ -13,6 +13,7 @@ const anonKey = 'fixture.' + Buffer.from(JSON.stringify({ role: 'anon' })).toStr
 function runFixture(scenario, overrides = {}) {
   const source = [
     "const scenario = process.env.QA_FIXTURE_SCENARIO;",
+    "const secondary = scenario.startsWith('secondary-');",
     "let privateGets = 0;",
     "let anonymousPrivateGets = 0;",
     "let anonymousEntityGets = 0;",
@@ -48,11 +49,14 @@ function runFixture(scenario, overrides = {}) {
     "    if (isAnon) {",
     "      if (auth !== anonAuthorization) throw Error('Anonymous membership Authorization mismatched public key type');",
     "      anonymousMembershipGets++;",
-    "      return json(scenario === 'anon-member-leak' ? [{business_id:'business-A'}] : []);",
+    "      return json(scenario === 'anon-member-leak' ? [{business_id:'business-A'}] :",
+    "        scenario === 'secondary-anon-member-leak' && businessId === 'business-A2'",
+    "          ? [{business_id:'business-A2'}] : []);",
     "    }",
     "    const ownBusinessId = 'business-' + who;",
-    "    if (scenario === 'cross-members-leak' && who === 'B' && businessId === 'business-A')",
-    "      return json([{business_id:'business-A',role:'owner'}]);",
+    "    if (who === 'B' && (scenario === 'cross-members-leak' && businessId === 'business-A'",
+    "      || scenario === 'secondary-cross-members-leak' && businessId === 'business-A2'))",
+    "      return json([{business_id:businessId,role:'owner'}]);",
     "    if (businessId !== ownBusinessId || (userId && userId !== 'user-' + who)) return json([]);",
     "    const role = scenario === 'non-admin-member' && who === 'A' ? 'manager' : 'owner';",
     "    return json([{business_id:ownBusinessId,role}]);",
@@ -77,21 +81,26 @@ function runFixture(scenario, overrides = {}) {
     "    return json(ids.filter(id => !requestedId || id === requestedId).map(id => ({id})));",
     "  }",
     "  if (table === 'businesses') {",
-    "    if (isAnon) return json(scenario === 'anon-business-leak' ? [{id:'business-A',organization_id:'org-A'}] : []);", 
+    "    if (isAnon) return json(scenario === 'anon-business-leak' ? [{id:'business-A',organization_id:'org-A'}]",
+    "      : scenario === 'secondary-anon-business-leak' && requestedId === 'business-A2'",
+    "      ? [{id:'business-A2',organization_id:'org-A'}] : []);", 
     "    const own = who === 'A' ? 'org-A' : 'org-B';",
     "    if (scenario === 'cross-business-id' && who === 'B' && requestedId === 'business-A')",
     "      return json([{id:'business-A',organization_id:'org-A'}]);",
     "    const row = {id:'business-'+who,organization_id:own};",
-    "    return json((!requestedOrg || requestedOrg === own) && (!requestedId || requestedId === row.id) ? [row] : []);",
+    "    const rows = [row];",
+    "    if (who === 'A' && secondary) rows.push({id:'business-A2',organization_id:'org-A'});",
+    "    return json(rows.filter(item => (!requestedOrg || requestedOrg === item.organization_id)",
+    "      && (!requestedId || requestedId === item.id)));",
     "  }",
     "  throw Error('Unexpected table');",
     "};",
     "await import(" + JSON.stringify(gateUrl) + ");",
     "if (privateGets !== 12) throw Error('Expected exactly 12 private-table GETs, got ' + privateGets);",
     "if (anonymousPrivateGets !== 4) throw Error('Expected 4 anonymous private-table GETs, got ' + anonymousPrivateGets);",
-    "if (anonymousEntityGets !== 4) throw Error('Expected 4 anonymous entity GETs, got ' + anonymousEntityGets);",
-    "if (membershipGets !== 6) throw Error('Expected 6 business-members GETs, got ' + membershipGets);",
-    "if (anonymousMembershipGets !== 2) throw Error('Expected 2 anonymous membership GETs, got ' + anonymousMembershipGets);", 
+    "if (anonymousEntityGets !== (secondary ? 5 : 4)) throw Error('Unexpected anonymous entity GET count ' + anonymousEntityGets);",
+    "if (membershipGets !== (secondary ? 8 : 6)) throw Error('Unexpected business-members GET count ' + membershipGets);",
+    "if (anonymousMembershipGets !== (secondary ? 3 : 2)) throw Error('Unexpected anonymous membership GET count ' + anonymousMembershipGets);", 
   ].join('\n');
   const env = {
     ...process.env,
@@ -226,4 +235,34 @@ test('Gate falla si la clave pública expone membresías del negocio por busines
   assert.match(run.stderr, /Consulta anónima expuso membresías del negocio/);
   assert.doesNotMatch(run.stdout, /PASS: 4 tablas Fudo/);
   assert.doesNotMatch(run.stdout + run.stderr, /fixture-password|mock-token/);
+});
+
+test('Gate recorre todos los negocios visibles aunque A tenga una segunda sucursal', () => {
+  const run = runFixture('secondary-success');
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /5 GET/);
+  assert.match(run.stdout, /8 GET/);
+  assert.match(run.stdout, /12 GET/);
+  assert.doesNotMatch(run.stdout + run.stderr, /fixture-password|mock-token/);
+});
+
+test('Gate detecta membresía cruzada expuesta en el SEGUNDO negocio de A', () => {
+  const run = runFixture('secondary-cross-members-leak');
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /Usuario QA accede a membresías de otro negocio/);
+  assert.doesNotMatch(run.stdout, /PASS:/);
+});
+
+test('Gate detecta membresía anónima expuesta sólo en el SEGUNDO negocio de A', () => {
+  const run = runFixture('secondary-anon-member-leak');
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /Consulta anónima expuso membresías del negocio/);
+  assert.doesNotMatch(run.stdout, /PASS:/);
+});
+
+test('Gate detecta ID anónimo expuesto sólo en el SEGUNDO negocio de A', () => {
+  const run = runFixture('secondary-anon-business-leak');
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /Consulta anónima expuso un identificador privado de businesses/);
+  assert.doesNotMatch(run.stdout, /PASS:/);
 });
