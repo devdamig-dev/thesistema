@@ -79,7 +79,13 @@ test("Fudo missing exp reuses one short-lived bearer for all five read-only prob
 
 test("Fudo rejects malformed or expired explicit auth expiry without any resource GET", async () => {
   const now = 1_800_000_000_000;
-  for (const exp of ["not-a-timestamp", 0, -1, Math.floor((now - 1000) / 1000)]) {
+  for (const exp of [
+    "not-a-timestamp", 0, -1, Math.floor((now - 1000) / 1000),
+    // Before this guard, Number(veryLongString) became Infinity and Math.min
+    // silently granted a 24h bearer lease despite malformed explicit expiry.
+    "9".repeat(400), "9007199254740993", Number.MAX_SAFE_INTEGER + 1,
+    1.25, 9_000_000_000_000_000, 
+  ]) {
     let authCalls = 0;
     let reads = 0;
     const fakeFetch: typeof fetch = async (input) => {
