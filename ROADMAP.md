@@ -45,6 +45,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — QA con rol admin en cualquier sucursal (10/11/2026; PR en revisión)
+
+- **Resultado observable:** la prueba A/B read-only verifica al menos una membresía owner/admin de cada cuenta QA en cualquiera de sus negocios visibles, aunque el primero sea solo manager o no tenga membresía. Conserva los controles de acceso cruzado y anónimo de **todos** los negocios.
+- **Causa raíz:** el gate solo verificaba la membresía administrativa en childA[0] y childB[0]; el orden de negocios no determina dónde administra cada usuario. Podía producir un falso NO-GO por la primera sucursal.
+- **IMPLEMENTADO EN RAMA:** iterar las sucursales propias para comprobar roles y regresiones sintéticas de admin en segunda sucursal, ausencia de admin y negocios secundarios sin membresía. No cambia código de producción, SQL, secretos, permisos o llamadas a Fudo.
+- **PROBADO:** pendiente CI de la rama; QA A/B autenticado no ejecutado. **DESPLEGADO:** no aplica al script de QA y no hay despliegue acreditado. **VALIDADO EN PRODUCCIÓN CON FUDO:** no; cuenta Fudo autorizada y QA real pendientes. **PILOTO NO-GO.**
+- **Riesgo/rollback:** mayor cantidad de GET de QA (uno adicional por cada sucursal propia visible); el script conserva el límite de menos de 100 filas y hace sólo lecturas. Revertir el PR revierte la comprobación sin migraciones.
+
 ### O1 — cobertura Auth/RLS en todos los negocios visibles (10/11/2026; rama de QA en revisión)
 
 - **Resultado observable:** la prueba manual read-only con sesiones QA A/B verifica acceso cruzado a `business_members`, descubrimiento anónimo de `businesses.id` y membresías anónimas para **todos** los negocios devueltos por cada tenant, no solamente la primera fila. Exige al menos una membresía owner/admin propia por cuenta QA y mantiene la inspección por PK de cada negocio.
