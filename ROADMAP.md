@@ -45,12 +45,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — acta privada y UI coherentes sobre cierre global (09/11/2026; rama en QA)
+### O1 — acta privada y UI coherentes sobre cierre global (09/11/2026; [PR #315](https://github.com/devdamig-dev/thesistema/pull/315), integrado y publicado)
 
 - **Resultado observable:** «Copiar resumen técnico para el acta» no acredita «Ciclo leído» en ninguno de los cinco recursos cuando falta el ciclo completo verificable de cualquiera de ellos. Si una página sigue pendiente o falta `seenThisCycleCounts` en un solo recurso, los cursores agotados restantes se muestran «Cursor 0 sin cierre verificable»; las posibles ausencias no se consideran conciliables. Sigue siendo **NO-GO**.
 - **Causa raíz:** la UI/checklist ya compartían `hasVerifiableFudoFullCycle` (#313), pero `buildFudoPilotEvidence` usaba `hasVerifiableFudoRunClosure` y comprobaba el ciclo sólo por recurso. Un cursor heredado en ventas podía dejar otras cuatro filas aparentemente verdes en el acta, en contradicción con la pantalla.
-- **IMPLEMENTADO EN RAMA:** `fix/fudo-o1-evidence-full-cycle-20261109` reutiliza el guard global sin ampliar accesos, modificar la base ni consultar Fudo; actualiza regresión heredada y añade escenarios sintéticos de páginas pendientes y provenance faltante en otro recurso.
-- **PROBADO:** pendiente Quality del HEAD exacto; no equivale a Fudo real. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no — **PILOTO NO-GO**. Faltan Plan Pro/API autorizado, conciliación real 5/5, dos ciclos idempotentes, sesiones QA autenticadas A/B y acta aceptada.
+- **IMPLEMENTADO / FUSIONADO:** [PR #315](https://github.com/devdamig-dev/thesistema/pull/315) integrado por squash a `main`, SHA `45e2857ebb61796e186dcc1dea179093556c5e99`. Comparte el guard global y agrega regresiones sintéticas de páginas pendientes, provenance faltante y cursor heredado; sin modificar SQL, permisos, llamadas a Fudo, secretos ni módulos de operación comercial.
+- **PROBADO EN CI:** [Quality #42739809398](https://github.com/devdamig-dev/thesistema/actions/runs/42739809398) `completed/success` para HEAD exacto `3b6986152b3cbb56e6e5706b3321894bbe8e6206`, con `verify`, `postgres17` y `postgrest` `completed/success`. Son pruebas sintéticas, sin Fudo real ni sesiones QA A/B.
+- **DESPLEGADO:** [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/71Zk7yiwebEuQCfWX1Q3HwaBmkCb), deployment `dpl_71Zk7yiwebEuQCfWX1Q3HwaBmkCb`, `target=production`, SHA exacto `45e2857ebb61796e186dcc1dea179093556c5e99`, alias `gastropilot.nexodg.com` y `aliasError=null` verificados. READY no acredita el flujo real Fudo.
+- **Supabase (inspección read-only del 09/11/2026):** 0 conexiones, 0 corridas, 0 registros externos y 0 cursores. Las cuatro tablas mantienen RLS habilitada, sin SELECT directo de `anon` o `authenticated`; no reemplaza un test A/B autenticado.
+- **VALIDADO EN PRODUCCIÓN CON FUDO REAL: NO — PILOTO NO-GO.** Faltan Plan Pro/API autorizado, conciliación real 5/5, dos ciclos idempotentes, sesiones QA autenticadas A/B y acta aceptada. O2+ pospuesto.
 - **Riesgo / rollback:** un acta previa que marcaba individualmente un recurso como leído puede pasar a «No verificable» hasta completar los cinco recursos, sin alterar staging. Reversión mediante revert del PR.
 ### O1 — estado real de cursores y conteos en la UI (09/11/2026; [PR #313](https://github.com/devdamig-dev/thesistema/pull/313), integrado y publicado)
 
