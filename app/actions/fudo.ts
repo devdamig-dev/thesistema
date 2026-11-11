@@ -19,8 +19,14 @@ export async function testFudoConnectionAction() {
 export async function disconnectFudoAction() {
   return refresh(disconnectFudo());
 }
-export async function syncFudoAction() {
-  return refresh(syncFudoReadOnly());
+export async function syncFudoAction(expectedConnectionRevision: string) {
+  // Never allow a client to omit the connection/tenant fence and initiate a
+  // new foreground batch under whichever business is active by then.
+  if (typeof expectedConnectionRevision !== "string" || !/^[a-f0-9]{64}$/.test(expectedConnectionRevision)) {
+    return { ok: false as const, code: "connection_changed",
+      message: "La conexión Fudo cambió. Actualizá la pantalla y reintentá." };
+  }
+  return refresh(syncFudoReadOnly(expectedConnectionRevision));
 }
 
 // Read-only diagnostics; never returns credentials or provider records.

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import Module from "node:module";
 import { encryptFudoCredentials } from "../lib/integrations/fudo/crypto";
@@ -796,5 +797,60 @@ test("Fudo O1 overlapping pages fail before staging and cursor, without leaking 
     globalThis.fetch = prevFetch;
     if (prevKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = prevKey;
+  }
+});
+
+
+test("Fudo O1 blocks a stale foreground tenant/credential revision before any provider read or staging", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  membershipActive = true;
+  activeBusiness = A;
+  conn.status = "connected";
+  conn.connection_generation = GENERATION;
+  conn.last_tested_at = null;
+  progress.length = 0;
+  records.length = 0;
+  runs.length = 0;
+  let providerRequests = 0;
+  globalThis.fetch = async () => {
+    providerRequests++;
+    throw new Error("no Fudo request must be issued");
+  };
+  try {
+    // Different tenant/rotated connection revision from the UI:
+    // the server must not start a new run or call auth.fu.do.
+    const rejected = await syncFudoReadOnly("0".repeat(64));
+    assert.equal(rejected.ok, false);
+    if (!rejected.ok) assert.equal(rejected.code, "connection_changed");
+    assert.equal(providerRequests, 0);
+    assert.equal(runs.length, 0);
+    assert.equal(progress.length, 0);
+    assert.equal(records.length, 0);
+
+    // A matching server-derived revision must still permit a normal read-only
+    // cycle; reject only stale tenant/connection context, not valid pilots.
+    const revision = createHash("sha256")
+      .update(JSON.stringify([A, GENERATION, "connected", null]))
+      .digest("hex");
+    globalThis.fetch = async (input, init) => {
+      providerRequests++;
+      if (String(input) === "https://auth.fu.do/api") {
+        assert.equal(init?.method, "POST");
+        return new Response(JSON.stringify({ token: "synthetic-token",
+          exp: Math.floor(Date.now() / 1000) + 86400 }), { status: 200 });
+      }
+      assert.equal(init?.method, "GET");
+      return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+    };
+    const accepted = await syncFudoReadOnly(revision);
+    assert.equal(accepted.ok, true);
+    assert.equal(runs.length, 1);
+    assert.ok(providerRequests >= 6, "one auth and five read-only resource probes");
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
   }
 });
