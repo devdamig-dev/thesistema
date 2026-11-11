@@ -284,6 +284,20 @@ export class FudoClient {
       throw safeError(response.status);
     }
 
+    // A 206 Partial Content (or another unexpected 2xx) may still contain a
+    // valid-looking bearer JSON while omitting authentication data. Only a
+    // complete HTTP 200 auth response may install a token or authorize a GET.
+    // Cancel the upstream body without reading or logging provider content.
+    if (response.status !== 200) {
+      await discardResponseBody(response);
+      throw new FudoApiError(
+        "invalid_response",
+        "Fudo devolvió un estado de autenticación inesperado.",
+        response.status,
+        false,
+      );
+    }
+
     let payload: AuthPayload;
     try {
       payload = (await readBoundedJson(response, MAX_AUTH_JSON_BYTES)) as AuthPayload;
