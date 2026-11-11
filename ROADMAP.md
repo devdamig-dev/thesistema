@@ -45,11 +45,19 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — autenticación HTTP parcial no autoriza lectura (11/11/2026)
+
+- **Resultado observable:** un POST de autenticación Fudo que devuelva HTTP 201/202/206/207, incluso con un JSON de bearer sintácticamente válido, no instala el token ni autoriza ninguna consulta de productos, permisos o importación. La respuesta se cancela sin leer el cuerpo y se devuelve `invalid_response` sanitizado.
+- **Causa raíz:** `authenticate()` verificaba `response.ok` y aceptaba cualquier 2xx, mientras que la lectura de recursos ya exigía HTTP 200 (#327). HTTP 206 representa contenido parcial y no puede acreditar un token completo.
+- **IMPLEMENTADO EN RAMA:** guard HTTP 200 en `FudoClient.authenticate` y dos regresiones sintéticas (credenciales de prueba y stream abierto), sin SQL, cambios de tenant, recursos Fudo mutantes, datos comerciales ni secretos reales.
+- **PROBADO:** CI Quality del cambio pendiente; no hay validación con cuenta Fudo real. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN:** no — piloto O1 **NO-GO**.
+- **Riesgo de compatibilidad / rollback:** si Fudo usa legítimamente un estado de autenticación distinto de 200, se requerirá verificar el contrato contra cuenta API autorizada y adaptar explícitamente el código con tests, en lugar de aceptar todo 2xx. Revert de este guard sin migración.
+
 ### O1 — respuestas HTTP parciales de Fudo (11/11/2026; PR #327)
 
 - **Riesgo observado en código:** el adaptador usaba `response.ok` en GET y podía aceptar HTTP **206 Partial Content** u otro 2xx distinto del HTTP **200** documentado por Fudo. Si incluía JSON de apariencia válida, test de conexión, diagnóstico o un cursor de importación podían dar una señal verde sin una respuesta completa.
-- **IMPLEMENTADO EN RAMA:** [PR #327](https://github.com/devdamig-dev/thesistema/pull/327) endurece `FudoClient.getJson`: rechaza otros 2xx, cancela el cuerpo sin procesarlo y devuelve `invalid_response` sanitizado. Agrega regresiones sintéticas para 201/202/206/207 en tres accesos de lectura. Sin migraciones ni alteraciones de Fudo, ventas o stock.
-- **PROBADO:** pendiente Quality exacto del HEAD del PR y sin prueba con cuenta Fudo real. **DESPLEGADO:** no; rama sin fusionar. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no. O1 continúa ACTIVO / PILOTO NO-GO.
+- **IMPLEMENTADO / FUSIONADO:** [PR #327](https://github.com/devdamig-dev/thesistema/pull/327) (squash `fbec9bef`) endurece `FudoClient.getJson`: rechaza otros 2xx, cancela el cuerpo sin procesarlo y devuelve `invalid_response` sanitizado. Agrega regresiones sintéticas para 201/202/206/207 en tres accesos de lectura. Sin migraciones ni alteraciones de Fudo, ventas o stock.
+- **PROBADO EN CI:** [Quality de main #42977992105](https://github.com/devdamig-dev/thesistema/actions/runs/42977992105) completado/success sobre SHA `fbec9bef`; sin prueba con cuenta Fudo real. **DESPLEGADO:** el SHA no tiene Vercel Productivo READY verificado; el estado de commit informa `build-rate-limit`. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no. O1 continúa ACTIVO / PILOTO NO-GO.
 - **Rollback:** revert del cambio de adaptador/test/documentación; sin migración SQL.
 
 ### O1 — verificación productiva de main (11/11/2026; sin Fudo real)
