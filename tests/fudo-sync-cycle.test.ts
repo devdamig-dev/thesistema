@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import Module from "node:module";
 import { encryptFudoCredentials } from "../lib/integrations/fudo/crypto";
@@ -827,6 +828,26 @@ test("Fudo O1 blocks a stale foreground tenant/credential revision before any pr
     assert.equal(runs.length, 0);
     assert.equal(progress.length, 0);
     assert.equal(records.length, 0);
+
+    // A matching server-derived revision must still permit a normal read-only
+    // cycle; reject only stale tenant/connection context, not valid pilots.
+    const revision = createHash("sha256")
+      .update(JSON.stringify([A, GENERATION, "connected", null]))
+      .digest("hex");
+    globalThis.fetch = async (input, init) => {
+      providerRequests++;
+      if (String(input) === "https://auth.fu.do/api") {
+        assert.equal(init?.method, "POST");
+        return new Response(JSON.stringify({ token: "synthetic-token",
+          exp: Math.floor(Date.now() / 1000) + 86400 }), { status: 200 });
+      }
+      assert.equal(init?.method, "GET");
+      return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+    };
+    const accepted = await syncFudoReadOnly(revision);
+    assert.equal(accepted.ok, true);
+    assert.equal(runs.length, 1);
+    assert.ok(providerRequests >= 6, "one auth and five read-only resource probes");
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
