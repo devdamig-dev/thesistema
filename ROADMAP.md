@@ -46,6 +46,16 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Nuevo Production READY con protecciones Fudo #327–#329 (11/11/2026; revisión del commit de main)
+
+- **Resultado verificable:** la publicación productiva incorpora los guards read-only de autenticación HTTP, rechazo de respuestas parciales y paginación no verificable, integrados en #327, #328 y #329. Los intentos anteriores con cuota HTTP 402 fueron bloqueos de deploy **temporales**, no un estado permanente.
+- **IMPLEMENTADO / FUSIONADO:** [PR #331](https://github.com/devdamig-dev/thesistema/pull/331) (gate CI sin apt externo), squash `bbe498b5`; [PR #332](https://github.com/devdamig-dev/thesistema/pull/332) (evidencia documental), squash `f2117f24230e5cf5dc84d89e2e71e6a72591171a`. Sin cambios al runtime Fudo en estos dos PR; #327–#329 sí modificaron el adaptador y el mensaje de rechazo.
+- **PROBADO:** [Quality #43056845951](https://github.com/devdamig-dev/thesistema/actions/runs/43056845951) `success` sobre `bbe498b5` de `main`: jobs `verify` (incluido Chromium y Playwright), `postgres17` y `postgrest` aprobados. [Quality #43057078012](https://github.com/devdamig-dev/thesistema/actions/runs/43057078012) `success` para HEAD de #332 (`0b295660`). [Quality independiente de main #43059443325](https://github.com/devdamig-dev/thesistema/actions/runs/43059443325) todavía **en ejecución** al consultar; no anticipar resultado. Solo QA sintético, no cuenta Fudo real ni dos sesiones A/B.
+- **DESPLEGADO / VERIFICADO EN VERCEL:** [Production READY `dpl_GmqA3P6Zi5T8bPT2YMSibT5XGpbT`](https://vercel.com/damians-projects-a45d01bf/thesistema/GmqA3P6Zi5T8bPT2YMSibT5XGpbT) con `githubCommitSha=f2117f24230e5cf5dc84d89e2e71e6a72591171a`, `target=production`, `readyState=READY`, alias `gastropilot.nexodg.com` y `aliasError=null` verificados en Vercel. Este SHA desciende de #327–#329: ya no están pendientes de despliegue. READY no es smoke autenticado.
+- **SUPABASE (SELECT sin datos privados):** 0 filas en `fudo_connections`, `fudo_sync_runs`, `fudo_external_records` y `fudo_sync_progress`. Las cuatro tablas tienen RLS habilitada y no conceden SELECT directo a `anon` ni `authenticated`.
+- **VALIDADO EN PRODUCCIÓN CON FUDO REAL: NO — O1 ACTIVO / PILOTO NO-GO.** Para habilitar piloto falta una cuenta Fudo Plan Pro/API autorizada conectada por UI, diagnóstico de los cinco recursos reales, dos ciclos idempotentes, QA autenticado A/B y acta privada de aceptación. No se llamaron APIs Fudo ni se alteraron ventas, stock o pedidos. O2+ pospuesto.
+- **Riesgo / rollback:** este registro es documental. Ante regresión de runtime, evaluar revert de los PR funcionales con Quality y plan de despliegue; conservar staging/auditoría y migraciones, sin tocar datos del negocio sin aprobación.
+
 ### O1 — Quality Gate recuperado sin apt externo (11/11/2026; [PR #331](https://github.com/devdamig-dev/thesistema/pull/331) fusionado)
 
 - **Resultado observable:** Chromium se instala y `npm run test:ui` se ejecuta **sin saltarse los tests** en Ubuntu 24.04. El guard Fudo read-only y los jobs PostgreSQL 17/PostgREST siguen sin cambios.
