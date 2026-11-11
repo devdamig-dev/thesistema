@@ -45,6 +45,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Diagnóstico de paginación no verificable (11/11/2026; PR en revisión)
+
+- **Resultado observable:** ante un `links.next` malformado/cruzado o una página corta de 1–99 registros sin un marcador verificable de fin, la importación sigue bloqueando el cierre del ciclo. El owner/admin recibe un mensaje fijo de **paginación no verificable**, en lugar del mensaje engañoso «registros incompatibles».
+- **Causa raíz:** `safeFailure` agrupaba `invalid_fudo_page` con errores de registros aunque la falla era de continuidad de lectura.
+- **IMPLEMENTADO EN RAMA:** mensaje seguro específico y regresiones sintéticas de integración para enlace cruzado y página corta sin `links.next`; preserva `invalid_response`, la protección de staging/cursor y todos los GET read-only. Sin cambios SQL, credenciales, Fudo, ventas o stock.
+- **PROBADO:** pendiente de Quality del PR. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no — piloto O1 **NO-GO**.
+- **Riesgo/rollback:** sólo mejora la explicación de un rechazo existente, sin relajar el protocolo. Revert del servicio/test/doc, sin migración. Confirmar paginación real de Fudo exclusivamente con cuenta autorizada.
+
 ### O1 — autenticación HTTP parcial no autoriza lectura (11/11/2026; [PR #328](https://github.com/devdamig-dev/thesistema/pull/328))
 
 - **Resultado observable:** un POST de autenticación Fudo que devuelva HTTP 201/202/206/207, incluso con un JSON de bearer sintácticamente válido, no instala el token ni autoriza ninguna consulta de productos, permisos o importación. La respuesta se cancela sin leer el cuerpo y se devuelve `invalid_response` sanitizado.
