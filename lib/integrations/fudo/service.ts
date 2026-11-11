@@ -75,6 +75,12 @@ function safeFailure(error: unknown): FudoActionResult {
   if (error instanceof Error && error.message === "fudo_ciphertext_invalid") {
     return fail("invalid_stored_credentials", "No se pudo leer la conexión cifrada. Volvé a vincular Fudo.");
   }
+  if (error instanceof Error && error.message === "invalid_fudo_page") {
+    // A malformed continuation or a short page without a verifiable end marker
+    // cannot certify a complete Fudo scan. Do not mislabel pagination as a
+    // malformed business record or expose provider links/records in feedback.
+    return fail("invalid_response", "Fudo devolvió paginación no verificable. Se frenó la lectura de ese recurso para evitar saltos u omisiones; revisá la compatibilidad de la API antes de continuar.");
+  }
   if (error instanceof Error && /^invalid_fudo_|^fudo_record_too_large$/.test(error.message)) {
     return fail("invalid_response", "La API de Fudo devolvió registros incompatibles con la importación segura.");
   }
