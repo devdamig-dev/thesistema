@@ -18,6 +18,14 @@ Convertir GastroPilot en una plataforma SaaS gastronómica integral, IA-first y 
 ---
 
 ## O1 — Integración Fudo para piloto
+
+### O1 — estabilidad de Quality Gate en runner LTS (11/11/2026; PR en revisión)
+
+- **Criterio observable:** el job `verify` instala Chromium/Playwright y ejecuta `npm run test:ui` con dependencias de Ubuntu 24.04 LTS, en vez de depender del alias móvil `ubuntu-latest`. Los jobs `postgres17` y `postgrest` ya usan 24.04.
+- **Causa observada:** [Quality de main #43034427186](https://github.com/devdamig-dev/thesistema/actions/runs/43034427186) en SHA `12b8d547`: `npm test`, TypeScript, lint, SQL y build aprobaron; `verify` falló *antes* de Playwright por errores DNS de `archive.ubuntu.com` y `security.ubuntu.com` en imagen `ubuntu-26.04` (seleccionada por `ubuntu-latest`). Es una falla de infraestructura/instalación, no una falla de tests funcionales. `postgres17` y `postgrest` aprobaron.
+- **Implementación propuesta:** fijar `verify` a `ubuntu-24.04` sin cambiar suites, permisos, datos, SQL, credenciales ni código Fudo. Probar el PR completo antes de fusionar; el reintento de `main` (attempt 2) es evidencia independiente y no acredita este cambio.
+- **Despliegue / aceptación:** sin impacto en Vercel runtime; no habilita por sí solo el piloto. Sin Fudo real y sin QA autenticado A/B: **NO-GO**. Rollback mediante revert del único cambio del workflow.
+
 **Estado: ACTIVO — prioridad máxima**
 
 ### Resultado
