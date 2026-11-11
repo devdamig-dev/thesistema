@@ -76,3 +76,23 @@ test("Fudo preflight rejects malformed, duplicated or unverified checks without 
   assert.deepEqual(thrown.checks, []);
   assert.ok(!JSON.stringify(thrown).includes(leaked));
 });
+
+
+test("Fudo action feedback preserves the server revision for the five-resource UI gate", async () => {
+  const revision = "a".repeat(64);
+  const resources = ["products", "ingredients", "providers", "orders", "sales"] as const;
+  const raw: FudoResourcePreflight = {
+    ok: true, message: "cinco recursos verificados", connectionRevision: revision,
+    checks: resources.map((resource) => ({ resource, code: "available" })),
+  };
+  assert.deepEqual(await runFudoPreflightSafely(async () => raw), raw,
+    "the sanitizer must not silently discard the server's credential generation fence");
+  for (const bad of ["", "old-revision", "A".repeat(64), "a".repeat(65), 123] as unknown[]) {
+    const corrupted = await runFudoPreflightSafely(async () => ({
+      ...raw, connectionRevision: bad,
+    } as FudoResourcePreflight));
+    assert.equal(corrupted.ok, false, "a forged or malformed revision cannot authorize green UI checks");
+    assert.deepEqual(corrupted.checks, []);
+    assert.equal(corrupted.connectionRevision, undefined);
+  }
+});
