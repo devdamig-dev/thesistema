@@ -509,7 +509,10 @@ test("Fudo O1 rejects malformed pagination before changing staging or cursor", a
   try {
     const outcome = await syncFudoReadOnly();
     assert.equal(outcome.ok, false);
-    if (!outcome.ok) assert.equal(outcome.code, "invalid_response");
+    if (!outcome.ok) {
+      assert.equal(outcome.code, "invalid_response");
+      assert.match(outcome.message, /paginación no verificable/);
+    }
     assert.equal(runs.at(-1)?.status, "failed");
     assert.equal(JSON.stringify(records.filter((row) => row.resource_type === "products")),
       productRecordsBefore, "an invalid page must not insert or remark provider records");
@@ -554,6 +557,7 @@ test("Fudo O1 rejects a nonempty short page without next metadata before staging
     assert.equal(outcome.ok, false);
     if (!outcome.ok) {
       assert.equal(outcome.code, "invalid_response");
+      assert.match(outcome.message, /paginación no verificable/);
       assert.doesNotMatch(outcome.message, /synthetic-token|uncommitted-short-product/);
     }
     assert.equal(runs.at(-1)?.status, "failed", "ambiguous provider pagination is an auditable failed run");
