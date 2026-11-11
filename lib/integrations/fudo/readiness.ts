@@ -50,6 +50,20 @@ export function isWellFormedFudoPreflight(probe: FudoResourcePreflight | null): 
 }
 
 /**
+ * The server may probe generation B after this browser rendered generation A.
+ * Never attach those five permissions to the stale revision captured by UI.
+ * The response must identify the exact credential generation that was read.
+ */
+export function bindCurrentFudoPreflight(
+  view: Pick<FudoConnectionView, "status" | "connectionRevision">,
+  probe: FudoResourcePreflight,
+): { revision: string; result: FudoResourcePreflight } | null {
+  const revision = fudoConnectionRevision(view);
+  return revision && probe.connectionRevision === revision && isWellFormedFudoPreflight(probe)
+    ? { revision, result: probe } : null;
+}
+
+/**
  * A completed label alone is not proof that a read cycle was durably closed.
  * The SQL finish RPC writes run.finished_at and connection.last_synced_at in
  * one transaction. Fail closed for legacy/inconsistent metadata instead of

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import Module from "node:module";
 import { encryptFudoCredentials } from "../lib/integrations/fudo/crypto";
@@ -107,6 +108,7 @@ test("Fudo preflight rejects checks if owner is revoked during its last privileg
       assert.deepEqual(verbs, Array(5).fill("GET"), `Fudo must remain read-only: ${scenario}`);
       assert.equal(result.ok, false, scenario);
       assert.deepEqual(result.checks, [], `must discard all five checks: ${scenario}`);
+      assert.equal(result.connectionRevision, undefined, "revoked owner must not receive a success revision");
       assert.doesNotMatch(result.message, /synthetic-bearer|synthetic-api-key|synthetic-api-secret/);
     }
 
@@ -118,6 +120,11 @@ test("Fudo preflight rejects checks if owner is revoked during its last privileg
     assert.equal(success.ok, true, "unchanged authorized owner still gets the five status checks");
     assert.equal(success.checks.length, 5);
     assert.ok(success.checks.every((check) => check.code === "available"));
+    const expectedRevision = createHash("sha256")
+      .update(JSON.stringify([A, GENERATION, "connected", "2026-11-07T00:00:00Z"]))
+      .digest("hex");
+    assert.equal(success.connectionRevision, expectedRevision,
+      "five validated GETs must identify the actual server-side credential revision");
     assert.deepEqual(verbs, Array(5).fill("GET"));
   } finally {
     tenant = A; role = "owner"; isMember = true; profileActive = true;

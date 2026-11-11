@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/ajustes/setting-row";
 import type { FudoConnectionView, FudoResourcePreflight } from "@/lib/integrations/fudo/service";
 import type { FudoSyncResource } from "@/lib/integrations/fudo/snapshot";
-import { evaluateFudoPilotReadiness, formatVerifiedFudoCount, fudoConnectionRevision, fudoCursorDisplay, isWellFormedFudoPreflight, selectCurrentFudoPreflight } from "@/lib/integrations/fudo/readiness";
+import { bindCurrentFudoPreflight, evaluateFudoPilotReadiness, formatVerifiedFudoCount, fudoCursorDisplay, isWellFormedFudoPreflight, selectCurrentFudoPreflight } from "@/lib/integrations/fudo/readiness";
 import { buildFudoPilotEvidence } from "@/lib/integrations/fudo/pilot-evidence";
 import { runFudoActionSafely, runFudoPreflightSafely, runFudoSyncBatches } from "@/lib/integrations/fudo/action-feedback";
 import {
@@ -38,7 +38,6 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
   const [evidenceNotice, setEvidenceNotice] = useState<string | null>(null);
   // The permission probe is advisory and applies only to the tested connection.
   // A server refresh after retest/rotation must not re-use old green checks.
-  const connectionRevision = fudoConnectionRevision(status);
   const [preflightState, setPreflightState] = useState<{
     revision: string; result: FudoResourcePreflight;
   } | null>(null);
@@ -137,14 +136,19 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
             </Button>}
             {connected && <Button disabled={working} onClick={() => execute(async () => {
               const result = await runFudoPreflightSafely(inspectFudoPermissionsAction);
-              if (connectionRevision && result.checks.length > 0) {
-                setPreflightState({ revision: connectionRevision, result });
-              }
-              // Do not leave a green success notice if an inconsistent set of
-              // five permissions comes back from the server. Preserve normal
-              // upstream errors with no checks, and valid per-resource 403s.
-              if (result.checks.length > 0 && !isWellFormedFudoPreflight(result)) {
-                return { ok: false, message: "El diagnóstico fue inconsistente. Volvé a revisar los cinco recursos." };
+              // A second administrator may rotate credentials BEFORE this
+              // request starts, while this browser still renders the old
+              // revision. Never attribute the server's new five GETs to that
+              // older connection, even for a moment before router.refresh().
+              if (result.checks.length > 0) {
+                if (!isWellFormedFudoPreflight(result)) {
+                  return { ok: false, message: "El diagnóstico fue inconsistente. Volvé a revisar los cinco recursos." };
+                }
+                const bound = bindCurrentFudoPreflight(status, result);
+                if (!bound) {
+                  return { ok: false, message: "La conexión Fudo cambió desde que abriste esta pantalla. Actualizá y revisá los permisos nuevamente." };
+                }
+                setPreflightState(bound);
               }
               return result;
             })}>

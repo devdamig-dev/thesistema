@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { evaluateFudoPilotReadiness, fudoConnectionRevision, selectCurrentFudoPreflight } from "../lib/integrations/fudo/readiness";
+import { bindCurrentFudoPreflight, evaluateFudoPilotReadiness, fudoConnectionRevision, selectCurrentFudoPreflight } from "../lib/integrations/fudo/readiness";
 import { FUDO_SYNC_RESOURCES } from "../lib/integrations/fudo/snapshot";
 import type { FudoConnectionView, FudoResourcePreflight } from "../lib/integrations/fudo/service";
 
@@ -157,3 +157,31 @@ test("pilot rejects a completed run without a verified, chronological SQL closur
   }
 });
 
+
+
+test("O1 never binds five successful GETs from a newer server connection to stale UI props", () => {
+  const rendered = view();
+  rendered.status = "connected";
+  rendered.connectionRevision = "a".repeat(64);
+  const serverProbed = { ...allAvailable, connectionRevision: "b".repeat(64) };
+
+  assert.equal(bindCurrentFudoPreflight(rendered, serverProbed), null,
+    "after another admin rotates credentials, the old browser render cannot show green checks");
+  assert.equal(bindCurrentFudoPreflight(rendered, allAvailable), null,
+    "a legacy action without a server-derived revision cannot authorize permission badges");
+  assert.equal(selectCurrentFudoPreflight(rendered, {
+    revision: serverProbed.connectionRevision, result: serverProbed,
+  }), null, "a new server revision cannot be attributed to the old business view");
+
+  const refreshed = { ...rendered, connectionRevision: serverProbed.connectionRevision };
+  assert.deepEqual(bindCurrentFudoPreflight(refreshed, serverProbed), {
+    revision: serverProbed.connectionRevision, result: serverProbed,
+  }, "the same verified server response may be used for its matching current revision");
+
+  const malformed = { ...serverProbed, checks: serverProbed.checks.slice(1) };
+  assert.equal(bindCurrentFudoPreflight(refreshed, malformed), null,
+    "a matching revision still cannot authorize incomplete diagnostics");
+  const failed = { ...serverProbed, ok: false };
+  assert.equal(bindCurrentFudoPreflight(refreshed, failed), null,
+    "contradictory success and five available resources remain blocked");
+});

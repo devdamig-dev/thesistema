@@ -46,6 +46,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Diagnóstico de permisos atado a la revisión real del servidor (11/11/2026; [PR #334](https://github.com/devdamig-dev/thesistema/pull/334))
+
+- **Defecto observado en revisión de código:** con el panel A abierto, otro administrador puede rotar credenciales/retestear y crear una revisión B antes del diagnóstico. El servidor verifica B, pero la UI anterior guardaba cinco checks verdes con la revisión A tomada de props antiguas hasta que se completaba `router.refresh()`.
+- **Resultado esperado:** el servicio entrega una huella no reversible, derivada de negocio + generación + estado + última prueba realmente consultados. El panel compara esa huella con la revisión actualmente renderizada antes de conservar checks. Si no coincide, advierte que la conexión cambió y exige repetir la revisión; sin atribuir permisos de B a A.
+- **IMPLEMENTADO EN RAMA:** [PR #334](https://github.com/devdamig-dev/thesistema/pull/334), cambios limitados a respuesta de preflight, función de consistencia UI y regresiones sintéticas. Sin SQL, cambios de cursor, escrituras hacia Fudo ni datos reales.
+- **PROBADO:** Quality del HEAD de #334 pendiente al registrar esta sección; no asumir CI aprobado. Pruebas nuevas cubren huella exacta del servidor, revocación sin huella y revisión de UI obsoleta.
+- **DESPLEGADO:** no; el último Vercel Production READY acreditado sigue en `f2117f24` e incluye #327–#329, no este PR.
+- **VALIDADO EN PRODUCCIÓN:** no. O1 sigue **ACTIVO — PILOTO NO-GO** sin cuenta Fudo autorizada, conciliación 5/5, dos ciclos idempotentes, QA autenticado A/B y acta privada.
+
 ### O1 — Nuevo Production READY con protecciones Fudo #327–#329 (11/11/2026; revisión del commit de main)
 
 - **Resultado verificable:** la publicación productiva incorpora los guards read-only de autenticación HTTP, rechazo de respuestas parciales y paginación no verificable, integrados en #327, #328 y #329. Los intentos anteriores con cuota HTTP 402 fueron bloqueos de deploy **temporales**, no un estado permanente.

@@ -117,5 +117,15 @@ export async function runFudoPreflightSafely(
   if (result.ok && (checks.length !== FUDO_SYNC_RESOURCES.length
     || checks.some((check) => check.code !== "available"))) return invalid;
 
-  return { ok: result.ok, message: result.message, checks };
+  // Keep the server-side credential revision all the way through the action
+  // feedback boundary. Dropping it would make every real five-resource probe
+  // appear stale in the UI, even when its source was unchanged.
+  const revision = (result as Partial<FudoResourcePreflight>).connectionRevision;
+  if (revision !== undefined && (typeof revision !== "string"
+    || !/^[a-f0-9]{64}$/.test(revision))) return invalid;
+
+  return {
+    ok: result.ok, message: result.message, checks,
+    ...(revision === undefined ? {} : { connectionRevision: revision }),
+  };
 }
