@@ -971,3 +971,55 @@ test("Fudo auth rejects ambiguous duplicate token keys before sending any GET", 
   });
   assert.equal(reads, 0, "ambiguous auth JSON must never authorize provider GET");
 });
+
+
+test("Fudo O1 never accepts partial or unexpected HTTP 2xx GETs as a successful read", async () => {
+  const now = 1_800_000_000_000;
+  // Fudo's JSON:API GET contract is 200; a 206 can contain valid-looking
+  // JSON while still omitting data. A green probe or cursor would be false.
+  for (const status of [201, 202, 206, 207]) {
+    let reads = 0;
+    let cancelled = 0;
+    let authentications = 0;
+    const fakeFetch: typeof fetch = async (input, init) => {
+      if (String(input) === "https://auth.fu.do/api") {
+        authentications++;
+        return jsonResponse({
+          token: "synthetic-bearer",
+          exp: Math.floor((now + 86_400_000) / 1000),
+        });
+      }
+      assert.equal(init?.method, "GET");
+      reads++;
+      // The provider may stream an arbitrary response. Rejection must cancel
+      // it rather than read/log/stage even a valid-looking JSON page.
+      return new Response(new ReadableStream<Uint8Array>({
+        cancel() { cancelled++; },
+      }), { status, headers: { "content-type": "application/json" } });
+    };
+    const client = new FudoClient(
+      { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+      { fetchImpl: fakeFetch, now: () => now },
+    );
+    await assert.rejects(() => client.testConnection(), (error: unknown) => {
+      assert.ok(error instanceof FudoApiError);
+      assert.equal(error.code, "invalid_response");
+      assert.equal(error.status, status);
+      assert.equal(error.retryable, false);
+      assert.doesNotMatch(error.message, /synthetic-|bearer/);
+      return true;
+    });
+    assert.deepEqual(await client.probeReadAccess(["products"]), [
+      { resource: "products", code: "invalid_response" },
+    ]);
+    await assert.rejects(() => client.products({ "page[size]": 100 }),
+      (error: unknown) => {
+        assert.ok(error instanceof FudoApiError);
+        assert.equal(error.code, "invalid_response");
+        return true;
+      });
+    assert.equal(authentications, 1);
+    assert.equal(reads, 3);
+    assert.equal(cancelled, 3, "every unexpected 2xx body must be cancelled");
+  }
+});

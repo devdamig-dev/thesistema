@@ -45,6 +45,13 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — respuestas HTTP parciales de Fudo (11/11/2026; PR #327)
+
+- **Riesgo observado en código:** el adaptador usaba `response.ok` en GET y podía aceptar HTTP **206 Partial Content** u otro 2xx distinto del HTTP **200** documentado por Fudo. Si incluía JSON de apariencia válida, test de conexión, diagnóstico o un cursor de importación podían dar una señal verde sin una respuesta completa.
+- **IMPLEMENTADO EN RAMA:** [PR #327](https://github.com/devdamig-dev/thesistema/pull/327) endurece `FudoClient.getJson`: rechaza otros 2xx, cancela el cuerpo sin procesarlo y devuelve `invalid_response` sanitizado. Agrega regresiones sintéticas para 201/202/206/207 en tres accesos de lectura. Sin migraciones ni alteraciones de Fudo, ventas o stock.
+- **PROBADO:** pendiente Quality exacto del HEAD del PR y sin prueba con cuenta Fudo real. **DESPLEGADO:** no; rama sin fusionar. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no. O1 continúa ACTIVO / PILOTO NO-GO.
+- **Rollback:** revert del cambio de adaptador/test/documentación; sin migración SQL.
+
 ### O1 — verificación productiva de main (11/11/2026; sin Fudo real)
 
 - **Resultado observable:** la documentación/QA vigente de O1 tiene Quality completo en el **mismo SHA** que el despliegue productivo; el estado anterior que identificaba `50a50b53` como último READY ya no corresponde a la última versión. Esto no habilita el piloto.
