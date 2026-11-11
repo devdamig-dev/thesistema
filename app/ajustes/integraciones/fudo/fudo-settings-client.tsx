@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/ajustes/setting-row";
 import type { FudoConnectionView, FudoResourcePreflight } from "@/lib/integrations/fudo/service";
 import type { FudoSyncResource } from "@/lib/integrations/fudo/snapshot";
-import { evaluateFudoPilotReadiness, formatVerifiedFudoCount, fudoConnectionRevision, fudoCursorDisplay, isWellFormedFudoPreflight, selectCurrentFudoPreflight } from "@/lib/integrations/fudo/readiness";
+import { bindCurrentFudoPreflight, evaluateFudoPilotReadiness, formatVerifiedFudoCount, fudoConnectionRevision, fudoCursorDisplay, isWellFormedFudoPreflight, selectCurrentFudoPreflight } from "@/lib/integrations/fudo/readiness";
 import { buildFudoPilotEvidence } from "@/lib/integrations/fudo/pilot-evidence";
 import { runFudoActionSafely, runFudoPreflightSafely, runFudoSyncBatches } from "@/lib/integrations/fudo/action-feedback";
 import {
@@ -145,10 +145,11 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
                 if (!isWellFormedFudoPreflight(result)) {
                   return { ok: false, message: "El diagnóstico fue inconsistente. Volvé a revisar los cinco recursos." };
                 }
-                if (!connectionRevision || result.connectionRevision !== connectionRevision) {
+                const bound = bindCurrentFudoPreflight(status, result);
+                if (!bound) {
                   return { ok: false, message: "La conexión Fudo cambió desde que abriste esta pantalla. Actualizá y revisá los permisos nuevamente." };
                 }
-                setPreflightState({ revision: result.connectionRevision, result });
+                setPreflightState(bound);
               }
               return result;
             })}>
