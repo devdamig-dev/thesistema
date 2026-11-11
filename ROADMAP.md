@@ -45,7 +45,7 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — autenticación HTTP parcial no autoriza lectura (11/11/2026)
+### O1 — autenticación HTTP parcial no autoriza lectura (11/11/2026; [PR #328](https://github.com/devdamig-dev/thesistema/pull/328))
 
 - **Resultado observable:** un POST de autenticación Fudo que devuelva HTTP 201/202/206/207, incluso con un JSON de bearer sintácticamente válido, no instala el token ni autoriza ninguna consulta de productos, permisos o importación. La respuesta se cancela sin leer el cuerpo y se devuelve `invalid_response` sanitizado.
 - **Causa raíz:** `authenticate()` verificaba `response.ok` y aceptaba cualquier 2xx, mientras que la lectura de recursos ya exigía HTTP 200 (#327). HTTP 206 representa contenido parcial y no puede acreditar un token completo.
