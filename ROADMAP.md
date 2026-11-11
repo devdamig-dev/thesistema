@@ -45,13 +45,16 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — Diagnóstico de paginación no verificable (11/11/2026; PR en revisión)
+### O1 — Diagnóstico de paginación no verificable (11/11/2026; [PR #329](https://github.com/devdamig-dev/thesistema/pull/329), fusionado)
 
-- **Resultado observable:** ante un `links.next` malformado/cruzado o una página corta de 1–99 registros sin un marcador verificable de fin, la importación sigue bloqueando el cierre del ciclo. El owner/admin recibe un mensaje fijo de **paginación no verificable**, en lugar del mensaje engañoso «registros incompatibles».
-- **Causa raíz:** `safeFailure` agrupaba `invalid_fudo_page` con errores de registros aunque la falla era de continuidad de lectura.
-- **IMPLEMENTADO EN RAMA:** mensaje seguro específico y regresiones sintéticas de integración para enlace cruzado y página corta sin `links.next`; preserva `invalid_response`, la protección de staging/cursor y todos los GET read-only. Sin cambios SQL, credenciales, Fudo, ventas o stock.
-- **PROBADO:** pendiente de Quality del PR. **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** no — piloto O1 **NO-GO**.
-- **Riesgo/rollback:** sólo mejora la explicación de un rechazo existente, sin relajar el protocolo. Revert del servicio/test/doc, sin migración. Confirmar paginación real de Fudo exclusivamente con cuenta autorizada.
+- **Resultado observable:** ante un `links.next` malformado/cruzado o una página corta de 1–99 registros sin marcador verificable de fin, la importación sigue bloqueando el cierre del ciclo. El owner/admin recibe el mensaje fijo **paginación no verificable**, sin URLs ni contenido del proveedor, en lugar del mensaje engañoso «registros incompatibles».
+- **Causa raíz:** `safeFailure` agrupaba `invalid_fudo_page` con errores de registros aunque la falla fuera de continuidad de lectura.
+- **IMPLEMENTADO / FUSIONADO:** [PR #329](https://github.com/devdamig-dev/thesistema/pull/329), squash `cbc7948d8e8953a7b2c16144017675d459b89885` en `main`. Mensaje seguro y dos regresiones sintéticas para enlace cruzado y página corta sin continuación. Preserva validación fail-closed, staging y cursor; sin cambios SQL, secretos, llamadas mutantes a Fudo ni registros comerciales.
+- **PROBADO — QUALITY DE MAIN EXACTO:** [Quality #43016073575](https://github.com/devdamig-dev/thesistema/actions/runs/43016073575), `completed/success` para `cbc7948d`; jobs `verify`, `postgres17` y `postgrest` aprobados. Sólo pruebas automatizadas/sintéticas: no acreditan Fudo real ni QA autenticado A/B.
+- **DESPLEGADO:** **NO** para #327/#328/#329. Vercel no registra deployment productivo del SHA `cbc7948d`, y el status del commit reporta `build-rate-limit`. Último [Production READY verificado](https://vercel.com/damians-projects-a45d01bf/thesistema/enR76kWehjag1CrKze58jMUP7Xq3): SHA `dc03d3f`, anterior a las correcciones; no equiparar GitHub CI con producción.
+- **SUPABASE (SELECT nuevo, sólo lectura):** proyecto `thesistema`, 0 filas en `fudo_connections`, `fudo_sync_runs`, `fudo_external_records` y `fudo_sync_progress`. No se inspeccionaron secretos ni datos comerciales.
+- **VALIDADO EN PRODUCCIÓN CON FUDO REAL:** **NO — O1 ACTIVO / PILOTO NO-GO**. Sigue bloqueada la aceptación por falta de cuenta Fudo Plan Pro/API autorizada conectada en la UI, conciliación real de cinco recursos, dos ciclos idempotentes, QA autenticado A/B y acta privada aceptada. O2+ pospuesto.
+- **Riesgo/rollback:** el cambio funcional sólo mejora el mensaje de un rechazo ya existente. Revert de #329 sin migraciones. La presente actualización documental no altera runtime; revertir esta sección si cambia la evidencia de CI o despliegue.
 
 ### O1 — autenticación HTTP parcial no autoriza lectura (11/11/2026; [PR #328](https://github.com/devdamig-dev/thesistema/pull/328))
 
