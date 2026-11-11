@@ -45,6 +45,16 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — verificación productiva de main (11/11/2026; sin Fudo real)
+
+- **Resultado observable:** la documentación/QA vigente de O1 tiene Quality completo en el **mismo SHA** que el despliegue productivo; el estado anterior que identificaba `50a50b53` como último READY ya no corresponde a la última versión. Esto no habilita el piloto.
+- **IMPLEMENTADO / FUSIONADO:** [PR #325](https://github.com/devdamig-dev/thesistema/pull/325) en `main`, SHA `dc03d3f30e7ea8b18a6114843723e15727b58254`. Sólo modifica `ROADMAP.md` y `docs/QA_LIVE_AUTH_SETUP.md`; los PR #322/#323 ya incluyen el gate QA multinegocio en el código de `main`. Sin cambios nuevos al runtime, SQL, credenciales o Fudo en #325.
+- **PROBADO EN CI (SHA exacto de main):** [Quality #42956643373](https://github.com/devdamig-dev/thesistema/actions/runs/42956643373) `completed/success`, jobs `verify`, `postgres17` y `postgrest` aprobados. Son suites automatizadas/sintéticas: **no se ejecutó QA autenticado A/B ni un recorrido con Fudo real** en esta inspección.
+- **DESPLEGADO / VERIFICADO EN VERCEL:** [Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/enR76kWehjag1CrKze58jMUP7Xq3), deployment `dpl_enR76kWehjag1CrKze58jMUP7Xq3`, target `production`, SHA `dc03d3f30e7ea8b18a6114843723e15727b58254`; alias `gastropilot.nexodg.com` presente y `aliasError=null`. READY y alias no prueban funcionalidad end-to-end.
+- **SUPABASE (nueva consulta SELECT read-only):** proyecto `thesistema`, tablas `fudo_connections`, `fudo_sync_runs`, `fudo_external_records`, `fudo_sync_progress`: **0 filas en cada una**; RLS habilitada en las cuatro, SELECT directo revocado para `anon` y `authenticated`. No se inspeccionaron secretos ni datos comerciales.
+- **VALIDADO EN PRODUCCIÓN CON FUDO REAL: NO — PILOTO NO-GO.** Falta cuenta Fudo Plan Pro/API autorizada conectada desde la UI, conciliación de cinco recursos, dos ciclos idempotentes, QA autenticado A/B y acta de aceptación. O1 permanece ACTIVO/prioridad absoluta; O2+ PENDIENTE. No se ejecutaron llamadas ni escrituras a Fudo, ni se alteraron datos del restaurante.
+- **Riesgo / rollback:** actualización sólo documental de evidencia verificable, sin migraciones ni cambios funcionales; revert del commit si la trazabilidad del deployment resulta incorrecta.
+
 ### O1 — QA A/B multinegocio y rol admin en cualquier sucursal (10/11/2026; integrado)
 
 - **Causa raíz y corrección #322:** el gate manual read-only revisaba miembros/IDs anónimos solamente para la primera sucursal, aunque los negocios visibles podían incluir varias. El [PR #322](https://github.com/devdamig-dev/thesistema/pull/322) amplió la inspección a **todos** los negocios A/B visibles (máximo 99 por cuenta), mantuvo los cuatro controles privados Fudo y agregó regresiones de fugas en una sucursal secundaria. Fusionado a `main` SHA `d4e5d9bd38ab9c265dcffeca4c1fedbf71d41860`.
