@@ -12,6 +12,8 @@ export type FudoResourcePreflight = {
   ok: boolean;
   message: string;
   checks: FudoReadResourceStatus[];
+  /** Server-derived revision of the actual credential generation probed, never a UI guess. */
+  connectionRevision?: string;
 };
 export type FudoSyncRunView = {
   startedAt: string;
@@ -42,6 +44,16 @@ export type FudoConnectionView = {
 };
 
 type Actor = { businessId: string; userId: string };
+
+/** Bind a diagnostic to the exact tenant, credential generation and last retest. */
+function revisionForFudoConnection(
+  actor: Actor, generation: string, status: string, lastTestedAt: string | null,
+): string {
+  return createHash("sha256")
+    .update(JSON.stringify([actor.businessId, generation, status, lastTestedAt]))
+    .digest("hex");
+}
+
 const fail = (code: string, message: string): FudoActionResult => ({ ok: false, code, message });
 const UNKNOWN = "No pudimos completar la operación. Verificá la configuración y reintentá.";
 
@@ -287,9 +299,9 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
     configured: true,
     // Never reuse green checks after switching businesses with an identical
     // status and timestamp. Do not expose raw tenant or generation identifiers.
-    connectionRevision: createHash("sha256")
-      .update(JSON.stringify([actor.businessId, generation, revision.status, revision.lastTestedAt]))
-      .digest("hex"),
+    connectionRevision: revisionForFudoConnection(
+      actor, generation, revision.status, revision.lastTestedAt,
+    ),
     status: revision.status === "connected" ? "connected" : "error",
     lastTestedAt: revision.lastTestedAt ?? null,
     lastSyncedAt: revision.lastSyncedAt ?? null,
@@ -415,8 +427,8 @@ export async function inspectFudoReadPermissions(): Promise<FudoResourcePrefligh
     }
     // Copy primitive metadata before external calls; PostgREST results can be
     // replaced by another owner/admin's retest while these five GETs run.
-    const statusAtStart: unknown = stored.data.status;
-    const testedAtStart: unknown = stored.data.last_tested_at;
+    const statusAtStart: string = stored.data.status;
+    const testedAtStart: string | null = stored.data.last_tested_at ?? null;
     const credentials = decryptFudoCredentials(actor.businessId, stored.data.credentials_ciphertext);
     const checks = await new FudoClient(credentials).probeReadAccess(FUDO_SYNC_RESOURCES);
     // Read-only permission results must not survive role revocation or a
@@ -456,6 +468,10 @@ export async function inspectFudoReadPermissions(): Promise<FudoResourcePrefligh
         ? "Los cinco recursos respondieron con datos compatibles. Falta conciliar la importación real."
         : `Acceso de lectura confirmado en ${available} de ${FUDO_SYNC_RESOURCES.length} recursos. Revisá permisos y disponibilidad antes de sincronizar.`,
       checks,
+      // The UI can be stale while another admin rotates/retests before this
+      // request begins. Return the revision actually verified server-side, not
+      // one captured from the browser's older render.
+      connectionRevision: revisionForFudoConnection(actor, generation, statusAtStart, testedAtStart),
     };
   } catch (error) {
     // Global auth or ciphertext failures produce no fake per-resource success.
