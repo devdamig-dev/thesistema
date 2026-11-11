@@ -138,13 +138,13 @@ export function AiSettingsClient({
 
       <SettingsCard
         title="Motor de IA administrado"
-        description="GastroPilot elige el modelo según la tarea, mide el consumo por negocio y aplica el límite mensual antes de llamar al proveedor."
+        description="GastroPilot elige el modelo según la tarea, mide el consumo por negocio y verifica la cuota y los packs disponibles antes de llamar al proveedor."
       >
         {mode === "database" && usage ? (
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <Summary label="Plan IA" value={planLabel(usage.planCode)} detail={usage.hardLimit ? "Límite mensual activo" : "Sin corte automático"} />
-              <Summary label="Créditos usados" value={`${usage.usedCredits.toLocaleString("es-AR")} / ${usage.monthlyCredits.toLocaleString("es-AR")}`} detail={`${usage.remainingCredits.toLocaleString("es-AR")} disponibles`} />
+              <Summary label="Plan IA" value={planLabel(usage.planCode)} detail={usage.hardLimit && !usage.overageEnabled ? "Límite de saldo activo" : "Sin corte automático"} />
+              <Summary label="Créditos disponibles" value={usage.remainingCredits.toLocaleString("es-AR")} detail="Cuota restante + extras vigentes, sin reservas" />
               <Summary label="Operaciones IA" value={usage.requestCount.toLocaleString("es-AR")} detail="Mes calendario actual" />
               <Summary label="Última actividad" value={usage.latestCompletedAt ? new Date(usage.latestCompletedAt).toLocaleDateString("es-AR") : "—"} detail="Consumo administrado por GastroPilot" />
             </div>
@@ -152,7 +152,7 @@ export function AiSettingsClient({
               <EngineItem icon={Gauge} title="Motor automático" detail="GastroPilot selecciona el modelo más eficiente según cada tarea." />
               <EngineItem icon={Coins} title="Saldo compartido" detail="Los créditos pertenecen al negocio y se comparten entre sus usuarios autorizados." />
             </div>
-            <UsageBar used={usage.usedCredits} total={usage.monthlyCredits} />
+            <UsageSummary used={usage.usedCredits} included={usage.monthlyCredits} />
           </div>
         ) : (
           <div className="flex items-start gap-3 rounded-xl border border-line bg-bg-subtle/40 p-4">
@@ -213,7 +213,6 @@ function Summary({ label, value, detail }: { label: string; value: string; detai
   );
 }
 
-
 function EngineItem({ icon: Icon, title, detail }: { icon: LucideIcon; title: string; detail: string }) {
   return (
     <div className="flex items-start gap-3 rounded-xl border border-line bg-bg-subtle/40 p-4">
@@ -230,20 +229,16 @@ function planLabel(code: string) {
   return AI_COMMERCIAL_PLANS.find((plan) => plan.code === code)?.name ?? code;
 }
 
-function UsageBar({ used, total }: { used: number; total: number }) {
-  const percentage = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
+function UsageSummary({ used, included }: { used: number; included: number }) {
+  // Usage includes packs. Do not subtract it from the monthly quota or present
+  // that ratio as an available balance: packs have independent expirations.
   return (
-    <div className="rounded-xl border border-line bg-bg-subtle/40 p-4">
-      <div className="flex items-center justify-between gap-3 text-xs">
-        <span className="font-semibold text-ink">Consumo mensual</span>
-        <span className="tabular-nums text-ink-muted">{percentage}%</span>
+    <div className="rounded-xl border border-line bg-bg-subtle/40 p-4 text-xs">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div><span className="font-semibold text-ink">Uso del mes, incluidas reservas</span><p className="mt-1 tabular-nums text-ink-muted">{used.toLocaleString("es-AR")} créditos</p></div>
+        <div><span className="font-semibold text-ink">Cuota mensual del plan</span><p className="mt-1 tabular-nums text-ink-muted">{included.toLocaleString("es-AR")} créditos incluidos</p></div>
       </div>
-      <div className="mt-3 h-2 overflow-hidden rounded-full bg-bg-elevated">
-        <div className="h-full rounded-full bg-ai-500 transition-all" style={{ width: `${percentage}%` }} />
-      </div>
-      <div className="mt-2 text-[11px] text-ink-muted">
-        {used.toLocaleString("es-AR")} usados · {Math.max(0, total - used).toLocaleString("es-AR")} disponibles
-      </div>
+      <p className="mt-3 text-[11px] text-ink-muted">El uso puede incluir packs adicionales. El saldo disponible se calcula por separado y descuenta las reservas pendientes.</p>
     </div>
   );
 }
