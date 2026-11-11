@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/ajustes/setting-row";
 import type { FudoConnectionView, FudoResourcePreflight } from "@/lib/integrations/fudo/service";
 import type { FudoSyncResource } from "@/lib/integrations/fudo/snapshot";
-import { bindCurrentFudoPreflight, evaluateFudoPilotReadiness, formatVerifiedFudoCount, fudoConnectionRevision, fudoCursorDisplay, isWellFormedFudoPreflight, selectCurrentFudoPreflight } from "@/lib/integrations/fudo/readiness";
+import { bindCurrentFudoPreflight, evaluateFudoPilotReadiness, formatVerifiedFudoCount, fudoCursorDisplay, isWellFormedFudoPreflight, selectCurrentFudoPreflight } from "@/lib/integrations/fudo/readiness";
 import { buildFudoPilotEvidence } from "@/lib/integrations/fudo/pilot-evidence";
 import { runFudoActionSafely, runFudoPreflightSafely, runFudoSyncBatches } from "@/lib/integrations/fudo/action-feedback";
 import {
@@ -38,7 +38,6 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
   const [evidenceNotice, setEvidenceNotice] = useState<string | null>(null);
   // The permission probe is advisory and applies only to the tested connection.
   // A server refresh after retest/rotation must not re-use old green checks.
-  const connectionRevision = fudoConnectionRevision(status);
   const [preflightState, setPreflightState] = useState<{
     revision: string; result: FudoResourcePreflight;
   } | null>(null);
