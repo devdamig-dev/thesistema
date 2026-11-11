@@ -46,6 +46,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Bloqueo de tandas foreground ante cambio de negocio o revisión (11/11/2026; en PR)
+
+- **Riesgo identificado:** la UI encadena hasta cinco Server Actions de sync; si cambia el negocio activo en otra pestaña entre tandas, la siguiente invocación podría sincronizar el nuevo negocio autorizado aunque el usuario hubiera iniciado el ciclo en el anterior. La autorización por cada negocio sigue vigente, pero la continuidad de la operación no queda asociada a la conexión de origen.
+- **Resultado observable / IMPLEMENTADO EN RAMA:** cada acción de sincronización desde la UI exige la huella opaca de negocio, generación, estado y último retest que recibió del servidor; el servicio compara con su conexión real ANTES de autenticar con Fudo o iniciar el run SQL. Si cambió negocio o revisión, responde `connection_changed`, sin nuevas llamadas Fudo ni staging para esa tanda. Los checks transaccionales existentes siguen aplicando al commit.
+- **PROBADO:** regresión sintética añadida para huella anterior al inicio: debe bloquear GET, run, cursor y staging. Quality CI del PR pendiente de ejecutar; no se declara aprobado antes de evidencia.
+- **DESPLEGADO:** NO para este cambio. **VALIDADO EN PRODUCCIÓN:** NO — falta cuenta Plan Pro/API real, conciliación 5/5, dos ciclos y QA A/B. O1 permanece ACTIVO/NO-GO; O2+ pospuesto. Sin datos comerciales ni escrituras hacia Fudo.
+- **Rollback:** revert de la acción/UI y del guard opcional de servicio; sin migración SQL.
+
 ### O1 — Diagnóstico de permisos atado a la revisión real del servidor (11/11/2026; [PR #334](https://github.com/devdamig-dev/thesistema/pull/334), fusionado)
 
 - **Defecto corregido:** con el panel A abierto, otro administrador podía rotar credenciales/retestear y crear una revisión B antes del diagnóstico. El servidor verificaba B pero la UI conservaba cinco checks verdes vinculados a la revisión A hasta refrescar. La huella que ahora acompaña cada diagnóstico deriva de `business_id + connection_generation + status + last_tested_at`; es SHA256 irreversible y no contiene credenciales ni payloads.

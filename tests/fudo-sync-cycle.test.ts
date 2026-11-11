@@ -798,3 +798,38 @@ test("Fudo O1 overlapping pages fail before staging and cursor, without leaking 
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = prevKey;
   }
 });
+
+
+test("Fudo O1 blocks a stale foreground tenant/credential revision before any provider read or staging", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  membershipActive = true;
+  activeBusiness = A;
+  conn.status = "connected";
+  conn.connection_generation = GENERATION;
+  conn.last_tested_at = null;
+  progress.length = 0;
+  records.length = 0;
+  runs.length = 0;
+  let providerRequests = 0;
+  globalThis.fetch = async () => {
+    providerRequests++;
+    throw new Error("no Fudo request must be issued");
+  };
+  try {
+    // Different tenant/rotated connection revision from the UI:
+    // the server must not start a new run or call auth.fu.do.
+    const rejected = await syncFudoReadOnly("0".repeat(64));
+    assert.equal(rejected.ok, false);
+    if (!rejected.ok) assert.equal(rejected.code, "connection_changed");
+    assert.equal(providerRequests, 0);
+    assert.equal(runs.length, 0);
+    assert.equal(progress.length, 0);
+    assert.equal(records.length, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});

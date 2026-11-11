@@ -74,7 +74,11 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
     setNotice(null);
     setPreflightState(null);
     startTransition(async () => {
-      const result = await runFudoSyncBatches(syncFudoAction);
+      // Pin every foreground batch to the exact tenant/credential revision
+      // rendered before starting. Never silently switch to another business.
+      const result = await runFudoSyncBatches(
+        () => syncFudoAction(status.connectionRevision ?? ""),
+      );
       setNotice({ ok: result.ok, message: result.message });
       // Reread persisted cursors and logs even if a later batch failed.
       router.refresh();

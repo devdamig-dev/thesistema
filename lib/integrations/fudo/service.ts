@@ -503,7 +503,7 @@ export async function disconnectFudo(): Promise<FudoActionResult> {
  * the same external record but never insert into native sales/stock/order tables.
  * A cursor is only advanced after the whole page has been stored.
  */
-export async function syncFudoReadOnly(): Promise<FudoActionResult> {
+export async function syncFudoReadOnly(expectedConnectionRevision?: string): Promise<FudoActionResult> {
   let runId: string | null = null;
   let actor: Actor | null = null;
   let db: any;
@@ -513,12 +513,29 @@ export async function syncFudoReadOnly(): Promise<FudoActionResult> {
     const authorized = await authorize();
     if (!authorized) return fail("forbidden", "No tenés permiso para sincronizar Fudo.");
     ({ actor, db } = authorized);
-    const connection = await db.from("fudo_connections").select("credentials_ciphertext,connection_generation")
+    const connection = await db.from("fudo_connections")
+      .select("credentials_ciphertext,connection_generation,status,last_tested_at")
       .eq("business_id", actor.businessId).maybeSingle();
     if (connection.error) return fail("storage_unavailable", UNKNOWN);
     if (!connection.data) return fail("not_connected", "Conectá Fudo antes de sincronizar.");
-    const encryptedConnection: string = connection.data.credentials_ciphertext;
     generation = connection.data.connection_generation;
+    // The foreground UI can issue up to five consecutive Server Actions.
+    // A tenant switch in another tab or a concurrent credential rotation/retest
+    // must not silently redirect a later batch to the newly selected business.
+    // The browser passes only an opaque revision; the server derives tenant
+    // and generation from the authenticated session and its own database row.
+    // Older server-side callers omit this guard, but all browser sync actions
+    // require a revision. SQL still fences generation and membership at commit.
+    if (expectedConnectionRevision !== undefined &&
+      (typeof expectedConnectionRevision !== "string"
+        || !/^[a-f0-9]{64}$/.test(expectedConnectionRevision)
+        || connection.data.status !== "connected"
+        || expectedConnectionRevision !== revisionForFudoConnection(
+          actor, generation!, connection.data.status, connection.data.last_tested_at ?? null,
+        ))) {
+      return fail("connection_changed", "La conexión o el negocio activo cambió. Actualizá y reintentá la lectura.");
+    }
+    const encryptedConnection: string = connection.data.credentials_ciphertext;
     const credentials = decryptFudoCredentials(actor.businessId, encryptedConnection);
     const client = new FudoClient(credentials);
 
