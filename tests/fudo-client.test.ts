@@ -1023,3 +1023,71 @@ test("Fudo O1 never accepts partial or unexpected HTTP 2xx GETs as a successful 
     assert.equal(cancelled, 3, "every unexpected 2xx body must be cancelled");
   }
 });
+
+
+test("Fudo O1 rejects partial and unexpected successful auth responses before any bearer GET", async () => {
+  const now = 1_800_000_000_000;
+  // A partial authentication response can still contain a valid token and
+  // expiry. It must not authorize a connection, preflight or import.
+  for (const status of [201, 202, 206, 207]) {
+    let authCalls = 0;
+    let reads = 0;
+    const client = new FudoClient(
+      { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+      {
+        now: () => now,
+        fetchImpl: async (input, init) => {
+          if (String(input) === "https://auth.fu.do/api") {
+            assert.equal(init?.method, "POST");
+            authCalls++;
+            return jsonResponse({
+              token: "synthetic-valid-looking-bearer",
+              exp: Math.floor((now + 86_400_000) / 1000),
+            }, status);
+          }
+          reads++;
+          return jsonResponse({ data: [] });
+        },
+      },
+    );
+    await assert.rejects(() => client.testConnection(), (error: unknown) => {
+      assert.ok(error instanceof FudoApiError);
+      assert.equal(error.code, "invalid_response");
+      assert.equal(error.status, status);
+      assert.equal(error.retryable, false);
+      assert.doesNotMatch(error.message, /synthetic-|bearer|token|secret/i);
+      return true;
+    });
+    assert.equal(authCalls, 1);
+    assert.equal(reads, 0, "unexpected auth status must never install a bearer");
+  }
+});
+
+test("Fudo O1 cancels unread authentication streams for HTTP 206", async () => {
+  let cancelled = 0;
+  let reads = 0;
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    {
+      fetchImpl: async (input) => {
+        if (String(input) === "https://auth.fu.do/api") {
+          // An unbounded upstream stream must be cancelled immediately, not
+          // buffered until a JSON body arrives or a serverless timeout fires.
+          return new Response(new ReadableStream<Uint8Array>({
+            cancel() { cancelled++; },
+          }), { status: 206 });
+        }
+        reads++;
+        return jsonResponse({ data: [] });
+      },
+    },
+  );
+  await assert.rejects(() => client.products(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "invalid_response");
+    assert.equal(error.status, 206);
+    return true;
+  });
+  assert.equal(cancelled, 1);
+  assert.equal(reads, 0);
+});
