@@ -415,6 +415,21 @@ export class FudoClient {
       throw safeError(response.status);
     }
 
+    // Fudo's read endpoints declare HTTP 200 for complete JSON:API pages.
+    // Other 2xx statuses (especially 206 Partial Content) cannot certify a
+    // complete page, product probe or import cursor. Never parse/stage them.
+    // Cancel the upstream stream without exposing its body or treating it as
+    // a successful read-only sync.
+    if (response.status !== 200) {
+      await discardResponseBody(response);
+      throw new FudoApiError(
+        "invalid_response",
+        "Fudo devolvió un estado de lectura inesperado.",
+        response.status,
+        false,
+      );
+    }
+
     try {
       // A one-record preflight should never buffer a 16 MiB import page.
       // Full 100-record synchronization retains its existing larger bound.
