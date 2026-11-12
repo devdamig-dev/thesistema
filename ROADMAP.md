@@ -46,6 +46,12 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Clasificación segura de HTTP 400/422 del proveedor (12/11/2026; PR en revisión)
+
+- **Riesgo detectado:** el adaptador etiquetaba HTTP 400/422 de una consulta de lectura como `provider_unavailable`. Un rechazo de parámetros o esquema de Fudo requiere corregir compatibilidad, no atribuir una caída temporal del servicio. En autenticación corresponde una devolución de credenciales rechazadas. Nunca se leen ni exponen los cuerpos de error.
+- **Resultado observable / IMPLEMENTADO EN RAMA:** clasificar 400/422 GET como `invalid_response` (sin reintentos) y los mismos códigos durante auth como `invalid_credentials`, con regresión sintética sobre ambos estados y fases; sin cambios de rutas, credenciales, SQL, sincronización ni escrituras Fudo.
+- **PROBADO:** pendiente de Quality en PR. **DESPLEGADO:** no para esta corrección. **VALIDADO EN PRODUCCIÓN:** no; requiere cuenta Fudo real Plan Pro/API y pruebas A/B. O1 sigue ACTIVO/PILOTO NO-GO; O2+ pospuesto.
+
 ### O1 — Remontar el formulario sensible cuando cambia el negocio visible (12/11/2026; [PR #341](https://github.com/devdamig-dev/thesistema/pull/341) fusionado)
 
 - **Causa raíz / resultado observable:** el fence de Server Actions (#338) impide operar sobre otro negocio con una pestaña obsoleta, pero `router.refresh()` en la misma ruta puede preservar el estado local de los campos ocultos `apiKey`/`apiSecret` cuando el panel pasa de A a B. Una nueva acción explícita después del refresco puede reutilizar credenciales de A sin que el operador las vuelva a pegar. El formulario debe perder ambos secretos y el diagnóstico efímero al recibir una identidad de negocio distinta.
