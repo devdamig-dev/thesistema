@@ -74,7 +74,7 @@ loader._load = function(name: string, ...args: any[]) {
   if (name === "@/lib/env") return { isDatabaseMode: () => true };
   return originalLoad.call(this, name, ...args);
 };
-const { connectFudo, disconnectFudo } = require("../lib/integrations/fudo/service") as typeof import("../lib/integrations/fudo/service");
+const { connectFudo, disconnectFudo, getFudoConnectionView, testStoredFudoConnection, inspectFudoReadPermissions } = require("../lib/integrations/fudo/service") as typeof import("../lib/integrations/fudo/service");
 loader._load = originalLoad;
 
 const credentials = { apiKey: "pilot-test-api-key", apiSecret: "pilot-test-secret" };
@@ -269,5 +269,41 @@ test("Fudo lifecycle surfaces a transaction-time permission denial without expos
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
+
+test("Fudo O1 lifecycle actions reject a stale business tab before any provider request or privileged mutation", async () => {
+  role = "owner"; tenant = A; validMembership = true; profileActive = true; syncRunning = false;
+  storedRow = null;
+  const viewA = await getFudoConnectionView();
+  assert.ok(viewA?.businessRevision);
+  assert.match(viewA.businessRevision, /^[a-f0-9]{64}$/);
+  assert.doesNotMatch(viewA.businessRevision, new RegExp(A));
+  tenant = B;
+  const viewB = await getFudoConnectionView();
+  assert.ok(viewB?.businessRevision);
+  assert.notEqual(viewA.businessRevision, viewB.businessRevision, "each business has a distinct UI fence");
+  const beforeRpc = rpcCalls.length;
+  const previousFetch = globalThis.fetch;
+  let providerCalls = 0;
+  globalThis.fetch = async () => { providerCalls++; throw new Error("stale tab must not call Fudo"); };
+  try {
+    const connected = await connectFudo(credentials, viewA.businessRevision);
+    const tested = await testStoredFudoConnection(viewA.businessRevision);
+    const disconnected = await disconnectFudo(viewA.businessRevision);
+    const preflight = await inspectFudoReadPermissions(viewA.businessRevision);
+    for (const result of [connected, tested, disconnected]) {
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.code, "connection_changed");
+    }
+    assert.equal(preflight.ok, false);
+    assert.deepEqual(preflight.checks, []);
+    assert.match(preflight.message, /Cambiaste de negocio/);
+    assert.equal(providerCalls, 0);
+    assert.equal(rpcCalls.length, beforeRpc, "no connection create/rotate/disconnect RPC on newly active business");
+    assert.equal(storedRow, null);
+  } finally {
+    globalThis.fetch = previousFetch;
+    tenant = A; role = "owner"; validMembership = true; profileActive = true;
   }
 });
