@@ -132,14 +132,14 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
             <Button variant="primary" disabled={working || key.trim().length < 8 || secret.trim().length < 8}
-              onClick={() => execute(() => connectFudoAction({ apiKey: key, apiSecret: secret }), true)}>
+              onClick={() => execute(() => connectFudoAction({ apiKey: key, apiSecret: secret }, status.businessRevision ?? ""), true)}>
               <PlugZap className="h-4 w-4" /> {working ? "Procesando…" : hasCredentials ? "Validar y reemplazar" : "Conectar y validar"}
             </Button>
-            {hasCredentials && <Button disabled={working} onClick={() => execute(testFudoConnectionAction)}>
+            {hasCredentials && <Button disabled={working} onClick={() => execute(() => testFudoConnectionAction(status.businessRevision ?? ""))}>
               <RefreshCcw className="h-4 w-4" /> Probar conexión
             </Button>}
             {connected && <Button disabled={working} onClick={() => execute(async () => {
-              const result = await runFudoPreflightSafely(inspectFudoPermissionsAction);
+              const result = await runFudoPreflightSafely(() => inspectFudoPermissionsAction(status.businessRevision ?? ""));
               // A second administrator may rotate credentials BEFORE this
               // request starts, while this browser still renders the old
               // revision. Never attribute the server's new five GETs to that
@@ -333,7 +333,7 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
         <Button variant="outline" disabled={working}
           onClick={() => {
             if (window.confirm("¿Desconectar Fudo y eliminar las credenciales guardadas?")) {
-              execute(disconnectFudoAction, true);
+              execute(() => disconnectFudoAction(status.businessRevision ?? ""), true);
             }
           }}>
           <Unplug className="h-4 w-4" /> Desconectar Fudo
