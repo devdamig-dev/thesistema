@@ -46,6 +46,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Remontar el formulario sensible cuando cambia el negocio visible (12/11/2026; [PR #341](https://github.com/devdamig-dev/thesistema/pull/341) abierto)
+
+- **Causa raíz / resultado observable:** el fence de Server Actions (#338) impide operar sobre otro negocio con una pestaña obsoleta, pero `router.refresh()` en la misma ruta puede preservar el estado local de los campos ocultos `apiKey`/`apiSecret` cuando el panel pasa de A a B. Una nueva acción explícita después del refresco puede reutilizar credenciales de A sin que el operador las vuelva a pegar. El formulario debe perder ambos secretos y el diagnóstico efímero al recibir una identidad de negocio distinta.
+- **IMPLEMENTADO EN RAMA:** [PR #341](https://github.com/devdamig-dev/thesistema/pull/341) utiliza `key={status.businessRevision}` en el límite Server Component → formulario cliente. El cambio de negocio provoca remount de React; un refresh del mismo negocio mantiene el estado para reintentar una conexión fallida. Regresión sintética nueva para A/B y refresh sin cambio de negocio.
+- **PROBADO:** Quality Gate del HEAD de #341 pendiente hasta obtener `verify`, PostgreSQL 17 y PostgREST aprobados. Una regresión sintética no equivale a un recorrido autenticado en producción.
+- **DESPLEGADO:** NO para #341 hasta comprobar deployment Production READY con SHA exacto. **VALIDADO EN PRODUCCIÓN:** NO — O1 PILOTO NO-GO. Cuenta Fudo Plan Pro/API autorizada, conciliación 5/5, dos ciclos idempotentes y QA A/B autenticada siguen pendientes.
+- **Seguridad / rollback:** ninguna mutación de datos, migración SQL o escritura a Fudo. Revert del PR revierte exclusivamente el estado de montaje del formulario.
+
 ### O1 — Acciones de conexión vinculadas al negocio visualizado (12/11/2026; [PR #338](https://github.com/devdamig-dev/thesistema/pull/338) fusionado)
 
 - **Causa raíz y criterio observable:** #336 fijó las tandas de sincronización, pero el resto del ciclo de vida Fudo dependía solo del negocio activo de la sesión; una pestaña A abierta antes de un cambio a B podía accidentalmente ejecutar **Conectar/rotar**, **Probar conexión**, **Revisar permisos** o **Desconectar** en B. El nuevo control rechaza una pestaña obsoleta **antes** de leer credenciales, llamar a Fudo o escribir una conexión del negocio recién seleccionado. Se conserva el fence de sincronización de #336.
