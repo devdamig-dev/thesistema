@@ -46,11 +46,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — Clasificación segura de HTTP 400/422 del proveedor (12/11/2026; PR en revisión)
+### O1 — Clasificación segura de HTTP 400/422 del proveedor (12/11/2026; [PR #343](https://github.com/devdamig-dev/thesistema/pull/343) fusionado)
 
-- **Riesgo detectado:** el adaptador etiquetaba HTTP 400/422 de una consulta de lectura como `provider_unavailable`. Un rechazo de parámetros o esquema de Fudo requiere corregir compatibilidad, no atribuir una caída temporal del servicio. En autenticación corresponde una devolución de credenciales rechazadas. Nunca se leen ni exponen los cuerpos de error.
-- **Resultado observable / IMPLEMENTADO EN RAMA:** clasificar 400/422 GET como `invalid_response` (sin reintentos) y los mismos códigos durante auth como `invalid_credentials`, con regresión sintética sobre ambos estados y fases; sin cambios de rutas, credenciales, SQL, sincronización ni escrituras Fudo.
-- **PROBADO:** pendiente de Quality en PR. **DESPLEGADO:** no para esta corrección. **VALIDADO EN PRODUCCIÓN:** no; requiere cuenta Fudo real Plan Pro/API y pruebas A/B. O1 sigue ACTIVO/PILOTO NO-GO; O2+ pospuesto.
+- **Causa raíz / resultado observable:** el adaptador clasificaba HTTP 400/422 de GET read-only como `provider_unavailable`, ocultando rechazos del contrato HTTP. Ahora GET 400/422 da `invalid_response` y auth POST 400/422 da `invalid_credentials`, ambos sin retry ni filtración de cuerpo del proveedor, tokens, URL o secretos; se mantienen los GET de recursos y no hay escrituras a Fudo.
+- **IMPLEMENTADO / FUSIONADO:** [PR #343](https://github.com/devdamig-dev/thesistema/pull/343), squash `213718ce045fd7705ef4805111c798127c464bf7` sobre `main`. Adaptador, regresión sintética de dos fases/dos códigos y documentación; sin cambios SQL, auth de tenant, datos operativos ni credenciales reales.
+- **PROBADO (HEAD de PR):** [Quality #43233348560](https://github.com/devdamig-dev/thesistema/actions/runs/43233348560) `completed/success` sobre `dcc41c2e55f4fd0b99c320ae928ea8bb3bfec55b`, jobs `verify` (npm test, fixtures, types, lint, SQL, build y Playwright), `postgres17`, `postgrest` en `success`. Pruebas sintéticas, **no** integración real con Fudo. Quality independiente del squash de `main`: [run #43242632790](https://github.com/devdamig-dev/thesistema/actions/runs/43242632790) en ejecución al registrar este punto; verificar antes de declararlo exitoso.
+- **DESPLEGADO / VERCEL PRODUCTION READY:** [deployment `dpl_GrtEGN6xt8S6hEBiuLmxJ3qyX7f9`](https://vercel.com/damians-projects-a45d01bf/thesistema/GrtEGN6xt8S6hEBiuLmxJ3qyX7f9), `target=production`, `readyState=READY`, `githubCommitSha=213718ce045fd7705ef4805111c798127c464bf7`, alias `gastropilot.nexodg.com`, `aliasError=null` verificados directamente en Vercel. Un check de preview había informado cuota `api-deployments-free-per-day`; **no** impidió este Production READY. No se cambió plan/facturación.
+- **VALIDADO EN PRODUCCIÓN: NO — PILOTO FUDO NO-GO.** Requiere conectar una cuenta Fudo Pro/API autorizada por UI segura, comprobar 5/5 recursos, conciliar registros/IDs, dos sincronizaciones idempotentes y QA real autenticada A/B. Ninguna prueba sintética ni deployment READY equivale al piloto. O1 sigue ACTIVO; O2+ pospuesto.
+- **Seguridad / rollback:** no se enviaron credenciales, no se ejecutó escritura Fudo ni mutación de datos comerciales. Rollback del PR #343 restablece sólo clasificación de errores.
 
 ### O1 — Remontar el formulario sensible cuando cambia el negocio visible (12/11/2026; [PR #341](https://github.com/devdamig-dev/thesistema/pull/341) fusionado)
 
