@@ -83,7 +83,7 @@ const TOKEN_SKEW_MS = 5 * 60 * 1000;
 const MISSING_EXP_TTL_MS = 10 * 60 * 1000;
 const MAX_TOKEN_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-function safeError(status: number): FudoApiError {
+function safeError(status: number, phase: "auth" | "read"): FudoApiError {
   if (status === 401) {
     return new FudoApiError(
       "invalid_credentials",
@@ -102,6 +102,21 @@ function safeError(status: number): FudoApiError {
   }
   if (status === 404) {
     return new FudoApiError("api_unavailable", "No encontramos el endpoint de Fudo. Revisá la versión y la habilitación de la API.", status, false);
+  }
+  // Fudo can reject an otherwise reachable GET with 400/422 when query
+  // parameters do not match its API contract. This is NOT a provider outage:
+  // classify the read as incompatible and never retry it as a transient error.
+  // Authentication errors have a different operator remedy. Never inspect or
+  // echo the upstream error body (which might contain sensitive diagnostics).
+  if (status === 400 || status === 422) {
+    return new FudoApiError(
+      phase === "auth" ? "invalid_credentials" : "invalid_response",
+      phase === "auth"
+        ? "Fudo rechazó la solicitud de autenticación."
+        : "Fudo rechazó la consulta de lectura. Revisá la compatibilidad de la API.",
+      status,
+      false,
+    );
   }
   if (status === 429) {
     return new FudoApiError(
@@ -281,7 +296,7 @@ export class FudoClient {
 
     if (!response.ok) {
       await discardResponseBody(response);
-      throw safeError(response.status);
+      throw safeError(response.status, "auth");
     }
 
     // A 206 Partial Content (or another unexpected 2xx) may still contain a
@@ -426,7 +441,7 @@ export class FudoClient {
 
     if (!response.ok) {
       await discardResponseBody(response);
-      throw safeError(response.status);
+      throw safeError(response.status, "read");
     }
 
     // Fudo's read endpoints declare HTTP 200 for complete JSON:API pages.

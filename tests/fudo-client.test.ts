@@ -1091,3 +1091,39 @@ test("Fudo O1 cancels unread authentication streams for HTTP 206", async () => {
   assert.equal(cancelled, 1);
   assert.equal(reads, 0);
 });
+
+test("Fudo HTTP 400/422 is a non-retryable contract error on GET and invalid credentials on auth", async () => {
+  const now = 1_800_000_000_000;
+  for (const phase of ["auth", "read"] as const) {
+    for (const status of [400, 422]) {
+      let authCalls = 0;
+      let readCalls = 0;
+      const fakeFetch: typeof fetch = async (input, init) => {
+        if (String(input) === "https://auth.fu.do/api") {
+          authCalls++;
+          assert.equal(init?.method, "POST");
+          return phase === "auth"
+            ? new Response("synthetic-private-auth-error", { status })
+            : jsonResponse({ token: "synthetic-bearer", exp: Math.floor((now + 86_400_000) / 1000) });
+        }
+        readCalls++;
+        assert.equal(init?.method, "GET");
+        return new Response("synthetic-private-read-error", { status });
+      };
+      const client = new FudoClient(
+        { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+        { fetchImpl: fakeFetch, now: () => now },
+      );
+      await assert.rejects(client.testConnection(), (error: unknown) => {
+        assert.ok(error instanceof FudoApiError);
+        assert.equal(error.code, phase === "auth" ? "invalid_credentials" : "invalid_response");
+        assert.equal(error.status, status);
+        assert.equal(error.retryable, false);
+        assert.doesNotMatch(error.message, /synthetic-private/i);
+        return true;
+      });
+      assert.equal(authCalls, 1, "never retry a rejected auth or GET request");
+      assert.equal(readCalls, phase === "auth" ? 0 : 1, "auth rejection must not issue a provider GET");
+    }
+  }
+});
