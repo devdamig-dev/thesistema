@@ -25,6 +25,8 @@ export type FudoSyncRunView = {
 
 export type FudoConnectionView = {
   configured: boolean;
+  /** Opaque user/business binding for lifecycle actions, including disconnected views. */
+  businessRevision?: string;
   /** Opaque per-tenant, per-generation, per-test revision for ephemeral UI probes. */
   connectionRevision: string | null;
   status: "disconnected" | "connected" | "error";
@@ -52,6 +54,22 @@ function revisionForFudoConnection(
   return createHash("sha256")
     .update(JSON.stringify([actor.businessId, generation, status, lastTestedAt]))
     .digest("hex");
+}
+
+/** Bind browser lifecycle operations to the business actually rendered, even before Fudo is connected.
+ * This is a stale-tab fence, NOT an authorization token: every action still checks role and membership.
+ */
+function businessRevisionForFudoActor(actor: Actor): string {
+  return createHash("sha256")
+    .update(JSON.stringify(["fudo-business-scope-v1", actor.userId, actor.businessId]))
+    .digest("hex");
+}
+
+function matchesFudoBusinessRevision(actor: Actor, expected?: string): boolean {
+  return expected === undefined || (
+    typeof expected === "string" && /^[a-f0-9]{64}$/.test(expected)
+    && expected === businessRevisionForFudoActor(actor)
+  );
 }
 
 const fail = (code: string, message: string): FudoActionResult => ({ ok: false, code, message });
@@ -136,7 +154,8 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
     // role revocation, profile deactivation or server-side tenant switch.
     if (!(await isStillAuthorized(actor))) return null;
     return {
-      configured: true, connectionRevision: null, status: "disconnected",
+      configured: true, businessRevision: businessRevisionForFudoActor(actor),
+      connectionRevision: null, status: "disconnected",
       lastTestedAt: null, lastSyncedAt: null, lastSyncStatus: null, lastErrorCode: null, lastCounts: {},
       importedCounts: {}, seenThisCycleCounts: {}, possiblyMissingCounts: {}, nextPages: {}, recentRuns: [],
     };
@@ -297,6 +316,7 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
   if (!(await isStillAuthorized(actor))) return null;
   return {
     configured: true,
+    businessRevision: businessRevisionForFudoActor(actor),
     // Never reuse green checks after switching businesses with an identical
     // status and timestamp. Do not expose raw tenant or generation identifiers.
     connectionRevision: revisionForFudoConnection(
@@ -316,10 +336,14 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
   };
 }
 
-export async function connectFudo(input: FudoCredentials): Promise<FudoActionResult> {
+export async function connectFudo(input: FudoCredentials, expectedBusinessRevision?: string): Promise<FudoActionResult> {
   try {
     const authorized = await authorize();
     if (!authorized) return fail("forbidden", "Necesitás ingresar como owner o administrador del negocio.");
+    // A stale A tab must not save A's entered credentials under newly selected business B.
+    if (!matchesFudoBusinessRevision(authorized.actor, expectedBusinessRevision)) {
+      return fail("connection_changed", "Cambiaste de negocio desde que abriste la pantalla. Actualizá y reintentá.");
+    }
     const apiKey = typeof input?.apiKey === "string" ? input.apiKey.trim() : "";
     const apiSecret = typeof input?.apiSecret === "string" ? input.apiSecret.trim() : "";
     if (apiKey.length < 8 || apiKey.length > 512 || apiSecret.length < 8 || apiSecret.length > 2048) {
@@ -350,10 +374,13 @@ export async function connectFudo(input: FudoCredentials): Promise<FudoActionRes
   } catch (error) { return safeFailure(error); }
 }
 
-export async function testStoredFudoConnection(): Promise<FudoActionResult> {
+export async function testStoredFudoConnection(expectedBusinessRevision?: string): Promise<FudoActionResult> {
   try {
     const authorized = await authorize();
     if (!authorized) return fail("forbidden", "No tenés permiso para probar Fudo.");
+    if (!matchesFudoBusinessRevision(authorized.actor, expectedBusinessRevision)) {
+      return fail("connection_changed", "Cambiaste de negocio desde que abriste la pantalla. Actualizá y reintentá.");
+    }
     const { actor, db } = authorized;
     const stored = await db.from("fudo_connections").select("credentials_ciphertext,connection_generation,last_tested_at")
       .eq("business_id", actor.businessId).maybeSingle();
@@ -402,11 +429,14 @@ export async function testStoredFudoConnection(): Promise<FudoActionResult> {
  * required for O1. This never persists provider payloads or mutates sync state.
  * Only the authenticated business owner/admin sees sanitized resource outcomes.
  */
-export async function inspectFudoReadPermissions(): Promise<FudoResourcePreflight> {
+export async function inspectFudoReadPermissions(expectedBusinessRevision?: string): Promise<FudoResourcePreflight> {
   try {
     const authorized = await authorize();
     if (!authorized) {
       return { ok: false, message: "Necesitás ser owner o administrador del negocio.", checks: [] };
+    }
+    if (!matchesFudoBusinessRevision(authorized.actor, expectedBusinessRevision)) {
+      return { ok: false, message: "Cambiaste de negocio desde que abriste la pantalla. Actualizá y reintentá.", checks: [] };
     }
     const { actor, db } = authorized;
     const stored = await db.from("fudo_connections")
@@ -480,10 +510,13 @@ export async function inspectFudoReadPermissions(): Promise<FudoResourcePrefligh
   }
 }
 
-export async function disconnectFudo(): Promise<FudoActionResult> {
+export async function disconnectFudo(expectedBusinessRevision?: string): Promise<FudoActionResult> {
   try {
     const authorized = await authorize();
     if (!authorized) return fail("forbidden", "No tenés permiso para desconectar Fudo.");
+    if (!matchesFudoBusinessRevision(authorized.actor, expectedBusinessRevision)) {
+      return fail("connection_changed", "Cambiaste de negocio desde que abriste la pantalla. Actualizá y reintentá.");
+    }
     const { actor, db } = authorized;
     // Runs abandoned by serverless invocations are recovered here, even if credentials
     // can no longer be decrypted (e.g. after a server key rotation).
