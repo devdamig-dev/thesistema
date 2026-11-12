@@ -125,7 +125,9 @@ test("Fudo owner connection derives business_id from validated server session an
     return new Response(JSON.stringify({ data: [] }), { status: 200 });
   };
   try {
-    const outcome = await connectFudo({ ...credentials, businessId: B } as any);
+    const rendered = await getFudoConnectionView();
+    assert.ok(rendered?.businessRevision);
+    const outcome = await connectFudo({ ...credentials, businessId: B } as any, rendered.businessRevision);
     assert.equal(outcome.ok, true);
     assert.equal(dataReads, 1);
     const saved = storedRow as Record<string, unknown> | null;
@@ -162,7 +164,9 @@ test("Fudo connection and disconnection both defer to atomic DB lifecycle lock",
     assert.equal(blockedDisconnect.ok, false);
     if (!blockedDisconnect.ok) assert.equal(blockedDisconnect.code, "sync_running");
     syncRunning = false;
-    const disconnected = await disconnectFudo();
+    const rendered = await getFudoConnectionView();
+    assert.ok(rendered?.businessRevision);
+    const disconnected = await disconnectFudo(rendered.businessRevision);
     assert.equal(disconnected.ok, true);
     assert.ok(rpcCalls.includes("fudo_disconnect_connection"));
   } finally {
