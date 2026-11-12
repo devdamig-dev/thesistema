@@ -46,6 +46,16 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Acciones de conexión vinculadas al negocio visualizado (12/11/2026; [PR #338](https://github.com/devdamig-dev/thesistema/pull/338) en revisión)
+
+- **Causa raíz:** #336 fijó las tandas de sincronización al negocio original, pero una pestaña A de Integraciones > Fudo podía quedar abierta mientras el owner cambiaba la sesión activa a B en otra pestaña. Después, **Conectar/rotar**, **Probar conexión**, **Revisar permisos** o **Desconectar** utilizaban B, aunque la UI y las credenciales ingresadas correspondieran a A. El control de membresía y RLS autorizaba legítimamente B, pero no evitaba la operación equivocada por contexto obsoleto.
+- **Resultado observable esperado:** con owner/admin A/B y pestaña A obsoleta, las cuatro operaciones de ciclo de vida devuelven aviso de cambio de negocio **antes** de invocar auth/GET de Fudo, leer ciphertext o ejecutar RPC de conexión en B. La sincronización sigue usando su fence previo de revisión de credenciales.
+- **IMPLEMENTADO EN RAMA / NO FUSIONADO:** [PR #338](https://github.com/devdamig-dev/thesistema/pull/338) introduce huella opaca SHA-256 de usuario y negocio incluso antes de conectar Fudo; las Server Actions la exigen y los servicios cotejan la huella con el actor autorizado. No es un token de autorización: se mantienen las comprobaciones reales de membresía y las transacciones SQL existentes. Regresión sintética con A/B, sin llamadas al proveedor ni RPC cuando la pestaña es obsoleta.
+- **PROBADO:** Quality del PR pendiente de veredicto completo. No declarar aprobación hasta comprobar `verify` (tests, tipos, lint, SQL, build, Playwright), `postgres17` y `postgrest` sobre el HEAD final. Prueba autenticada real A/B todavía pendiente.
+- **DESPLEGADO:** NO para #338. No se realizaron migraciones ni escrituras hacia Fudo, datos comerciales o las cuatro tablas Fudo productivas.
+- **VALIDADO EN PRODUCCIÓN:** **NO — O1 ACTIVO / PILOTO NO-GO.** Cuenta Fudo Plan Pro/API autorizada, conciliación 5/5, doble ciclo idempotente, QA A/B y aceptación privada siguen faltando. O2+ pospuesto.
+- **Rollback:** revert del PR, sin DDL ni transformaciones de staging; un rechazo por pestaña obsoleta requiere recargar la UI y volver a elegir el negocio correcto.
+
 ### O1 — Tandas foreground vinculadas al negocio y revisión de origen (11/11/2026; [PR #336](https://github.com/devdamig-dev/thesistema/pull/336) fusionado)
 
 - **Riesgo corregido:** la UI encadenaba hasta cinco Server Actions de sync; si cambiaba el negocio activo en otra pestaña entre tandas, una invocación posterior podía sincronizar el nuevo negocio autorizado aunque el ciclo hubiera comenzado en otro. La autorización por negocio no garantizaba continuidad de operación.
