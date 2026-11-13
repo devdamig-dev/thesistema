@@ -424,6 +424,55 @@ test("Fudo bounded probes share one refresh after an expired bearer", async () =
   assert.doesNotMatch(JSON.stringify(checks), /private-test|bearer|revoked/i);
 });
 
+test("Fudo never sends Bearer null when a concurrent 401 clears the cached token after its auth check", async () => {
+  const now = 1_800_000_000_000;
+  const headers: string[] = [];
+  let authCalls = 0;
+  let invalidateDuringNextCheck = false;
+  let client: FudoClient;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      authCalls++;
+      return jsonResponse({ token: `bearer-${authCalls}`, exp: Math.floor((now + 86_400_000) / 1000) });
+    }
+    assert.equal(init?.method, "GET");
+    const authorization = new Headers(init?.headers).get("authorization") ?? "";
+    headers.push(authorization);
+    assert.match(authorization, /^Bearer bearer-\d+$/, "no GET may use an invalidated cache entry");
+    return jsonResponse({ data: [] });
+  };
+  client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    {
+      fetchImpl: fakeFetch,
+      now: () => {
+        if (invalidateDuringNextCheck) {
+          invalidateDuringNextCheck = false;
+          // Simulate the cache mutation performed when another in-flight GET
+          // receives HTTP 401. The queued microtask runs after the synchronous
+          // auth check but before getJson resumes from its await.
+          queueMicrotask(() => {
+            const shared = client as unknown as { token: string | null; tokenExpiresAt: number };
+            shared.token = null;
+            shared.tokenExpiresAt = 0;
+          });
+        }
+        return now;
+      },
+    },
+  );
+
+  await client.products();
+  invalidateDuringNextCheck = true;
+  await client.products();
+  // This GET was authorized against bearer-1 before cache invalidation.
+  // It must not send "Bearer null" simply because a concurrent GET got 401.
+  assert.deepEqual(headers, ["Bearer bearer-1", "Bearer bearer-1"]);
+  await client.products();
+  assert.deepEqual(headers, ["Bearer bearer-1", "Bearer bearer-1", "Bearer bearer-2"]);
+  assert.equal(authCalls, 2, "a later request renews the invalidated cache");
+});
+
 test("Fudo read-permission diagnostics cap concurrent GETs at three and retain every resource outcome", async () => {
   const resources = ["products", "ingredients", "providers", "orders", "sales"] as const;
   const now = 1_800_000_000_000;
