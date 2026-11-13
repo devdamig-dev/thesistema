@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import OnboardingClient, { type OnboardingInitialState } from "./onboarding-client";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -116,10 +117,39 @@ async function getInitialState(): Promise<InitialStateResult> {
   };
 }
 
-export default async function OnboardingPage() {
+export default async function OnboardingPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ business_deleted?: string; new?: string }>;
+}) {
+  const params = await searchParams;
+  if (params?.business_deleted === "1" && params?.new !== "1") {
+    return <BusinessDeletedNextStep />;
+  }
   const result = await getInitialState();
   if (!result.ok) return <OnboardingUnavailable message={result.error} />;
   return <OnboardingClient initialState={result.state} />;
+}
+
+function BusinessDeletedNextStep() {
+  return (
+    <main className="min-h-screen bg-bg px-4 py-16">
+      <div className="mx-auto max-w-2xl rounded-2xl border border-ai-400/25 bg-bg-elevated p-6 md:p-8">
+        <div className="text-xs font-semibold uppercase tracking-wider text-ai-400">Negocio eliminado</div>
+        <h1 className="mt-2 text-2xl font-semibold text-ink">Tu cuenta sigue activa.</h1>
+        <p className="mt-3 text-sm leading-relaxed text-ink-muted">
+          No necesitás crear otro negocio si vas a sumarte al de tu socio. Abrí el enlace de invitación que te comparta el owner e ingresá con este mismo usuario.
+        </p>
+        <div className="mt-5 rounded-xl border border-line bg-bg-subtle/40 p-4 text-xs leading-relaxed text-ink-muted">
+          Si la invitación anterior fue revocada, pedile al owner que genere una nueva desde Ajustes → Equipo.
+        </div>
+        <div className="mt-6 flex flex-wrap gap-2">
+          <Link href="/logout" className="rounded-lg border border-line px-4 py-2 text-sm text-ink hover:bg-bg-subtle">Cerrar sesión</Link>
+          <Link href="/onboarding?new=1" className="rounded-lg border border-line px-4 py-2 text-sm text-ink-muted hover:bg-bg-subtle hover:text-ink">Crear un negocio nuevo de todos modos</Link>
+        </div>
+      </div>
+    </main>
+  );
 }
 
 function OnboardingUnavailable({ message }: { message: string }) {
