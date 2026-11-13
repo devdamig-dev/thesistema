@@ -51,9 +51,15 @@ export async function syncFudoAction(expectedConnectionRevision: string) {
 }
 
 // Read-only diagnostics; never returns credentials or provider records.
-export async function inspectFudoPermissionsAction(expectedBusinessRevision: string) {
+export async function inspectFudoPermissionsAction(
+  expectedBusinessRevision: string,
+  expectedConnectionRevision: string,
+) {
   if (!validBusinessRevision(expectedBusinessRevision)) {
     return { ok: false, message: staleBusiness().message, checks: [] };
   }
-  return inspectFudoReadPermissions(expectedBusinessRevision);
+  if (!validBusinessRevision(expectedConnectionRevision)) {
+    return { ok: false, message: "La conexión Fudo cambió. Actualizá la pantalla y reintentá.", checks: [] };
+  }
+  return inspectFudoReadPermissions(expectedBusinessRevision, expectedConnectionRevision);
 }
