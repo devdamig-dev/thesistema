@@ -46,6 +46,16 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Desconexión protegida contra pestañas obsoletas (13/11/2026; PR en revisión)
+
+- **Causa raíz:** la conexión/rotación ya usa compare-and-swap de generación y `last_tested_at`, pero **Desconectar** todavía enviaba sólo la revisión del negocio. Un owner con una pestaña vieja podía eliminar las credenciales que otro admin acababa de rotar/retestear dentro del mismo negocio. La comprobación de sesión por sí sola no resuelve esta carrera.
+- **Resultado observable:** el botón envía la revisión opaca exacta que mostró la UI; la Server Action rechaza revisiones ausentes/malformadas y el servicio valida el snapshot antes de tocar la base. Una nueva RPC `fudo_disconnect_connection_guarded` compara generación y retest **dentro de la transacción** y delega la autorización owner/admin, recuperación de ejecuciones y exclusión de sync a la RPC ya existente. Una rotación o retest intermedio devuelve `connection_changed` sin eliminar ciphertext.
+- **IMPLEMENTADO EN RAMA:** `fix/fudo-o1-stale-disconnect-cas-20261113` incluye UI, Server Action, servicio, migración SQL aditiva y regresiones sintéticas/SQL. Aún **NO FUSIONADO**; Quality Gate pendiente al abrir el PR.
+- **PROBADO:** pendiente ejecución de Quality para el HEAD exacto. Los fixtures no representan QA con credenciales reales.
+- **DESPLEGADO:** **NO**. Aplicar **primero** la migración a Supabase verificada; **después** publicar runtime y controlar SHA/alias. La RPC legada permanece para compatibilidad del despliegue anterior y sólo es invocable por `service_role`; retiro futuro separado tras verificar callers.
+- **VALIDADO EN PRODUCCIÓN:** **NO — O1 PILOTO NO-GO.** Continúan pendientes cuenta Fudo autorizada, 5/5 recursos reales, conciliación/doble ciclo e aislamiento A/B.
+- **Seguridad/rollback:** ninguna llamada nueva a Fudo, ningún dato operativo nativo modificado por este cambio. Revertir runtime antes de cualquier limpieza SQL. No se exponen credenciales ni payloads en pruebas.
+
 ### O1 — Conexión/rotación vinculada a revisión y transacción (13/11/2026; [PR #347](https://github.com/devdamig-dev/thesistema/pull/347) fusionado)
 
 - **Causa raíz:** Conectar/rotar validaba el negocio visible, pero no la revisión de credenciales Fudo dentro del mismo negocio. Un probe HTTP lento podía sobreescribir una rotación más reciente o reconectar después de una desconexión. El RPC anterior serializaba, pero no comparaba el snapshot previo a la llamada externa.
