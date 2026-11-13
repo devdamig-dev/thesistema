@@ -438,7 +438,7 @@ test("Fudo never sends Bearer null when a concurrent 401 clears the cached token
     assert.equal(init?.method, "GET");
     const authorization = new Headers(init?.headers).get("authorization") ?? "";
     headers.push(authorization);
-    assert.match(authorization, /^Bearer bearer-\\d+$/, "no GET may use an invalidated cache entry");
+    assert.match(authorization, /^Bearer bearer-\d+$/, "no GET may use an invalidated cache entry");
     return jsonResponse({ data: [] });
   };
   client = new FudoClient(
