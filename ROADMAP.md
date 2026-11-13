@@ -46,15 +46,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — Retest de credenciales vinculado a la revisión visible (13/11/2026; PR en revisión)
+### O1 — Retest de credenciales vinculado a la revisión visible (13/11/2026; [PR #353](https://github.com/devdamig-dev/thesistema/pull/353) fusionado)
 
 - **Causa raíz:** el botón «Probar conexión» validaba el negocio, pero no la revisión de la conexión que el administrador estaba viendo. Tras una rotación o nuevo test de otro administrador **dentro del mismo negocio**, una pestaña obsoleta podía consultar las credenciales actuales y modificar su estado de salud; el CAS SQL sólo impedía cambios durante el GET, no antes de iniciarlo.
 - **Resultado observable:** la Server Action exige la revisión opaca de conexión mostrada en la UI; el servicio compara generación, estado y fecha de test contra la conexión persistida **antes de descifrar credenciales o realizar POST de autenticación y GET a productos**. Si cambió, responde `connection_changed`, sin llamadas a Fudo ni modificación de metadata. Se mantiene el CAS SQL vigente para cambios que ocurran mientras la prueba está en vuelo.
-- **IMPLEMENTADO (rama/PR):** acción, servicio, UI y regresiones sintéticas para rotación/retest previos, revisión inválida, rechazo antes de HTTP/SQL y test válido. Sin migración ni cambios a datos comerciales, staging, sincronización o verbos de Fudo.
-- **PROBADO:** pendiente de Quality Gate del PR; fixtures no equivalen a proveedor real.
-- **DESPLEGADO:** no, hasta merge y verificación de publicación.
-- **VALIDADO EN PRODUCCIÓN: NO — O1 PILOTO NO-GO.** Requiere cuenta Fudo Pro/API autorizada, lectura y conciliación de cinco recursos, dos ciclos idempotentes y QA real autenticada multiempresa A/B.
-- **Rollback:** revertir el cambio de acción/UI/servicio/tests. No requiere SQL ni acceso a datos del negocio.
+- **IMPLEMENTADO / FUSIONADO:** [PR #353](https://github.com/devdamig-dev/thesistema/pull/353), squash `6bfb0b6a4684b7383b94b5ab8c4eb2f4634d8708` en `main`. Server Action, servicio, UI y regresiones sintéticas para rotación/retest previos, revisión inválida, rechazo antes de HTTP/SQL y test válido. Sin migración SQL, cambios comerciales, sincronización ni verbos de Fudo.
+- **PROBADO (automatizado, NO Fudo real):** [Quality #43507655445](https://github.com/devdamig-dev/thesistema/actions/runs/43507655445) `completed/success` sobre HEAD final de PR `c7d50a4f498b81f813ebfb97e6ff015d15990bb6` y [Quality independiente de main #43509077202](https://github.com/devdamig-dev/thesistema/actions/runs/43509077202) `completed/success` sobre squash exacto `6bfb0b6a`. En ambos, jobs `verify` (npm test, typecheck, lint, SQL, build y Playwright), `postgres17`, `postgrest`: **3/3 success**. Fixtures y CI no sustituyen QA con credenciales y negocios reales.
+- **DESPLEGADO / VERCEL Production READY:** [deployment `dpl_CbbSSiTfad8EUKJvGvR5qtkjhvfh`](https://vercel.com/damians-projects-a45d01bf/thesistema/CbbSSiTfad8EUKJvGvR5qtkjhvfh), `target=production`, `readyState=READY`, SHA exacto de `main` `6bfb0b6a`, alias `gastropilot.nexodg.com` y `aliasError=null` comprobados directamente en Vercel. No implica smoke autenticado ni prueba Fudo real.
+- **VALIDADO EN PRODUCCIÓN: NO — O1 PILOTO NO-GO.** Requiere cuenta Fudo Pro/API autorizada, lectura y conciliación de cinco recursos, dos ciclos idempotentes y QA real autenticada multiempresa A/B con aceptación documentada.
+- **Seguridad / rollback:** sólo lectura de recursos Fudo (POST exclusivamente a auth). Revertir el squash #353 restaura el retest anterior; no requiere SQL ni acceso a datos comerciales.
 
 ### O1 — Token bearer consistente frente a invalidación concurrente por 401 (13/11/2026; [PR #351](https://github.com/devdamig-dev/thesistema/pull/351) fusionado)
 
