@@ -33,7 +33,7 @@ test("Fudo browser retest requires the rendered business and connection revision
   ]) {
     const invalid = await testFudoConnectionAction(b, c);
     assert.equal(invalid.ok, false);
-    assert.equal(invalid.code, "connection_changed");
+    if (!invalid.ok) assert.equal(invalid.code, "connection_changed");
   }
   assert.equal(calls.length, 0, "bad or omitted revision may not enter the service");
   const ok = await testFudoConnectionAction(business, connection);
