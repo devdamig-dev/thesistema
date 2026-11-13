@@ -307,7 +307,7 @@ test("Fudo stale same-business form and late provider response cannot overwrite 
     const raced = await connectFudo(credentials, disconnected.businessRevision, null);
     assert.equal(raced.ok, false);
     if (!raced.ok) assert.equal(raced.code, "connection_changed");
-    assert.equal(storedRow?.credentials_ciphertext, "fixture-only");
+    assert.equal((storedRow as Record<string, unknown> | null)?.credentials_ciphertext, "fixture-only");
     assert.equal(rpcCalls.at(-1), "fudo_replace_connection_guarded");
   } finally {
     storedRow = null;
