@@ -15,9 +15,16 @@ const refresh = async (operation: Promise<FudoActionResult>) => {
   return result;
 };
 
-export async function connectFudoAction(input: { apiKey: string; apiSecret: string }, expectedBusinessRevision: string) {
-  if (!validBusinessRevision(expectedBusinessRevision)) return staleBusiness();
-  return refresh(connectFudo(input, expectedBusinessRevision));
+export async function connectFudoAction(
+  input: { apiKey: string; apiSecret: string },
+  expectedBusinessRevision: string,
+  expectedConnectionRevision: string | null,
+) {
+  if (!validBusinessRevision(expectedBusinessRevision)
+    || !(expectedConnectionRevision === null || validBusinessRevision(expectedConnectionRevision))) {
+    return staleBusiness();
+  }
+  return refresh(connectFudo(input, expectedBusinessRevision, expectedConnectionRevision));
 }
 export async function testFudoConnectionAction(expectedBusinessRevision: string) {
   if (!validBusinessRevision(expectedBusinessRevision)) return staleBusiness();
