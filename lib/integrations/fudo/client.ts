@@ -406,22 +406,37 @@ export class FudoClient {
     }
   }
 
-  private async ensureAuthenticated(): Promise<void> {
-    if (
-      !this.token ||
-      !this.tokenExpiresAt ||
-      this.tokenExpiresAt <= this.now() + TOKEN_SKEW_MS
-    ) {
-      await this.authenticateOnce();
+  private async ensureAuthenticated(): Promise<string> {
+    // Return the bearer observed during the authentication check, instead of
+    // reading mutable shared state after getJson's await boundary. A parallel
+    // read can receive 401 and clear this.token in that microtask gap, causing
+    // the next GET to send the literal "Bearer null".
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (
+        !this.token ||
+        !this.tokenExpiresAt ||
+        this.tokenExpiresAt <= this.now() + TOKEN_SKEW_MS
+      ) {
+        await this.authenticateOnce();
+      }
+      const bearer = this.token;
+      if (bearer) return bearer;
+      // A concurrent 401 may invalidate the token while auth was awaited.
+      // Make at most one additional coalesced auth attempt.
     }
+    throw new FudoApiError(
+      "provider_unavailable",
+      "No se pudo establecer una sesión de lectura de Fudo.",
+      null,
+      true,
+    );
   }
 
   private async getJson(path: string, params: FudoListParams = {}, retry = true): Promise<unknown> {
-    await this.ensureAuthenticated();
-
-    // Snapshot the token used for this request. Another in-flight read may
-    // already have refreshed it when this HTTP response arrives.
-    const attemptedToken = this.token;
+    // Capture the exact authorized bearer before yielding to other requests.
+    // A later 401 can invalidate the cache, but it must never produce a GET
+    // with "Bearer null" or with a newer unrelated token.
+    const attemptedToken = await this.ensureAuthenticated();
     let response: Response;
     try {
       response = await this.fetchImpl(
