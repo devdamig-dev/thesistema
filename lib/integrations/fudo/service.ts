@@ -336,13 +336,34 @@ export async function getFudoConnectionView(): Promise<FudoConnectionView | null
   };
 }
 
-export async function connectFudo(input: FudoCredentials, expectedBusinessRevision?: string): Promise<FudoActionResult> {
+export async function connectFudo(
+  input: FudoCredentials,
+  expectedBusinessRevision?: string,
+  expectedConnectionRevision?: string | null,
+): Promise<FudoActionResult> {
   try {
     const authorized = await authorize();
     if (!authorized) return fail("forbidden", "Necesitás ingresar como owner o administrador del negocio.");
     // A stale A tab must not save A's entered credentials under newly selected business B.
     if (!matchesFudoBusinessRevision(authorized.actor, expectedBusinessRevision)) {
       return fail("connection_changed", "Cambiaste de negocio desde que abriste la pantalla. Actualizá y reintentá.");
+    }
+    // Snapshot the exact connection the owner/admin saw before making a
+    // potentially slow Fudo request. The UI sends an opaque revision (or null
+    // for a disconnected form), NEVER a raw generation UUID.
+    const before = await authorized.db.from("fudo_connections")
+      .select("connection_generation,status,last_tested_at")
+      .eq("business_id", authorized.actor.businessId).maybeSingle();
+    if (before.error) return fail("storage_unavailable", UNKNOWN);
+    const expectedGeneration: string | null = before.data?.connection_generation ?? null;
+    const expectedTestedAt: string | null = before.data?.last_tested_at ?? null;
+    const currentRevision = before.data
+      ? revisionForFudoConnection(
+          authorized.actor, expectedGeneration!, before.data.status, expectedTestedAt,
+        )
+      : null;
+    if (expectedConnectionRevision !== undefined && expectedConnectionRevision !== currentRevision) {
+      return fail("connection_changed", "La conexión Fudo cambió desde que abriste la pantalla. Actualizá y reintentá.");
     }
     const apiKey = typeof input?.apiKey === "string" ? input.apiKey.trim() : "";
     const apiSecret = typeof input?.apiSecret === "string" ? input.apiSecret.trim() : "";
@@ -362,13 +383,21 @@ export async function connectFudo(input: FudoCredentials, expectedBusinessRevisi
       return fail("forbidden", "Tu acceso al negocio cambió durante la prueba. Volvé a ingresar y reintentá.");
     }
     // One transaction coordinates rotation with sync startup. Never check and write separately.
-    const saved = await authorized.db.rpc("fudo_replace_connection", {
+    // The SQL RPC rechecks generation + retest timestamp under the business
+    // transaction lock. A late successful probe cannot resurrect a disconnected
+    // account or overwrite another admin's newer credential rotation.
+    const saved = await authorized.db.rpc("fudo_replace_connection_guarded", {
       p_business_id: authorized.actor.businessId, p_actor_id: authorized.actor.userId,
       p_ciphertext: encrypted,
+      p_expected_generation: expectedGeneration,
+      p_expected_last_tested_at: expectedTestedAt,
     });
     if (saved.error) return fail("storage_unavailable", "No se pudo guardar la conexión cifrada. Verificá la migración Fudo.");
     if (saved.data === "forbidden") return fail("forbidden", "Tu acceso al negocio cambió. Volvé a ingresar.");
     if (saved.data === "sync_running") return fail("sync_running", "Hay una sincronización en curso; esperá antes de rotar credenciales.");
+    if (saved.data === "connection_changed") {
+      return fail("connection_changed", "La conexión Fudo cambió mientras validábamos las credenciales. Actualizá y reintentá.");
+    }
     if (saved.data !== "connected") return fail("storage_unavailable", UNKNOWN);
     return { ok: true, message: "Conexión validada y guardada. Fudo sigue siendo la fuente operativa; GastroPilot solo leerá datos." };
   } catch (error) { return safeFailure(error); }
