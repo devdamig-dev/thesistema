@@ -637,4 +637,72 @@ begin
     'old generation cannot overwrite a rotated connection');
 end $retest$;
 
+
+-- O1: a stale UI or a slow provider probe cannot restore/overwrite a newer
+-- connection. These are transaction-level compare-and-swap fixtures.
+select pg_temp.fudo_assert(
+  has_function_privilege('service_role',
+    'public.fudo_replace_connection_guarded(uuid,uuid,text,uuid,timestamptz)','execute')
+  and not has_function_privilege('anon',
+    'public.fudo_replace_connection_guarded(uuid,uuid,text,uuid,timestamptz)','execute')
+  and not has_function_privilege('authenticated',
+    'public.fudo_replace_connection_guarded(uuid,uuid,text,uuid,timestamptz)','execute'),
+  'guarded rotation RPC only executable by service_role');
+
+do $rotation_guard$
+declare
+  a uuid := '00000000-0000-4000-8000-000000008010';
+  b uuid := '00000000-0000-4000-8000-000000008020';
+  owner_a uuid := '00000000-0000-4000-8000-000000008001';
+  owner_b uuid := '00000000-0000-4000-8000-000000008002';
+  generation uuid;
+  tested timestamptz;
+  fresh_generation uuid;
+  fresh_tested timestamptz;
+begin
+  -- The disconnected form observed NULL/NULL. It can create one connection,
+  -- but cannot overwrite credentials added by another admin afterward.
+  perform pg_temp.fudo_assert(
+    public.fudo_replace_connection_guarded(b,owner_b,repeat('x',100),null,null)='connected',
+    'disconnected form can create first connection');
+  perform pg_temp.fudo_assert(
+    public.fudo_replace_connection_guarded(b,owner_b,repeat('y',100),null,null)='connection_changed',
+    'stale disconnected form cannot overwrite an existing connection');
+  perform pg_temp.fudo_assert(
+    (select credentials_ciphertext=repeat('x',100) from public.fudo_connections where business_id=b),
+    'stale initial form preserves newer ciphertext');
+
+  select connection_generation,last_tested_at into generation,tested
+    from public.fudo_connections where business_id=b;
+  perform pg_temp.fudo_assert(
+    public.fudo_replace_connection_guarded(b,owner_a,repeat('z',100),generation,tested)='forbidden',
+    'wrong tenant cannot rotate via guarded RPC');
+  perform pg_temp.fudo_assert(
+    public.fudo_replace_connection_guarded(b,owner_b,repeat('r',100),generation,tested)='connected',
+    'fresh owner can rotate');
+  select connection_generation,last_tested_at into fresh_generation,fresh_tested
+    from public.fudo_connections where business_id=b;
+  perform pg_temp.fudo_assert(fresh_generation<>generation,
+    'successful rotation advances credential generation');
+  perform pg_temp.fudo_assert(
+    public.fudo_replace_connection_guarded(b,owner_b,repeat('s',100),generation,tested)='connection_changed',
+    'late completed old probe cannot overwrite newer rotation');
+  perform pg_temp.fudo_assert(
+    (select credentials_ciphertext=repeat('r',100) from public.fudo_connections where business_id=b),
+    'late provider probe leaves rotated credentials unchanged');
+
+  perform pg_temp.fudo_assert(
+    public.fudo_record_connection_test(b,fresh_generation,owner_b,fresh_tested,'error','forbidden')='recorded',
+    'fixture can retest without rotating credentials');
+  perform pg_temp.fudo_assert(
+    public.fudo_replace_connection_guarded(b,owner_b,repeat('t',100),fresh_generation,fresh_tested)='connection_changed',
+    'late rotation cannot ignore a newer credential retest');
+  perform pg_temp.fudo_assert(
+    public.fudo_disconnect_connection(b,owner_b)='disconnected',
+    'disconnect works after guarded rotation');
+  perform pg_temp.fudo_assert(
+    public.fudo_replace_connection_guarded(b,owner_b,repeat('u',100),fresh_generation,fresh_tested)='connection_changed',
+    'late rotation cannot resurrect a disconnected connection');
+end $rotation_guard$;
+
 rollback;
