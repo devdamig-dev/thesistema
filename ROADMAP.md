@@ -46,14 +46,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — Rechazos HTTP restantes y timeouts de Fudo (12/11/2026; PR en revisión)
+### O1 — Rechazos HTTP restantes y timeouts de Fudo (12/11/2026; [PR #345](https://github.com/devdamig-dev/thesistema/pull/345) fusionado)
 
-- **Causa raíz observable:** el fallback de `safeError` etiquetaba 405/406/409/410/415 como `provider_unavailable` aunque Fudo respondiera una solicitud incompatible, y marcaba 408/425 como no reintentables pese a ser transitorios.
-- **IMPLEMENTADO EN RAMA:** clasificación de otros HTTP 4xx explícitos como `invalid_response` (sin retry); 408/425 como `provider_unavailable` con `retryable=true`. No se agrega ningún reintento automático, ningún verbo mutante ni lectura de cuerpo/headers sensibles. Los casos específicos 400/401/403/404/422/429 conservan su contrato.
-- **PROBADO:** fixture sintética agregada para POST de auth y GET de recursos, códigos, seguridad de mensajes y cantidad exacta de solicitudes. **Quality pendiente de CI del PR:** no atribuir aprobación anticipada ni validar proveedor real por simulaciones.
-- **DESPLEGADO:** no para este cambio hasta merge + verificación del despliegue.
-- **VALIDADO EN PRODUCCIÓN:** **NO — O1 PILOTO NO-GO.** Aún requiere cuenta Fudo Plan Pro/API autorizada, cinco recursos reales, dos ciclos idempotentes, conciliación y QA autenticada A/B.
-- **Rollback:** revertir únicamente clasificación de errores del cliente Fudo; sin migraciones SQL ni modificaciones de datos de comercios.
+- **Causa raíz / resultado observable:** el fallback de `safeError` etiquetaba 405/406/409/410/415 como `provider_unavailable` aunque Fudo respondiera una solicitud incompatible, y marcaba 408/425 como no reintentables pese a ser transitorios. Ahora auth y GET read-only distinguen rechazos de contrato de fallas temporales.
+- **IMPLEMENTADO / FUSIONADO:** [PR #345](https://github.com/devdamig-dev/thesistema/pull/345), squash `82b94ac484375eb90d3f7c9fe5059691cdf70d07` en `main`. 405/406/409/410/415 y otros 4xx no contemplados se clasifican `invalid_response` sin retry; 408/425 `provider_unavailable` con `retryable=true`. Los 400/401/403/404/422/429 conservan su clasificación; no se agregan reintentos automáticos, filtración de cuerpos/headers sensibles ni escrituras Fudo.
+- **PROBADO (HEAD de PR):** [Quality #43333548043](https://github.com/devdamig-dev/thesistema/actions/runs/43333548043), `completed/success` sobre `000d3eec101e617c86692d82c41b6e8d8aca9a16`. Jobs `verify` (`npm test`, fixtures, typecheck, lint, suites SQL, build, instalación Chromium, Playwright y artifact), `postgres17`, `postgrest` en `success`. Regresión sintética para auth POST y lectura GET en 405/406/409/410/415/408/425, una solicitud por fase sin replay ni exposición de secretos. **Quality independiente del squash de main no acreditado en este registro**; no presentar pruebas sintéticas como QA contra una cuenta Fudo real.
+- **DESPLEGADO / VERCEL PRODUCTION READY:** [deployment `dpl_2a2TJvXXv6V6tK9ubXCjr5eauQog`](https://vercel.com/damians-projects-a45d01bf/thesistema/2a2TJvXXv6V6tK9ubXCjr5eauQog), `target=production`, `readyState=READY`, `githubCommitSha=82b94ac484375eb90d3f7c9fe5059691cdf70d07`, `alias=gastropilot.nexodg.com` y `aliasError=null` verificados directamente en Vercel. El status de preview del HEAD del PR falló por cuota `build-rate-limit`, no por fallo de Quality ni de este despliegue; no se cambió facturación.
+- **VALIDADO EN PRODUCCIÓN:** **NO — O1 PILOTO NO-GO**. Continúan pendientes cuenta Fudo Plan Pro/API autorizada conectada sólo desde UI, cinco recursos reales, conciliación de IDs y conteos, doble ciclo idempotente y QA autenticada multiempresa A/B con aceptación documentada. O2+ pospuesto.
+- **Seguridad / rollback:** cambio exclusivo de clasificación y tests, sin migración SQL, cambios de negocio, credenciales reales o llamadas mutantes Fudo. Revertir el squash #345 devuelve el contrato HTTP anterior.
 
 ### O1 — Clasificación segura de HTTP 400/422 del proveedor (12/11/2026; [PR #343](https://github.com/devdamig-dev/thesistema/pull/343) fusionado)
 
