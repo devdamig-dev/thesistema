@@ -46,6 +46,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Token bearer consistente frente a invalidación concurrente por 401 (13/11/2026; [PR #351](https://github.com/devdamig-dev/thesistema/pull/351) en revisión)
+
+- **Causa raíz / resultado observable:** un GET podía completar `ensureAuthenticated()` y, antes de leer `this.token` en su continuación, otro GET con HTTP 401 borraba el token compartido. Se enviaba `Authorization: Bearer null`, provocando una solicitud inválida y reintentos innecesarios aun habiendo autenticado correctamente.
+- **IMPLEMENTADO EN RAMA, NO FUSIONADO:** `ensureAuthenticated()` devuelve el bearer capturado en su comprobación y el GET ya no lee el estado compartido después del `await`. Si la caché es invalidada mientras se espera un refresh, se permite un segundo intento de autenticación compartida (máximo dos), sin bucles ilimitados. Regresión sintética determinista reproduce la invalidación en esa ventana y comprueba que la solicitud conserva el bearer original y la siguiente renueva la caché.
+- **PROBADO:** **pendiente de Quality Gate del HEAD final de [PR #351](https://github.com/devdamig-dev/thesistema/pull/351)**; no hay test Fudo real ni QA autenticada de empresa A/B.
+- **DESPLEGADO:** **NO**. Cambio sólo TypeScript/test; no requiere migración SQL ni altera persistencia. No fusionar hasta comprobar `verify`, `postgres17` y `postgrest`.
+- **VALIDADO EN PRODUCCIÓN: NO — O1 PILOTO NO-GO.** Requiere cuenta Fudo Pro/API autorizada, lectura/conciliación de cinco recursos, dos ciclos idempotentes, separación de sesiones/negocios y aprobación privada. O2+ continúa pospuesto.
+- **Seguridad / rollback:** los endpoints de recurso siguen usando exclusivamente GET; POST sólo para token de autenticación. No se usan secretos reales. Revertir PR #351 no requiere operaciones sobre datos comerciales o SQL.
+
 ### O1 — Desconexión protegida contra pestañas obsoletas (13/11/2026; [PR #349](https://github.com/devdamig-dev/thesistema/pull/349) fusionado)
 
 - **Causa raíz:** conectar/rotar (#347) ya usa CAS por generación y `last_tested_at`, pero el botón **Desconectar** sólo comprobaba identidad del negocio. Un admin con una pestaña vieja podía borrar una conexión rotada/retesteada por otro admin del mismo negocio.
