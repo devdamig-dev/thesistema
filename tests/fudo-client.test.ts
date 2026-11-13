@@ -1127,3 +1127,38 @@ test("Fudo HTTP 400/422 is a non-retryable contract error on GET and invalid cre
     }
   }
 });
+
+test("Fudo O1 distinguishes remaining provider 4xx contract rejections from transient timeouts", async () => {
+  const now = 1_800_000_000_000;
+  const statuses = [405, 406, 409, 410, 415, 408, 425] as const;
+  for (const phase of ["auth", "read"] as const) {
+    for (const status of statuses) {
+      const calls: string[] = [];
+      const fakeFetch: typeof fetch = async (input, init) => {
+        const url = String(input);
+        calls.push(String(init?.method));
+        if (url === "https://auth.fu.do/api") {
+          return phase === "auth"
+            ? new Response("synthetic-private-auth-error", { status })
+            : jsonResponse({ token: "synthetic-bearer", exp: Math.floor((now + 86_400_000) / 1000) });
+        }
+        return new Response("synthetic-private-read-error", { status });
+      };
+      const client = new FudoClient(
+        { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+        { fetchImpl: fakeFetch, now: () => now },
+      );
+      const transient = status === 408 || status === 425;
+      await assert.rejects(client.testConnection(), (error: unknown) => {
+        assert.ok(error instanceof FudoApiError);
+        assert.equal(error.code, transient ? "provider_unavailable" : "invalid_response");
+        assert.equal(error.status, status);
+        assert.equal(error.retryable, transient);
+        assert.doesNotMatch(error.message, /synthetic-|private-|bearer/i);
+        return true;
+      });
+      assert.deepEqual(calls, phase === "auth" ? ["POST"] : ["POST", "GET"],
+        "never replay provider rejections automatically or send GET after failed authentication");
+    }
+  }
+});
