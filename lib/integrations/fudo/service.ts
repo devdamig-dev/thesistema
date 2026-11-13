@@ -403,7 +403,10 @@ export async function connectFudo(
   } catch (error) { return safeFailure(error); }
 }
 
-export async function testStoredFudoConnection(expectedBusinessRevision?: string): Promise<FudoActionResult> {
+export async function testStoredFudoConnection(
+  expectedBusinessRevision?: string,
+  expectedConnectionRevision?: string,
+): Promise<FudoActionResult> {
   try {
     const authorized = await authorize();
     if (!authorized) return fail("forbidden", "No tenés permiso para probar Fudo.");
@@ -411,13 +414,22 @@ export async function testStoredFudoConnection(expectedBusinessRevision?: string
       return fail("connection_changed", "Cambiaste de negocio desde que abriste la pantalla. Actualizá y reintentá.");
     }
     const { actor, db } = authorized;
-    const stored = await db.from("fudo_connections").select("credentials_ciphertext,connection_generation,last_tested_at")
+    const stored = await db.from("fudo_connections").select("credentials_ciphertext,connection_generation,status,last_tested_at")
       .eq("business_id", actor.businessId).maybeSingle();
     if (stored.error) return fail("storage_unavailable", UNKNOWN);
     if (!stored.data) return fail("not_connected", "Primero conectá Fudo.");
-    const credentials = decryptFudoCredentials(actor.businessId, stored.data.credentials_ciphertext);
     const generation: string = stored.data.connection_generation;
     const testedAtStart: string | null = stored.data.last_tested_at ?? null;
+    // A stale tab may show a connection rotated or retested by another admin.
+    // Reject BEFORE decrypting secrets or contacting Fudo. The SQL CAS below
+    // separately fences changes that occur during the provider GET.
+    if (expectedConnectionRevision !== undefined &&
+      expectedConnectionRevision !== revisionForFudoConnection(
+        actor, generation, stored.data.status, testedAtStart,
+      )) {
+      return fail("connection_changed", "La conexión Fudo cambió desde que abriste la pantalla. Actualizá y reintentá.");
+    }
+    const credentials = decryptFudoCredentials(actor.businessId, stored.data.credentials_ciphertext);
     // A concurrent rotation, retest or role revocation can finish while the
     // provider GET is pending. SQL must fence both membership and the exact
     // generation/test revision in the SAME transaction as the metadata write.
