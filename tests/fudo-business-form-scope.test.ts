@@ -4,6 +4,7 @@ import Module from "node:module";
 
 // Server-only fixture: no browser, customer credentials, database or Fudo GET.
 let businessRevision = "a".repeat(64);
+let connectionRevision: string | null = null;
 const loader = Module as any;
 const originalLoad = loader._load;
 loader._load = function (name: string, ...args: any[]) {
@@ -14,7 +15,7 @@ loader._load = function (name: string, ...args: any[]) {
     return { getFudoConnectionView: async () => ({
       configured: true,
       businessRevision,
-      connectionRevision: null,
+      connectionRevision,
       status: "disconnected",
       lastTestedAt: null,
       lastSyncedAt: null,
@@ -46,15 +47,33 @@ async function getFormKey(): Promise<string | null> {
 test("Fudo form is remounted on business switch so hidden credentials from A cannot survive into B", async () => {
   businessRevision = "a".repeat(64);
   const a = await getFormKey();
-  assert.equal(a, businessRevision);
+  assert.equal(a, `${businessRevision}:disconnected`);
   // A same-business refresh must preserve the form for ordinary retry.
   assert.equal(await getFormKey(), a);
 
   businessRevision = "b".repeat(64);
   const b = await getFormKey();
-  assert.equal(b, businessRevision);
+  assert.equal(b, `${businessRevision}:disconnected`);
   assert.notEqual(b, a, "new business must receive a new React component identity");
 
   businessRevision = "a".repeat(64);
   assert.equal(await getFormKey(), a);
+});
+
+test("Fudo sensitive form remounts after same-business rotation/retest or disconnect", async () => {
+  businessRevision = "a".repeat(64);
+  connectionRevision = null;
+  const disconnected = await getFormKey();
+  connectionRevision = "c".repeat(64);
+  const connected = await getFormKey();
+  assert.notEqual(connected, disconnected);
+  assert.equal(connected, `${businessRevision}:${connectionRevision}`);
+  assert.equal(await getFormKey(), connected, "same revision refresh keeps retry inputs");
+
+  connectionRevision = "d".repeat(64);
+  const retested = await getFormKey();
+  assert.notEqual(retested, connected, "another admin's retest invalidates existing input state");
+
+  connectionRevision = null;
+  assert.equal(await getFormKey(), disconnected, "disconnect invalidates connected input state");
 });
