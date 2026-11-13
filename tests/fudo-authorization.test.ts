@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import Module from "node:module";
+import { createHash } from "node:crypto";
 
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -14,14 +15,26 @@ let storedRow: Record<string, unknown> | null = null;
 let nextGeneration = 1;
 let syncRunning = false;
 let forceRpcForbidden = false;
+let rotateDuringDisconnectRpc = false;
+const disconnectRevision = () => {
+  assert.ok(storedRow, "fixture needs a configured connection");
+  return createHash("sha256").update(JSON.stringify([
+    tenant, storedRow.connection_generation, storedRow.status, storedRow.last_tested_at ?? null,
+  ])).digest("hex");
+};
 const rpcCalls: string[] = [];
 
 const db = {
   async rpc(name: string, args: Record<string, unknown>) {
     rpcCalls.push(name);
-    if (name === "fudo_disconnect_connection") {
+    if (name === "fudo_disconnect_connection_guarded") {
       assert.equal(args.p_business_id, tenant, "disconnect tenant derives from server session");
       assert.equal(args.p_actor_id, USER, "disconnect passes authenticated actor to atomic SQL");
+      if (rotateDuringDisconnectRpc && storedRow) {
+        rotateDuringDisconnectRpc = false;
+        storedRow = { ...storedRow,
+          connection_generation: "00000000-0000-4000-8000-000000000099" };
+      }
     }
     if (forceRpcForbidden) return { data: "forbidden", error: null };
     if (name === "fudo_replace_connection_guarded") {
@@ -41,7 +54,10 @@ const db = {
       };
       return { data: "connected", error: null };
     }
-    if (name === "fudo_disconnect_connection") {
+    if (name === "fudo_disconnect_connection_guarded") {
+      if ((args.p_expected_generation ?? null) !== (storedRow?.connection_generation ?? null)
+        || (args.p_expected_last_tested_at ?? null) !== (storedRow?.last_tested_at ?? null)
+        || !storedRow) return { data: "connection_changed", error: null };
       if (syncRunning) return { data: "sync_running", error: null };
       storedRow = null;
       return { data: "disconnected", error: null };
@@ -164,6 +180,10 @@ test("Fudo owner connection derives business_id from validated server session an
 
 test("Fudo connection and disconnection both defer to atomic DB lifecycle lock", async () => {
   role = "owner"; tenant = A; validMembership = true; syncRunning = true;
+  storedRow = {
+    business_id: A, status: "connected", credentials_ciphertext: "synthetic-encrypted",
+    connection_generation: "00000000-0000-4000-8000-000000000010", last_tested_at: null,
+  };
   const beforeFetch = globalThis.fetch;
   const beforeKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
   process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
@@ -175,15 +195,13 @@ test("Fudo connection and disconnection both defer to atomic DB lifecycle lock",
     const blockedConnect = await connectFudo(credentials);
     assert.equal(blockedConnect.ok, false);
     if (!blockedConnect.ok) assert.equal(blockedConnect.code, "sync_running");
-    const blockedDisconnect = await disconnectFudo();
+    const blockedDisconnect = await disconnectFudo(undefined, disconnectRevision());
     assert.equal(blockedDisconnect.ok, false);
     if (!blockedDisconnect.ok) assert.equal(blockedDisconnect.code, "sync_running");
     syncRunning = false;
-    const rendered = await getFudoConnectionView();
-    assert.ok(rendered?.businessRevision);
-    const disconnected = await disconnectFudo(rendered.businessRevision);
+    const disconnected = await disconnectFudo(undefined, disconnectRevision());
     assert.equal(disconnected.ok, true);
-    assert.ok(rpcCalls.includes("fudo_disconnect_connection"));
+    assert.ok(rpcCalls.includes("fudo_disconnect_connection_guarded"));
   } finally {
     syncRunning = false;
     globalThis.fetch = beforeFetch;
@@ -320,6 +338,10 @@ test("Fudo stale same-business form and late provider response cannot overwrite 
 test("Fudo lifecycle surfaces a transaction-time permission denial without exposing credentials", async () => {
   role = "owner"; tenant = A; validMembership = true; profileActive = true;
   syncRunning = false; forceRpcForbidden = true;
+  storedRow = {
+    business_id: A, status: "connected", credentials_ciphertext: "synthetic-encrypted",
+    connection_generation: "00000000-0000-4000-8000-000000000020", last_tested_at: null,
+  };
   const previousFetch = globalThis.fetch;
   const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
   process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32, 27).toString("base64");
@@ -334,7 +356,7 @@ test("Fudo lifecycle surfaces a transaction-time permission denial without expos
       assert.equal(connect.code, "forbidden");
       assert.doesNotMatch(connect.message, /pilot-test-api-key|pilot-test-secret|synthetic-token/);
     }
-    const disconnect = await disconnectFudo();
+    const disconnect = await disconnectFudo(undefined, disconnectRevision());
     assert.equal(disconnect.ok, false);
     if (!disconnect.ok) assert.equal(disconnect.code, "forbidden");
     assert.deepEqual(storedRow, before, "SQL denial cannot change connection");
@@ -344,6 +366,45 @@ test("Fudo lifecycle surfaces a transaction-time permission denial without expos
     if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
   }
+});
+
+test("Fudo same-business stale disconnect cannot delete newer credentials, even at SQL commit time", async () => {
+  role = "owner"; tenant = A; validMembership = true; profileActive = true; syncRunning = false;
+  storedRow = {
+    business_id: A, status: "connected", credentials_ciphertext: "synthetic-old",
+    connection_generation: "00000000-0000-4000-8000-000000000030",
+    last_tested_at: "2026-11-13T07:00:00.000Z",
+  };
+  const oldRevision = disconnectRevision();
+  const beforeCalls = rpcCalls.length;
+  storedRow = { ...storedRow, connection_generation: "00000000-0000-4000-8000-000000000031",
+    credentials_ciphertext: "synthetic-new" };
+  const stale = await disconnectFudo(undefined, oldRevision);
+  assert.equal(stale.ok, false);
+  if (!stale.ok) assert.equal(stale.code, "connection_changed");
+  assert.equal(rpcCalls.length, beforeCalls, "stale UI rejected before invoking SQL");
+  assert.equal(storedRow.credentials_ciphertext, "synthetic-new");
+
+  const beforeRetest = disconnectRevision();
+  storedRow = { ...storedRow, last_tested_at: "2026-11-13T07:01:00.000Z" };
+  const staleRetest = await disconnectFudo(undefined, beforeRetest);
+  assert.equal(staleRetest.ok, false);
+  if (!staleRetest.ok) assert.equal(staleRetest.code, "connection_changed");
+  assert.equal(storedRow.credentials_ciphertext, "synthetic-new");
+
+  const currentRevision = disconnectRevision();
+  rotateDuringDisconnectRpc = true;
+  const raced = await disconnectFudo(undefined, currentRevision);
+  assert.equal(raced.ok, false);
+  if (!raced.ok) assert.equal(raced.code, "connection_changed");
+  assert.equal(storedRow.credentials_ciphertext, "synthetic-new",
+    "transaction-time change preserves newly rotated ciphertext");
+
+  const latest = await disconnectFudo(undefined, disconnectRevision());
+  assert.equal(latest.ok, true);
+  assert.equal(storedRow, null, "current confirmation deletes credentials");
+  const replay = await disconnectFudo(undefined, currentRevision);
+  assert.equal(replay.ok, false, "replayed stale confirmation cannot disconnect anything");
 });
 
 test("Fudo O1 lifecycle actions reject a stale business tab before any provider request or privileged mutation", async () => {
