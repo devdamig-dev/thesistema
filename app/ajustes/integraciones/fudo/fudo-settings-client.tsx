@@ -333,7 +333,7 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
         <Button variant="outline" disabled={working}
           onClick={() => {
             if (window.confirm("¿Desconectar Fudo y eliminar las credenciales guardadas?")) {
-              execute(() => disconnectFudoAction(status.businessRevision ?? ""), true);
+              execute(() => disconnectFudoAction(status.businessRevision ?? "", status.connectionRevision ?? ""), true);
             }
           }}>
           <Unplug className="h-4 w-4" /> Desconectar Fudo

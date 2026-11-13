@@ -705,4 +705,65 @@ begin
     'late rotation cannot resurrect a disconnected connection');
 end $rotation_guard$;
 
+
+-- O1: same-business disconnect confirmation must compare the rendered
+-- generation + last retest timestamp inside the business transaction.
+select pg_temp.fudo_assert(
+  has_function_privilege('service_role',
+    'public.fudo_disconnect_connection_guarded(uuid,uuid,uuid,timestamptz)','execute')
+  and not has_function_privilege('anon',
+    'public.fudo_disconnect_connection_guarded(uuid,uuid,uuid,timestamptz)','execute')
+  and not has_function_privilege('authenticated',
+    'public.fudo_disconnect_connection_guarded(uuid,uuid,uuid,timestamptz)','execute'),
+  'guarded disconnect RPC only executable by service_role');
+
+do $disconnect_guard$
+declare
+  b uuid := '00000000-0000-4000-8000-000000008020';
+  owner_a uuid := '00000000-0000-4000-8000-000000008001';
+  owner_b uuid := '00000000-0000-4000-8000-000000008002';
+  old_generation uuid;
+  new_generation uuid;
+  old_tested timestamptz;
+  new_tested timestamptz;
+begin
+  perform pg_temp.fudo_assert(
+    public.fudo_replace_connection(b,owner_b,repeat('a',100))='connected',
+    'fixture owner creates credentials for guarded disconnect');
+  select connection_generation,last_tested_at into old_generation,old_tested
+    from public.fudo_connections where business_id=b;
+  perform pg_temp.fudo_assert(
+    public.fudo_disconnect_connection_guarded(b,owner_a,old_generation,old_tested)='forbidden',
+    'wrong business actor cannot disconnect with a valid snapshot');
+
+  perform pg_temp.fudo_assert(
+    public.fudo_replace_connection(b,owner_b,repeat('b',100))='connected',
+    'second administrator rotates credentials');
+  select connection_generation,last_tested_at into new_generation,new_tested
+    from public.fudo_connections where business_id=b;
+  perform pg_temp.fudo_assert(new_generation<>old_generation,
+    'rotation changes generation');
+  perform pg_temp.fudo_assert(
+    public.fudo_disconnect_connection_guarded(b,owner_b,old_generation,old_tested)='connection_changed',
+    'stale confirmation cannot delete rotated credentials');
+  perform pg_temp.fudo_assert(
+    (select credentials_ciphertext=repeat('b',100) from public.fudo_connections where business_id=b),
+    'rotated credentials are preserved');
+
+  perform pg_temp.fudo_assert(
+    public.fudo_record_connection_test(b,new_generation,owner_b,new_tested,'error','forbidden')='recorded',
+    'fixture retest advances connection revision');
+  perform pg_temp.fudo_assert(
+    public.fudo_disconnect_connection_guarded(b,owner_b,new_generation,new_tested)='connection_changed',
+    'stale confirmation cannot ignore a retest of the same generation');
+  select last_tested_at into new_tested
+    from public.fudo_connections where business_id=b;
+  perform pg_temp.fudo_assert(
+    public.fudo_disconnect_connection_guarded(b,owner_b,new_generation,new_tested)='disconnected',
+    'current owner confirmation disconnects safely');
+  perform pg_temp.fudo_assert(
+    public.fudo_disconnect_connection_guarded(b,owner_b,new_generation,new_tested)='connection_changed',
+    'replayed confirmation cannot disconnect a future connection');
+end $disconnect_guard$;
+
 rollback;
