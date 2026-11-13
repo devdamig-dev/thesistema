@@ -9,6 +9,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isDemoMode } from "@/lib/env";
 import { useToast } from "@/components/ui/toast";
 import { safeAppRedirectPath } from "@/lib/auth/redirect";
+import { googleCallbackUrl } from "@/lib/auth/google";
 
 export default function LoginPage() {
   return (
@@ -24,6 +25,9 @@ function LoginPageInner() {
   const next = safeAppRedirectPath(params.get("next"));
   const inviteToken = params.get("invite_token");
   const authCode = params.get("code");
+  const oauthComplete = params.get("oauth") === "complete";
+  const authError = params.get("error");
+  const googleEnabled = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === "true";
   const recovery = params.get("recovery") === "1";
   const demoMode = isDemoMode();
   const { toast } = useToast();
@@ -125,6 +129,26 @@ function LoginPageInner() {
       cancelled = true;
     };
   }, [acceptPendingInvite, authCode, inviteToken, next, recovery, router, toast]);
+
+  async function handleGoogleLogin() {
+    if (sending || !googleEnabled || demoMode) return;
+    setSending(true);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      if (!supabase) throw new Error("Access unavailable");
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: googleCallbackUrl(window.location.origin, next, inviteToken),
+          queryParams: { prompt: "select_account" },
+        },
+      });
+      if (error) throw error;
+    } catch {
+      toast({ tone: "warn", title: "No pudimos abrir Google", description: "Reintentá o ingresá con tu email." });
+      setSending(false);
+    }
+  }
 
   async function handlePasswordLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -455,11 +479,25 @@ function LoginPageInner() {
             <p className="mt-1 text-sm text-ink-muted">{subtitle}</p>
           </div>
 
+          {authError && (
+            <p role="alert" className="rounded-xl border border-line p-3 text-sm text-ink-muted">
+              {authError === "oauth_cancelled"
+                ? "El acceso con Google no se completó. Podés reintentarlo o usar tu email."
+                : "No pudimos completar el acceso. Volvé a iniciar sesión."}
+            </p>
+          )}
+
+          {googleEnabled && !demoMode && !completingLogin && !recoveryReady && mode !== "recover" && !(oauthComplete && inviteToken) && (
+            <Button type="button" variant="outline" size="lg" className="w-full" onClick={handleGoogleLogin} disabled={sending || acceptingInvite}>
+              {sending ? "Abriendo Google…" : "Continuar con Google"}
+            </Button>
+          )}
+
           {!completingLogin && !recoveryReady && mode !== "recover" && mode !== "signup" && inviteToken && (
             <div className="rounded-xl border border-ai-400/30 bg-ai-500/[0.06] p-3">
               <div className="text-[10px] uppercase tracking-wider text-ai-400">Invitación pendiente</div>
               <p className="mt-1 text-xs text-ink">
-                Si ya tenés una sesión iniciada, podés aceptarla directamente.
+                {oauthComplete ? "Tu acceso con Google está confirmado. Aceptá la invitación para entrar al negocio." : "Si ya tenés una sesión iniciada, podés aceptarla directamente."}
               </p>
               <Button
                 size="sm"

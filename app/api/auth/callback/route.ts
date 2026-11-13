@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { safeAppRedirectPath } from "@/lib/auth/redirect";
+import { googleInvitationReturn } from "@/lib/auth/google";
 
 function authRedirect(destination: URL) {
   const response = NextResponse.redirect(destination);
@@ -15,6 +16,15 @@ export async function GET(request: NextRequest) {
   const code = url.searchParams.get("code");
   const next = safeAppRedirectPath(url.searchParams.get("next"));
   const flow = url.searchParams.get("flow");
+  const inviteToken = url.searchParams.get("invite_token");
+
+  if (url.searchParams.has("error")) {
+    const destination = new URL("/login", url.origin);
+    destination.searchParams.set("error", "oauth_cancelled");
+    destination.searchParams.set("next", next);
+    if (inviteToken) destination.searchParams.set("invite_token", inviteToken);
+    return authRedirect(destination);
+  }
 
   if (!code) {
     const destination = new URL("/login", url.origin);
@@ -41,6 +51,10 @@ export async function GET(request: NextRequest) {
 
   if (flow === "recovery") {
     return authRedirect(new URL("/restablecer-contrasena", url.origin));
+  }
+
+  if (inviteToken) {
+    return authRedirect(new URL(googleInvitationReturn(next, inviteToken), url.origin));
   }
 
   return authRedirect(new URL(next, url.origin));
