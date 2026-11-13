@@ -30,9 +30,11 @@ export async function testFudoConnectionAction(expectedBusinessRevision: string)
   if (!validBusinessRevision(expectedBusinessRevision)) return staleBusiness();
   return refresh(testStoredFudoConnection(expectedBusinessRevision));
 }
-export async function disconnectFudoAction(expectedBusinessRevision: string) {
-  if (!validBusinessRevision(expectedBusinessRevision)) return staleBusiness();
-  return refresh(disconnectFudo(expectedBusinessRevision));
+export async function disconnectFudoAction(expectedBusinessRevision: string, expectedConnectionRevision: string) {
+  if (!validBusinessRevision(expectedBusinessRevision) || !validBusinessRevision(expectedConnectionRevision)) {
+    return staleBusiness();
+  }
+  return refresh(disconnectFudo(expectedBusinessRevision, expectedConnectionRevision));
 }
 export async function syncFudoAction(expectedConnectionRevision: string) {
   // Never allow a client to omit the connection/tenant fence and initiate a
