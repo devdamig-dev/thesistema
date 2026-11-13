@@ -126,6 +126,28 @@ function safeError(status: number, phase: "auth" | "read"): FudoApiError {
       true,
     );
   }
+  // A provider-side timeout or early-request rejection is transient, not
+  // evidence that our query or credentials are incompatible. No automatic
+  // replay: callers may choose a fresh manual read from the durable cursor.
+  if (status === 408 || status === 425) {
+    return new FudoApiError(
+      "provider_unavailable",
+      "Fudo no pudo completar temporalmente la consulta.",
+      status,
+      true,
+    );
+  }
+  // Other HTTP 4xx (e.g. 405/406/409/410/415) are explicit provider
+  // rejections, not outages. Never retry these as transient failures or
+  // surface provider error bodies/headers in operator feedback.
+  if (status >= 400 && status < 500) {
+    return new FudoApiError(
+      "invalid_response",
+      "Fudo rechazó una solicitud incompatible con su API.",
+      status,
+      false,
+    );
+  }
   return new FudoApiError(
     "provider_unavailable",
     "Fudo no pudo responder correctamente.",

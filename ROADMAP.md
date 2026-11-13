@@ -46,6 +46,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Rechazos HTTP restantes y timeouts de Fudo (12/11/2026; PR en revisión)
+
+- **Causa raíz observable:** el fallback de `safeError` etiquetaba 405/406/409/410/415 como `provider_unavailable` aunque Fudo respondiera una solicitud incompatible, y marcaba 408/425 como no reintentables pese a ser transitorios.
+- **IMPLEMENTADO EN RAMA:** clasificación de otros HTTP 4xx explícitos como `invalid_response` (sin retry); 408/425 como `provider_unavailable` con `retryable=true`. No se agrega ningún reintento automático, ningún verbo mutante ni lectura de cuerpo/headers sensibles. Los casos específicos 400/401/403/404/422/429 conservan su contrato.
+- **PROBADO:** fixture sintética agregada para POST de auth y GET de recursos, códigos, seguridad de mensajes y cantidad exacta de solicitudes. **Quality pendiente de CI del PR:** no atribuir aprobación anticipada ni validar proveedor real por simulaciones.
+- **DESPLEGADO:** no para este cambio hasta merge + verificación del despliegue.
+- **VALIDADO EN PRODUCCIÓN:** **NO — O1 PILOTO NO-GO.** Aún requiere cuenta Fudo Plan Pro/API autorizada, cinco recursos reales, dos ciclos idempotentes, conciliación y QA autenticada A/B.
+- **Rollback:** revertir únicamente clasificación de errores del cliente Fudo; sin migraciones SQL ni modificaciones de datos de comercios.
+
 ### O1 — Clasificación segura de HTTP 400/422 del proveedor (12/11/2026; [PR #343](https://github.com/devdamig-dev/thesistema/pull/343) fusionado)
 
 - **Causa raíz / resultado observable:** el adaptador clasificaba HTTP 400/422 de GET read-only como `provider_unavailable`, ocultando rechazos del contrato HTTP. Ahora GET 400/422 da `invalid_response` y auth POST 400/422 da `invalid_credentials`, ambos sin retry ni filtración de cuerpo del proveedor, tokens, URL o secretos; se mantienen los GET de recursos y no hay escrituras a Fudo.
