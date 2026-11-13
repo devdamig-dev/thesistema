@@ -46,6 +46,16 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Retest de credenciales vinculado a la revisión visible (13/11/2026; PR en revisión)
+
+- **Causa raíz:** el botón «Probar conexión» validaba el negocio, pero no la revisión de la conexión que el administrador estaba viendo. Tras una rotación o nuevo test de otro administrador **dentro del mismo negocio**, una pestaña obsoleta podía consultar las credenciales actuales y modificar su estado de salud; el CAS SQL sólo impedía cambios durante el GET, no antes de iniciarlo.
+- **Resultado observable:** la Server Action exige la revisión opaca de conexión mostrada en la UI; el servicio compara generación, estado y fecha de test contra la conexión persistida **antes de descifrar credenciales o realizar POST de autenticación y GET a productos**. Si cambió, responde `connection_changed`, sin llamadas a Fudo ni modificación de metadata. Se mantiene el CAS SQL vigente para cambios que ocurran mientras la prueba está en vuelo.
+- **IMPLEMENTADO (rama/PR):** acción, servicio, UI y regresiones sintéticas para rotación/retest previos, revisión inválida, rechazo antes de HTTP/SQL y test válido. Sin migración ni cambios a datos comerciales, staging, sincronización o verbos de Fudo.
+- **PROBADO:** pendiente de Quality Gate del PR; fixtures no equivalen a proveedor real.
+- **DESPLEGADO:** no, hasta merge y verificación de publicación.
+- **VALIDADO EN PRODUCCIÓN: NO — O1 PILOTO NO-GO.** Requiere cuenta Fudo Pro/API autorizada, lectura y conciliación de cinco recursos, dos ciclos idempotentes y QA real autenticada multiempresa A/B.
+- **Rollback:** revertir el cambio de acción/UI/servicio/tests. No requiere SQL ni acceso a datos del negocio.
+
 ### O1 — Token bearer consistente frente a invalidación concurrente por 401 (13/11/2026; [PR #351](https://github.com/devdamig-dev/thesistema/pull/351) fusionado)
 
 - **Causa raíz / resultado observable:** un GET podía completar `ensureAuthenticated()` y, antes de leer `this.token` en su continuación, otro GET con HTTP 401 borraba el token compartido. Se enviaba `Authorization: Bearer null`, provocando una solicitud inválida y reintentos innecesarios aun habiendo autenticado correctamente.
