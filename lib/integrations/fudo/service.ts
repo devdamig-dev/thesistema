@@ -539,22 +539,47 @@ export async function inspectFudoReadPermissions(expectedBusinessRevision?: stri
   }
 }
 
-export async function disconnectFudo(expectedBusinessRevision?: string): Promise<FudoActionResult> {
+export async function disconnectFudo(
+  expectedBusinessRevision?: string,
+  expectedConnectionRevision?: string,
+): Promise<FudoActionResult> {
   try {
     const authorized = await authorize();
     if (!authorized) return fail("forbidden", "No tenés permiso para desconectar Fudo.");
     if (!matchesFudoBusinessRevision(authorized.actor, expectedBusinessRevision)) {
       return fail("connection_changed", "Cambiaste de negocio desde que abriste la pantalla. Actualizá y reintentá.");
     }
+    // Disconnect is destructive for the integration: never apply a stale tab's
+    // confirmation to credentials rotated or retested by another administrator.
+    if (typeof expectedConnectionRevision !== "string" || !/^[a-f0-9]{64}$/.test(expectedConnectionRevision)) {
+      return fail("connection_changed", "La conexión Fudo cambió. Actualizá la pantalla antes de desconectar.");
+    }
     const { actor, db } = authorized;
-    // Runs abandoned by serverless invocations are recovered here, even if credentials
-    // can no longer be decrypted (e.g. after a server key rotation).
-    const removed = await db.rpc("fudo_disconnect_connection", {
+    const before = await db.from("fudo_connections")
+      .select("connection_generation,status,last_tested_at")
+      .eq("business_id", actor.businessId).maybeSingle();
+    if (before.error) return fail("storage_unavailable", UNKNOWN);
+    if (!before.data) return fail("connection_changed", "La conexión Fudo ya no está disponible. Actualizá la pantalla.");
+    const generation: string = before.data.connection_generation;
+    const lastTestedAt: string | null = before.data.last_tested_at ?? null;
+    if (expectedConnectionRevision !== revisionForFudoConnection(
+      actor, generation, before.data.status, lastTestedAt,
+    )) {
+      return fail("connection_changed", "La conexión Fudo cambió desde que abriste la pantalla. Actualizá y reintentá.");
+    }
+    // The same business-level lock protects disconnect, rotation, retest and
+    // sync. SQL compares the observed generation/test revision INSIDE the
+    // transaction before deleting ciphertext, closing the preflight/write race.
+    const removed = await db.rpc("fudo_disconnect_connection_guarded", {
       p_business_id: actor.businessId, p_actor_id: actor.userId,
+      p_expected_generation: generation, p_expected_last_tested_at: lastTestedAt,
     });
-    if (removed.error) return fail("storage_unavailable", UNKNOWN);
+    if (removed.error) return fail("storage_unavailable", "No se pudo desconectar Fudo. Verificá la migración de seguridad.");
     if (removed.data === "forbidden") return fail("forbidden", "Tu acceso al negocio cambió. Volvé a ingresar.");
     if (removed.data === "sync_running") return fail("sync_running", "Hay una sincronización en curso. Reintentá cuando termine.");
+    if (removed.data === "connection_changed") {
+      return fail("connection_changed", "La conexión Fudo cambió mientras confirmabas la desconexión. Actualizá y reintentá.");
+    }
     if (removed.data !== "disconnected") return fail("storage_unavailable", UNKNOWN);
     return { ok: true, message: "Se eliminaron las credenciales. Se conserva la importación histórica para auditoría interna; no habrá nuevas consultas a Fudo." };
   } catch (error) { return safeFailure(error); }
