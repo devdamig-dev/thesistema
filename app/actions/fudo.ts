@@ -26,9 +26,13 @@ export async function connectFudoAction(
   }
   return refresh(connectFudo(input, expectedBusinessRevision, expectedConnectionRevision));
 }
-export async function testFudoConnectionAction(expectedBusinessRevision: string) {
+export async function testFudoConnectionAction(expectedBusinessRevision: string, expectedConnectionRevision: string) {
   if (!validBusinessRevision(expectedBusinessRevision)) return staleBusiness();
-  return refresh(testStoredFudoConnection(expectedBusinessRevision));
+  if (!validBusinessRevision(expectedConnectionRevision)) {
+    return { ok: false as const, code: "connection_changed",
+      message: "La conexión Fudo cambió. Actualizá la pantalla y reintentá." };
+  }
+  return refresh(testStoredFudoConnection(expectedBusinessRevision, expectedConnectionRevision));
 }
 export async function disconnectFudoAction(expectedBusinessRevision: string, expectedConnectionRevision: string) {
   if (!validBusinessRevision(expectedBusinessRevision) || !validBusinessRevision(expectedConnectionRevision)) {
