@@ -11,6 +11,7 @@ let validMembership = false;
 let profileActive = true;
 let memberLookups = 0;
 let storedRow: Record<string, unknown> | null = null;
+let nextGeneration = 1;
 let syncRunning = false;
 let forceRpcForbidden = false;
 const rpcCalls: string[] = [];
@@ -23,12 +24,20 @@ const db = {
       assert.equal(args.p_actor_id, USER, "disconnect passes authenticated actor to atomic SQL");
     }
     if (forceRpcForbidden) return { data: "forbidden", error: null };
-    if (name === "fudo_replace_connection") {
+    if (name === "fudo_replace_connection_guarded") {
       if (syncRunning) return { data: "sync_running", error: null };
+      // Simulate the atomic SQL guard, including a competing admin's rotation
+      // or disconnect between the provider GET and the privileged commit.
+      if ((args.p_expected_generation ?? null) !== (storedRow?.connection_generation ?? null)
+        || (args.p_expected_last_tested_at ?? null) !== (storedRow?.last_tested_at ?? null)) {
+        return { data: "connection_changed", error: null };
+      }
       storedRow = {
         business_id: args.p_business_id,
         credentials_ciphertext: args.p_ciphertext,
         status: "connected",
+        connection_generation: `00000000-0000-4000-8000-${String(nextGeneration++).padStart(12, "0")}`,
+        last_tested_at: new Date(Date.UTC(2026, 10, 13, 7, 0, nextGeneration)).toISOString(),
       };
       return { data: "connected", error: null };
     }
@@ -41,13 +50,19 @@ const db = {
   },
   from(table: string) {
     const filters: Record<string, unknown> = {};
+    let selection = "";
     const query: any = {
-      select(_fields: string) { return this; },
+      select(fields: string) { selection = fields; return this; },
       eq(field: string, value: unknown) { filters[field] = value; return this; },
       in(_field: string, _values: string[]) { return this; },
       limit(_value: number) { return Promise.resolve({ data: [], error: null }); },
       async maybeSingle() {
         if (table === "profiles") return { data: { active: profileActive }, error: null };
+        // Only the new CAS snapshot query needs a real stored row. Other
+        // fixture queries keep their established empty-view behavior.
+        if (table === "fudo_connections" && selection === "connection_generation,status,last_tested_at") {
+          return { data: storedRow, error: null };
+        }
         if (table === "business_members") {
           memberLookups++;
           return { data: validMembership && filters.business_id === tenant && filters.user_id === USER
@@ -134,7 +149,7 @@ test("Fudo owner connection derives business_id from validated server session an
     assert.ok(saved);
     assert.equal(saved.business_id, A);
     assert.equal(saved.status, "connected");
-    assert.ok(rpcCalls.includes("fudo_replace_connection"));
+    assert.ok(rpcCalls.includes("fudo_replace_connection_guarded"));
     const encoded = String(saved.credentials_ciphertext);
     assert.ok(encoded.startsWith("v1."));
     assert.ok(!encoded.includes(credentials.apiKey));
@@ -180,7 +195,7 @@ test("Fudo connection and disconnection both defer to atomic DB lifecycle lock",
 test("Fudo connection does not persist credentials when HTTP 200 body is not importable", async () => {
   role = "owner"; tenant = A; validMembership = true; profileActive = true; syncRunning = false;
   storedRow = null;
-  const writesBefore = rpcCalls.filter((call) => call === "fudo_replace_connection").length;
+  const writesBefore = rpcCalls.filter((call) => call === "fudo_replace_connection_guarded").length;
   const previousFetch = globalThis.fetch;
   const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
   process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32, 21).toString("base64");
@@ -196,7 +211,7 @@ test("Fudo connection does not persist credentials when HTTP 200 body is not imp
       assert.doesNotMatch(result.message, /private-data|example-token|pilot-test/i);
     }
     assert.equal(storedRow, null);
-    assert.equal(rpcCalls.filter((call) => call === "fudo_replace_connection").length, writesBefore);
+    assert.equal(rpcCalls.filter((call) => call === "fudo_replace_connection_guarded").length, writesBefore);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
@@ -212,7 +227,7 @@ test("Fudo O1 denies a connection if the actor loses membership or switches tena
     for (const change of ["membership_revoked", "tenant_switched"] as const) {
       role = "owner"; tenant = A; validMembership = true; profileActive = true;
       syncRunning = false; storedRow = null;
-      const writesBefore = rpcCalls.filter((call) => call === "fudo_replace_connection").length;
+      const writesBefore = rpcCalls.filter((call) => call === "fudo_replace_connection_guarded").length;
       const providerVerbs: string[] = [];
       globalThis.fetch = async (input, init) => {
         const url = String(input);
@@ -236,7 +251,7 @@ test("Fudo O1 denies a connection if the actor loses membership or switches tena
       }
       assert.deepEqual(providerVerbs, ["GET"], change);
       assert.equal(storedRow, null, "revoked or switched actors cannot save ciphertext");
-      assert.equal(rpcCalls.filter((call) => call === "fudo_replace_connection").length,
+      assert.equal(rpcCalls.filter((call) => call === "fudo_replace_connection_guarded").length,
         writesBefore, "the privileged write RPC must not be called after actor change");
     }
   } finally {
@@ -244,6 +259,61 @@ test("Fudo O1 denies a connection if the actor loses membership or switches tena
     globalThis.fetch = beforeFetch;
     if (beforeKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = beforeKey;
+  }
+});
+
+
+test("Fudo stale same-business form and late provider response cannot overwrite newer credentials", async () => {
+  role = "owner"; tenant = A; validMembership = true; profileActive = true; syncRunning = false;
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32, 43).toString("base64");
+  const later = {
+    business_id: A, status: "connected", credentials_ciphertext: "fixture-only",
+    connection_generation: "00000000-0000-4000-8000-000000000091",
+    last_tested_at: "2026-11-13T07:01:00.000Z",
+  };
+  try {
+    storedRow = null;
+    const disconnected = await getFudoConnectionView();
+    assert.ok(disconnected?.businessRevision);
+    assert.equal(disconnected.connectionRevision, null);
+    // Someone else connects after our tab rendered. Reject before any
+    // upstream auth/GET, and leave that other admin's credentials unchanged.
+    storedRow = { ...later };
+    const beforeRpc = rpcCalls.length;
+    let requests = 0;
+    globalThis.fetch = async () => { requests++; throw new Error("unexpected provider request"); };
+    const stale = await connectFudo(credentials, disconnected.businessRevision, null);
+    assert.equal(stale.ok, false);
+    if (!stale.ok) assert.equal(stale.code, "connection_changed");
+    assert.equal(requests, 0);
+    assert.equal(rpcCalls.length, beforeRpc);
+    assert.equal(storedRow.credentials_ciphertext, "fixture-only");
+
+    // Two initial connects can also race while the first server waits on Fudo.
+    // SQL compares the observed null generation under the business lock.
+    storedRow = null;
+    globalThis.fetch = async (input, init) => {
+      assert.ok(["POST", "GET"].includes(String(init?.method)));
+      if (String(input).includes("auth.fu.do")) {
+        return new Response(JSON.stringify({
+          token: "synthetic-token", exp: Math.floor(Date.now()/1000) + 86400,
+        }), { status: 200 });
+      }
+      storedRow = { ...later };
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    };
+    const raced = await connectFudo(credentials, disconnected.businessRevision, null);
+    assert.equal(raced.ok, false);
+    if (!raced.ok) assert.equal(raced.code, "connection_changed");
+    assert.equal((storedRow as Record<string, unknown> | null)?.credentials_ciphertext, "fixture-only");
+    assert.equal(rpcCalls.at(-1), "fudo_replace_connection_guarded");
+  } finally {
+    storedRow = null;
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
   }
 });
 

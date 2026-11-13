@@ -9,7 +9,7 @@ export default async function FudoSettingsPage() {
   return <div className="space-y-6">
     <SectionHeader eyebrow="Integraciones · Fudo" title="Conectá Fudo sin interrumpir tu negocio"
       description="Primero importamos y contrastamos datos. El objetivo es reemplazar Fudo una vez que GastroPilot pueda cubrir toda la operación." />
-    {status ? <FudoSettingsClient key={status.businessRevision} status={status} />
+    {status ? <FudoSettingsClient key={`${status.businessRevision}:${status.connectionRevision ?? "disconnected"}`} status={status} />
       : <div className="rounded-xl border border-line p-5 text-sm text-ink-muted">
         No pudimos comprobar la configuración o tus permisos. Esta sección requiere un owner/admin
         autenticado y la migración Fudo instalada en Supabase.

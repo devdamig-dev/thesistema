@@ -132,7 +132,7 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
             <Button variant="primary" disabled={working || key.trim().length < 8 || secret.trim().length < 8}
-              onClick={() => execute(() => connectFudoAction({ apiKey: key, apiSecret: secret }, status.businessRevision ?? ""), true)}>
+              onClick={() => execute(() => connectFudoAction({ apiKey: key, apiSecret: secret }, status.businessRevision ?? "", status.connectionRevision), true)}>
               <PlugZap className="h-4 w-4" /> {working ? "Procesando…" : hasCredentials ? "Validar y reemplazar" : "Conectar y validar"}
             </Button>
             {hasCredentials && <Button disabled={working} onClick={() => execute(() => testFudoConnectionAction(status.businessRevision ?? ""))}>
