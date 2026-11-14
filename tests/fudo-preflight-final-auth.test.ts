@@ -21,6 +21,7 @@ let connectionReads = 0;
 let connectionStatus: "connected" | "error" = "connected";
 let connectionGeneration = GENERATION;
 let connectionTestedAt = "2026-11-07T00:00:00Z";
+let duringInitialConnectionRead: (() => void) | null = null;
 let duringFinalConnectionRead: (() => void) | null = null;
 
 const db = {
@@ -54,6 +55,7 @@ const db = {
         // The first authorization after provider GETs has already passed.
         // A concurrent revocation lands during the LAST connection metadata
         // read, before the preflight would otherwise publish five green checks.
+        if (connectionReads === 1) duringInitialConnectionRead?.();
         if (connectionReads === 2) duringFinalConnectionRead?.();
         return { data: row, error: null };
       },
@@ -222,5 +224,46 @@ test("Fudo permission probe refuses stale same-business rotation/retest before a
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
+
+test("Fudo permissions never authenticate after context changes during initial connection read", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  let outbound = 0;
+  // The old flow would decrypt before noticing revocation; without a key
+  // that fails locally. Keep a synthetic key so the test detects HTTP too.
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  globalThis.fetch = async () => {
+    outbound++;
+    throw new Error("Revoked actors must not contact Fudo");
+  };
+  try {
+    for (const scenario of ["membership", "role", "profile", "tenant"] as const) {
+      tenant = A; role = "owner"; isMember = true; profileActive = true;
+      connectionStatus = "connected"; connectionGeneration = GENERATION;
+      connectionReads = 0; outbound = 0; duringFinalConnectionRead = null;
+      duringInitialConnectionRead = () => {
+        duringInitialConnectionRead = null;
+        if (scenario === "membership") isMember = false;
+        if (scenario === "role") role = "employee";
+        if (scenario === "profile") profileActive = false;
+        if (scenario === "tenant") tenant = B;
+      };
+      const result = await inspectFudoReadPermissions();
+      assert.equal(result.ok, false, scenario);
+      assert.deepEqual(result.checks, [], scenario);
+      assert.equal(result.connectionRevision, undefined, scenario);
+      assert.equal(outbound, 0, "no provider auth POST or resource GET: " + scenario);
+      assert.equal(connectionReads, 1, "must stop after first connection read: " + scenario);
+      assert.doesNotMatch(result.message, /synthetic-api-key|synthetic-api-secret/);
+    }
+  } finally {
+    tenant = A; role = "owner"; isMember = true; profileActive = true;
+    connectionStatus = "connected"; connectionGeneration = GENERATION;
+    duringInitialConnectionRead = null; duringFinalConnectionRead = null;
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = originalKey;
   }
 });
