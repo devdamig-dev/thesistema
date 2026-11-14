@@ -46,6 +46,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Preflight valida toda la allowlist antes del POST de autenticación (14/11/2026; PR en revisión)
+
+- **Hallazgo:** #361 protegía `FudoClient.list(resource)` antes de HTTP, pero `probeReadAccess(resources)` autenticaba **antes** de llamar a `list`. Un consumidor JS/sin tipos podía incluir `../sales`, `products?include=...` o un tipo inválido en el lote; aunque `list` no haría el GET inválido, ya habría ejecutado POST auth con credenciales del negocio.
+- **Criterio observable:** para un lote de preflight con cualquier recurso no permitido o argumento que no sea array, rechazar el **lote entero** con `invalid_response` fijo, **cero POST auth y cero GET**; para recursos válidos, conservar un único POST auth y GET(s) read-only. La UI O1 sigue llamando con sus cinco recursos fijos.
+- **IMPLEMENTADO EN RAMA:** guardia runtime en `probeReadAccess` y regresión sintética negativa/positiva. Sin migraciones, payloads, secretos, operaciones financieras ni escritura a Fudo.
+- **PROBADO:** pendiente de Quality completo del PR; no hay prueba contra Fudo real. **DESPLEGADO:** NO para este cambio. **VALIDADO EN PRODUCCIÓN:** NO — piloto O1 NO-GO.
+- **Rollback:** revertir el PR, sin DDL. Mantener la preferencia por fallo seguro frente a un lote de recursos inválido; O2+ continúa pospuesto.
+
 ### O1 — Allowlist runtime para rutas de lectura Fudo (14/11/2026; [PR #361](https://github.com/devdamig-dev/thesistema/pull/361) fusionado)
 
 - **Riesgo identificado (defensa en profundidad):** el método `FudoClient.list(resource)` confiaba sólo en la unión TypeScript `FudoResource`, inexistente al ejecutar JS. Un consumidor sin tipos o un cast podría pasar segmentos `../`, parámetros query o una ruta no declarada. No existe evidencia de explotación real del flujo O1.
