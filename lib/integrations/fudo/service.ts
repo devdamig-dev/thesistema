@@ -470,7 +470,10 @@ export async function testStoredFudoConnection(
  * required for O1. This never persists provider payloads or mutates sync state.
  * Only the authenticated business owner/admin sees sanitized resource outcomes.
  */
-export async function inspectFudoReadPermissions(expectedBusinessRevision?: string): Promise<FudoResourcePreflight> {
+export async function inspectFudoReadPermissions(
+  expectedBusinessRevision?: string,
+  expectedConnectionRevision?: string,
+): Promise<FudoResourcePreflight> {
   try {
     const authorized = await authorize();
     if (!authorized) {
@@ -500,6 +503,21 @@ export async function inspectFudoReadPermissions(expectedBusinessRevision?: stri
     // replaced by another owner/admin's retest while these five GETs run.
     const statusAtStart: string = stored.data.status;
     const testedAtStart: string | null = stored.data.last_tested_at ?? null;
+    // A preflight from an old tab must not authenticate or issue five GETs
+    // with credentials rotated/retested by another admin of this business.
+    // The final metadata/auth checks below also fence changes in flight.
+    if (expectedConnectionRevision !== undefined
+      && (typeof expectedConnectionRevision !== "string"
+        || !/^[a-f0-9]{64}$/.test(expectedConnectionRevision)
+        || expectedConnectionRevision !== revisionForFudoConnection(
+          actor, generation, statusAtStart, testedAtStart,
+        ))) {
+      return {
+        ok: false,
+        message: "La conexión Fudo cambió desde que abriste la pantalla. Actualizá y revisá los permisos nuevamente.",
+        checks: [],
+      };
+    }
     const credentials = decryptFudoCredentials(actor.businessId, stored.data.credentials_ciphertext);
     const checks = await new FudoClient(credentials).probeReadAccess(FUDO_SYNC_RESOURCES);
     // Read-only permission results must not survive role revocation or a

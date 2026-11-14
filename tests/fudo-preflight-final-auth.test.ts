@@ -19,6 +19,8 @@ let isMember = true;
 let profileActive = true;
 let connectionReads = 0;
 let connectionStatus: "connected" | "error" = "connected";
+let connectionGeneration = GENERATION;
+let connectionTestedAt = "2026-11-07T00:00:00Z";
 let duringFinalConnectionRead: (() => void) | null = null;
 
 const db = {
@@ -44,9 +46,9 @@ const db = {
         const row = filters.business_id === A
           ? {
               credentials_ciphertext: CIPHERTEXT,
-              connection_generation: GENERATION,
+              connection_generation: connectionGeneration,
               status: connectionStatus,
-              last_tested_at: "2026-11-07T00:00:00Z",
+              last_tested_at: connectionTestedAt,
             }
           : null;
         // The first authorization after provider GETs has already passed.
@@ -158,6 +160,64 @@ test("Fudo O1 preflight refuses errored connections before decrypting or contact
   } finally {
     tenant = A; role = "owner"; isMember = true; profileActive = true;
     connectionStatus = "connected";
+    duringFinalConnectionRead = null;
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
+
+test("Fudo permission probe refuses stale same-business rotation/retest before auth POST or five GETs", async () => {
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const previousFetch = globalThis.fetch;
+  const originalTestTime = "2026-11-07T00:00:00Z";
+  const renderedRevision = createHash("sha256")
+    .update(JSON.stringify([A, GENERATION, "connected", originalTestTime]))
+    .digest("hex");
+  const rotatedGeneration = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  let outbound = 0;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  globalThis.fetch = async (url, init) => {
+    outbound++;
+    if (String(url) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return new Response(JSON.stringify({
+        token: "synthetic-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    assert.equal(init?.method, "GET");
+    return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+  };
+  try {
+    for (const scenario of ["rotation", "retest", "invalid"] as const) {
+      tenant = A; role = "owner"; isMember = true; profileActive = true;
+      connectionStatus = "connected";
+      connectionGeneration = scenario === "rotation" ? rotatedGeneration : GENERATION;
+      connectionTestedAt = scenario === "retest" ? "2026-11-07T00:00:01Z" : originalTestTime;
+      connectionReads = 0; outbound = 0; duringFinalConnectionRead = null;
+      const result = await inspectFudoReadPermissions(
+        undefined, scenario === "invalid" ? "not-a-revision" : renderedRevision,
+      );
+      assert.equal(result.ok, false, scenario);
+      assert.deepEqual(result.checks, [], scenario);
+      assert.equal(result.connectionRevision, undefined, scenario);
+      assert.match(result.message, /conexión Fudo cambió/i);
+      assert.equal(connectionReads, 1, "only the initial tenant-scoped connection may be read");
+      assert.equal(outbound, 0, "must refuse before decrypt/auth POST and all GETs");
+    }
+    connectionGeneration = GENERATION; connectionTestedAt = originalTestTime;
+    connectionReads = 0; outbound = 0;
+    const fresh = await inspectFudoReadPermissions(undefined, renderedRevision);
+    assert.equal(fresh.ok, true, "unchanged revision still probes five resources");
+    assert.equal(fresh.connectionRevision, renderedRevision);
+    assert.equal(fresh.checks.length, 5);
+    assert.equal(outbound, 6, "one auth POST and five read-only GETs");
+    assert.equal(connectionReads, 2, "final revision fence must remain active");
+  } finally {
+    connectionGeneration = GENERATION;
+    connectionTestedAt = originalTestTime;
+    connectionStatus = "connected";
+    tenant = A; role = "owner"; isMember = true; profileActive = true;
     duringFinalConnectionRead = null;
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;

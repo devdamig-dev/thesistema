@@ -139,7 +139,9 @@ export function FudoSettingsClient({ status }: { status: FudoConnectionView }) {
               <RefreshCcw className="h-4 w-4" /> Probar conexión
             </Button>}
             {connected && <Button disabled={working} onClick={() => execute(async () => {
-              const result = await runFudoPreflightSafely(() => inspectFudoPermissionsAction(status.businessRevision ?? ""));
+              const result = await runFudoPreflightSafely(() => inspectFudoPermissionsAction(
+                status.businessRevision ?? "", status.connectionRevision ?? "",
+              ));
               // A second administrator may rotate credentials BEFORE this
               // request starts, while this browser still renders the old
               // revision. Never attribute the server's new five GETs to that

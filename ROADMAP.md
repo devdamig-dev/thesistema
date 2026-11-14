@@ -46,6 +46,16 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Preflight de permisos condicionado a la revisión visible (13/11/2026; rama de revisión)
+
+- **Hallazgo:** el diagnóstico «Revisar permisos» comprobaba el negocio, pero no comparaba la revisión de conexión *mostrada al pulsar* con la revisión persistida antes de descifrar/consultar Fudo. El UI de #334 evitaba mostrar checks verdes desfasados al finalizar, pero una pestaña obsoleta podía seguir ejecutando POST de auth y cinco GET usando credenciales más nuevas de otro administrador del mismo negocio.
+- **Resultado observable:** Server Action exige ambas revisiones opacas y el servicio compara `business_id + connection_generation + status + last_tested_at` antes del descifrado o HTTP. Revisión vencida => diagnóstico sanitizado sin checks, **cero HTTP saliente a Fudo**. Se conservan la revalidación de autorización y los controles de revisión **después** de los cinco GET para cambios en vuelo.
+- **IMPLEMENTADO EN RAMA (pendiente de CI/PR):** `fix/o1-fudo-preflight-revision-20261113`: servicio, acción, UI y regresiones sintéticas para rotación/retest previos, revisión malformada y caso vigente. Sin migración SQL ni nuevas escrituras hacia Fudo, datos de ventas, pedidos o stock.
+- **PROBADO:** por verificar en Quality Gate del PR; los fixtures no representan Fudo real.
+- **DESPLEGADO:** NO para esta corrección mientras no exista merge/publicación confirmados.
+- **VALIDADO EN PRODUCCIÓN:** **NO — PILOTO O1 NO-GO.** Falta cuenta Fudo Pro/API autorizada, leer/conciliar los cinco recursos, segundo ciclo idempotente, QA autenticada A/B y acta.
+- **Rollback:** revertir cambio de acción/UI/servicio/tests sin migración ni acceso a secretos.
+
 ### O1 — Retest de credenciales vinculado a la revisión visible (13/11/2026; [PR #353](https://github.com/devdamig-dev/thesistema/pull/353) fusionado)
 
 - **Causa raíz:** el botón «Probar conexión» validaba el negocio, pero no la revisión de la conexión que el administrador estaba viendo. Tras una rotación o nuevo test de otro administrador **dentro del mismo negocio**, una pestaña obsoleta podía consultar las credenciales actuales y modificar su estado de salud; el CAS SQL sólo impedía cambios durante el GET, no antes de iniciarlo.
