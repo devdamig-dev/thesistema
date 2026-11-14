@@ -564,6 +564,15 @@ export class FudoClient {
    * Only sanitized status codes leave this client, never provider payloads/URLs.
    */
   async probeReadAccess(resources: readonly FudoResource[]): Promise<FudoReadResourceStatus[]> {
+    // A JS caller can bypass the FudoResource union and pass an invalid path
+    // alongside a valid one. Validate the *entire* batch before obtaining a
+    // bearer, not only inside list(), which runs after authentication here.
+    // Never contact Fudo for a batch whose resource contract is untrusted.
+    if (!Array.isArray(resources) || resources.some((resource) => !FUDO_READ_RESOURCES.has(resource))) {
+      throw new FudoApiError(
+        "invalid_response", "Recurso de lectura Fudo no permitido.", null, false,
+      );
+    }
     await this.ensureAuthenticated();
     // Bound preflight bursts just like sync imports. A five-resource probe must
     // not issue five simultaneous GETs against a rate-limited Fudo account.

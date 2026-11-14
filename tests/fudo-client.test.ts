@@ -1255,3 +1255,50 @@ test("Fudo O1 rejects untrusted resource paths before auth and never exposes the
     new URL(call.url).origin === "https://api.fu.do"));
   assert.doesNotMatch(JSON.stringify(calls.filter((call) => call.method === "GET")), /private-fixture/);
 });
+
+test("Fudo O1 preflight rejects an invalid resource batch before auth or any GET", async () => {
+  const calls: Array<{ url: string; method: string | undefined }> = [];
+  const now = 1_800_000_000_000;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    calls.push({ url: String(input), method: init?.method });
+    if (String(input) === "https://auth.fu.do/api") {
+      return jsonResponse({ token: "private-bearer", exp: Math.floor((now + 86_400_000) / 1000) });
+    }
+    return jsonResponse({ data: [], links: { next: null } });
+  };
+  const client = new FudoClient(
+    { apiKey: "private-key", apiSecret: "private-secret" },
+    { fetchImpl, now: () => now },
+  );
+
+  // list() already validates paths before auth, but probeReadAccess() used to
+  // authenticate first and only then check individual paths. An entire batch
+  // containing an unsafe resource must have ZERO provider requests.
+  for (const resources of [
+    ["products", "../sales"],
+    ["products?include=payments"],
+    ["products", null],
+    "products",
+  ]) {
+    await assert.rejects(
+      () => client.probeReadAccess(resources as never),
+      (error: unknown) => {
+        assert.ok(error instanceof FudoApiError);
+        assert.equal(error.code, "invalid_response");
+        assert.equal(error.status, null);
+        assert.equal(error.retryable, false);
+        assert.doesNotMatch(error.message, /private|payments|\.\.\/sales/);
+        return true;
+      },
+    );
+    assert.equal(calls.length, 0, "invalid preflight cannot authenticate or issue GETs");
+  }
+
+  assert.deepEqual(await client.probeReadAccess(["products"]), [
+    { resource: "products", code: "available" },
+  ]);
+  assert.deepEqual(calls.map(({ method }) => method), ["POST", "GET"]);
+  assert.equal(calls[1].url,
+    "https://api.fu.do/v1alpha1/products?page%5Bnumber%5D=1&page%5Bsize%5D=1");
+  assert.doesNotMatch(JSON.stringify(calls), /private-key|private-secret|private-bearer/);
+});
