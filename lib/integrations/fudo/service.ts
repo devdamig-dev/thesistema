@@ -370,6 +370,12 @@ export async function connectFudo(
     if (apiKey.length < 8 || apiKey.length > 512 || apiSecret.length < 8 || apiSecret.length > 2048) {
       return fail("invalid_input", "Ingresá la API Key y API Secret de Fudo válidas.");
     }
+    // Authorization may be revoked while the initial connection row is read.
+    // Do not even authenticate against Fudo with submitted credentials after
+    // a role, membership, profile or effective-tenant change.
+    if (!(await isStillAuthorized(authorized.actor))) {
+      return fail("forbidden", "Tu acceso al negocio cambió antes de probar la conexión. Volvé a ingresar.");
+    }
     const creds = { apiKey, apiSecret };
     // Fail closed if encryption is not available; never persist plaintext credentials.
     const encrypted = encryptFudoCredentials(authorized.actor.businessId, creds);
@@ -428,6 +434,12 @@ export async function testStoredFudoConnection(
         actor, generation, stored.data.status, testedAtStart,
       )) {
       return fail("connection_changed", "La conexión Fudo cambió desde que abriste la pantalla. Actualizá y reintentá.");
+    }
+    // The initial privileged connection lookup can outlive role revocation or
+    // a tenant switch. Fence BEFORE decrypting or authenticating with Fudo;
+    // the post-GET check and the atomic SQL CAS still protect later changes.
+    if (!(await isStillAuthorized(actor))) {
+      return fail("forbidden", "Tu acceso al negocio cambió antes de probar la conexión. Volvé a ingresar.");
     }
     const credentials = decryptFudoCredentials(actor.businessId, stored.data.credentials_ciphertext);
     // A concurrent rotation, retest or role revocation can finish while the
@@ -517,6 +529,12 @@ export async function inspectFudoReadPermissions(
         message: "La conexión Fudo cambió desde que abriste la pantalla. Actualizá y revisá los permisos nuevamente.",
         checks: [],
       };
+    }
+    // A membership/role/tenant can change while the connection row is read.
+    // Never send auth POST or five resource GETs for a now-revoked actor.
+    // Keep the post-GET reauthorization and metadata revision checks as well.
+    if (!(await isStillAuthorized(actor))) {
+      return { ok: false, message: "Tu acceso al negocio cambió antes de revisar los permisos. Volvé a ingresar.", checks: [] };
     }
     const credentials = decryptFudoCredentials(actor.businessId, stored.data.credentials_ciphertext);
     const checks = await new FudoClient(credentials).probeReadAccess(FUDO_SYNC_RESOURCES);

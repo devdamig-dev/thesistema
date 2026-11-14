@@ -16,6 +16,7 @@ let nextGeneration = 1;
 let syncRunning = false;
 let forceRpcForbidden = false;
 let rotateDuringDisconnectRpc = false;
+let afterConnectConnectionRead: (() => void) | null = null;
 const disconnectRevision = () => {
   assert.ok(storedRow, "fixture needs a configured connection");
   return createHash("sha256").update(JSON.stringify([
@@ -77,7 +78,9 @@ const db = {
         // Only the new CAS snapshot query needs a real stored row. Other
         // fixture queries keep their established empty-view behavior.
         if (table === "fudo_connections" && selection === "connection_generation,status,last_tested_at") {
-          return { data: storedRow, error: null };
+          const observed = storedRow;
+          afterConnectConnectionRead?.();
+          return { data: observed, error: null };
         }
         if (table === "business_members") {
           memberLookups++;
@@ -440,5 +443,43 @@ test("Fudo O1 lifecycle actions reject a stale business tab before any provider 
   } finally {
     globalThis.fetch = previousFetch;
     tenant = A; role = "owner"; validMembership = true; profileActive = true;
+  }
+});
+
+test("Fudo connection does not authenticate after initial DB read revokes the actor", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32, 31).toString("base64");
+  let outbound = 0;
+  globalThis.fetch = async () => {
+    outbound++;
+    throw new Error("Revoked or switched actor must not contact Fudo");
+  };
+  try {
+    for (const scenario of ["revoked", "switched", "role"] as const) {
+      role = "owner"; tenant = A; validMembership = true;
+      profileActive = true; syncRunning = false; storedRow = null;
+      outbound = 0;
+      const writesBefore = rpcCalls.filter((item) => item === "fudo_replace_connection_guarded").length;
+      afterConnectConnectionRead = () => {
+        afterConnectConnectionRead = null;
+        if (scenario === "revoked") validMembership = false;
+        if (scenario === "switched") tenant = B;
+        if (scenario === "role") role = "employee";
+      };
+      const outcome = await connectFudo(credentials);
+      assert.equal(outcome.ok, false, scenario);
+      if (!outcome.ok) assert.equal(outcome.code, "forbidden", scenario);
+      assert.equal(outbound, 0, "no provider POST or GET: " + scenario);
+      assert.equal(storedRow, null, "never store submitted credentials");
+      assert.equal(rpcCalls.filter((item) => item === "fudo_replace_connection_guarded").length,
+        writesBefore, "never call the privileged write after revocation");
+    }
+  } finally {
+    role = "owner"; tenant = A; validMembership = true; profileActive = true;
+    afterConnectConnectionRead = null;
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
   }
 });

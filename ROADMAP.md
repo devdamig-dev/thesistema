@@ -46,6 +46,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Revocación entre la lectura de conexión y el primer HTTP Fudo (14/11/2026; PR en revisión)
+
+- **Hallazgo de inspección:** en `connectFudo`, `testStoredFudoConnection` y `inspectFudoReadPermissions`, la consulta inicial de `fudo_connections` podía completarse después de una baja de membresía, cambio de rol/negocio o desactivación del perfil. Ya existían verificaciones posteriores a los GET y guardas SQL de escritura, pero no impedían que una acción iniciara nuevas solicitudes Fudo una vez revocada la autorización. No hay evidencia de incidente real.
+- **Resultado observable / aceptación:** reautorizar el mismo `userId + businessId` con rol activo tras leer la conexión y **antes** de cifrar/descifrar o hacer POST de autenticación / GET al proveedor. Ante revocación/cambio: `forbidden`, **0 requests Fudo y 0 RPCs de escritura**; los flujos autorizados siguen funcionando. Se preservan fences posteriores y CAS SQL.
+- **IMPLEMENTADO (rama, no fusionado):** `lib/integrations/fudo/service.ts`; regresiones sintéticas para conexión, retest y diagnóstico de permisos. Sin migraciones, nuevos permisos ni escrituras a Fudo; ninguna operación sobre ventas/stock nativos.
+- **PROBADO:** pendiente de ejecución CI y Quality Gate propios del PR. Los tests añadidos son sintéticos, no usan cuentas reales.
+- **DESPLEGADO:** NO, hasta revisión/merge y evidencia del deploy. **VALIDADO EN PRODUCCIÓN: NO; O1 PILOTO NO-GO.**
+- **Bloqueo de aceptación del piloto:** cuenta Fudo Pro/API autorizada, recursos reales conciliados, doble ciclo idempotente y QA autenticada A/B. Mantener O2+ pospuesto. **Rollback:** revertir el commit funcional, sin DDL.
+
 ### O1 — Reautorizar el contexto antes de iniciar una importación (14/11/2026; [PR #369](https://github.com/devdamig-dev/thesistema/pull/369) fusionado)
 
 - **Hallazgo (carrera por cambio de contexto):** entre la autorización inicial y el retorno de la lectura de `fudo_connections` puede cambiar membresía, rol o negocio efectivo por actualización administrativa. `syncFudoReadOnly` descifraba credenciales e intentaba iniciar `fudo_begin_sync` sin revalidación de la sesión tras esa espera. Las RPC verifican membresía/generación de forma transaccional, pero no reemplazan la revalidación del contexto activo antes del inicio. **El auth actual solo selecciona negocio cuando existe exactamente una membresía**; no se acredita un selector multiempresa operativo. Sin evidencia de incidente en producción.
