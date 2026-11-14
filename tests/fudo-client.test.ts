@@ -228,7 +228,12 @@ test("Fudo auth rejects JSON null, arrays and primitives as sanitized invalid re
 });
 
 test("Fudo rejects malformed bearer strings before sending any resource GET", async () => {
-  const malformedTokens = [" ", "\r\ninjected", "token\nunsafe", "token\tbad", "a".repeat(8193)];
+  const malformedTokens = [
+    " ", "\r\ninjected", "token\nunsafe", "token\tbad",
+    // Provider Unicode cannot be represented in an Authorization header;
+    // Latin-1 outside the bearer syntax must fail before any GET too.
+    "token-é", "token-😀", "token-\u2028unsafe", "a".repeat(8193),
+  ];
   for (const token of malformedTokens) {
     let authRequests = 0;
     let apiReads = 0;
