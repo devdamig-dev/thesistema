@@ -46,15 +46,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — Preflight de permisos condicionado a la revisión visible (13/11/2026; rama de revisión)
+### O1 — Preflight de permisos condicionado a la revisión visible (13/11/2026; [PR #355](https://github.com/devdamig-dev/thesistema/pull/355) fusionado)
 
-- **Hallazgo:** el diagnóstico «Revisar permisos» comprobaba el negocio, pero no comparaba la revisión de conexión *mostrada al pulsar* con la revisión persistida antes de descifrar/consultar Fudo. El UI de #334 evitaba mostrar checks verdes desfasados al finalizar, pero una pestaña obsoleta podía seguir ejecutando POST de auth y cinco GET usando credenciales más nuevas de otro administrador del mismo negocio.
-- **Resultado observable:** Server Action exige ambas revisiones opacas y el servicio compara `business_id + connection_generation + status + last_tested_at` antes del descifrado o HTTP. Revisión vencida => diagnóstico sanitizado sin checks, **cero HTTP saliente a Fudo**. Se conservan la revalidación de autorización y los controles de revisión **después** de los cinco GET para cambios en vuelo.
-- **IMPLEMENTADO EN RAMA (pendiente de CI/PR):** `fix/o1-fudo-preflight-revision-20261113`: servicio, acción, UI y regresiones sintéticas para rotación/retest previos, revisión malformada y caso vigente. Sin migración SQL ni nuevas escrituras hacia Fudo, datos de ventas, pedidos o stock.
-- **PROBADO:** por verificar en Quality Gate del PR; los fixtures no representan Fudo real.
-- **DESPLEGADO:** NO para esta corrección mientras no exista merge/publicación confirmados.
-- **VALIDADO EN PRODUCCIÓN:** **NO — PILOTO O1 NO-GO.** Falta cuenta Fudo Pro/API autorizada, leer/conciliar los cinco recursos, segundo ciclo idempotente, QA autenticada A/B y acta.
-- **Rollback:** revertir cambio de acción/UI/servicio/tests sin migración ni acceso a secretos.
+- **Hallazgo:** el diagnóstico «Revisar permisos» comprobaba el negocio, pero no comparaba la revisión de conexión *mostrada al pulsar* con la persistida antes de descifrar/consultar Fudo. El UI de #334 evitaba mostrar checks verdes desfasados al finalizar, pero una pestaña obsoleta podía enviar POST de auth y cinco GET usando credenciales nuevas de otro admin del mismo negocio.
+- **Resultado observable:** Server Action exige ambas revisiones opacas y el servicio compara `business_id + connection_generation + status + last_tested_at` antes del descifrado o HTTP. Revisión vencida => diagnóstico sanitizado sin checks, **cero HTTP saliente a Fudo**. Siguen activos los controles de autorización y revisión después de los cinco GET ante cambios en vuelo.
+- **IMPLEMENTADO / FUSIONADO:** [PR #355](https://github.com/devdamig-dev/thesistema/pull/355), squash `bd3ebc03fbcfc882ae970f7276aeca69085eb269` en `main`. Cambios en Server Action, UI, servicio y regresiones sintéticas (rotación, retest, formato inválido y revisión vigente). Sin DDL, nuevas escrituras a Fudo ni modificaciones de ventas/stock/pedidos.
+- **PROBADO (CI, NO Fudo real):** [Quality #43523926887](https://github.com/devdamig-dev/thesistema/actions/runs/43523926887), `completed/success` sobre HEAD del PR `f47474dbae49ebc08336a261dbb236f21c8b5982`; jobs `verify`, `postgres17` y `postgrest`: **3/3 success**. Incluye tests sintéticos, typecheck/lint/build y Playwright según el workflow. No se acredita un Quality independiente del squash en `main` sin verificarlo. Preview Vercel falló por límite `api-deployments-free-per-day`, no por fallo de tests.
+- **DESPLEGADO / VERCEL Production READY:** [deployment `dpl_5Uvhmn5hxdmi9iGDJMM7hs3GGzv7`](https://vercel.com/damians-projects-a45d01bf/thesistema/5Uvhmn5hxdmi9iGDJMM7hs3GGzv7) verificado directamente con `target=production`, `readyState=READY`, SHA exacto `bd3ebc03fbcfc882ae970f7276aeca69085eb269`, alias `gastropilot.nexodg.com` y `aliasError=null`. READY no implica prueba de integración real ni sesión autenticada.
+- **VALIDADO EN PRODUCCIÓN: NO — PILOTO O1 NO-GO.** Consulta SQL de lectura en Supabase `thesistema` del 13/11/2026: **0** conexiones, **0** sync runs, **0** registros externos y **0** cursores Fudo. Falta cuenta Fudo Pro/API autorizada, leer/conciliar cinco recursos reales, dos ciclos idempotentes, QA autenticada multiempresa A/B y acta de aceptación. O2+ pospuesto.
+- **Rollback:** revertir el squash #355 sin migración ni acceso a credenciales; recursos de Fudo permanecen read-only (POST sólo para auth).
 
 ### O1 — Retest de credenciales vinculado a la revisión visible (13/11/2026; [PR #353](https://github.com/devdamig-dev/thesistema/pull/353) fusionado)
 
