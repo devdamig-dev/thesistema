@@ -82,6 +82,12 @@ function from(table: string) {
     async maybeSingle() {
       if (table === "profiles") return { data: { active: true }, error: null };
       if (table === "business_members") return { data: membershipActive ? { id: "active-member" } : null, error: null };
+      // The owner may select another business while the initial connection
+      // lookup is in flight, even if they retain membership in business A.
+      if (table === "fudo_connections" && switchBusinessOnConnectionRead) {
+        switchBusinessOnConnectionRead = false;
+        activeBusiness = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+      }
       return { data: matching()[0] ?? null, error: null };
     },
     then(resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) {
