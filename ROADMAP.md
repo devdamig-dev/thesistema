@@ -46,13 +46,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — Preflight valida toda la allowlist antes del POST de autenticación (14/11/2026; PR en revisión)
+### O1 — Preflight valida toda la allowlist antes del POST de autenticación (14/11/2026; [PR #363](https://github.com/devdamig-dev/thesistema/pull/363) fusionado)
 
-- **Hallazgo:** #361 protegía `FudoClient.list(resource)` antes de HTTP, pero `probeReadAccess(resources)` autenticaba **antes** de llamar a `list`. Un consumidor JS/sin tipos podía incluir `../sales`, `products?include=...` o un tipo inválido en el lote; aunque `list` no haría el GET inválido, ya habría ejecutado POST auth con credenciales del negocio.
-- **Criterio observable:** para un lote de preflight con cualquier recurso no permitido o argumento que no sea array, rechazar el **lote entero** con `invalid_response` fijo, **cero POST auth y cero GET**; para recursos válidos, conservar un único POST auth y GET(s) read-only. La UI O1 sigue llamando con sus cinco recursos fijos.
-- **IMPLEMENTADO EN RAMA:** guardia runtime en `probeReadAccess` y regresión sintética negativa/positiva. Sin migraciones, payloads, secretos, operaciones financieras ni escritura a Fudo.
-- **PROBADO:** pendiente de Quality completo del PR; no hay prueba contra Fudo real. **DESPLEGADO:** NO para este cambio. **VALIDADO EN PRODUCCIÓN:** NO — piloto O1 NO-GO.
-- **Rollback:** revertir el PR, sin DDL. Mantener la preferencia por fallo seguro frente a un lote de recursos inválido; O2+ continúa pospuesto.
+- **Hallazgo (defensa preventiva):** #361 protegía `FudoClient.list(resource)` antes de HTTP, pero `probeReadAccess(resources)` autenticaba antes de verificar el lote. Un consumidor JS/sin tipos podía incluir un recurso inválido; el método evitaría el GET inválido, pero habría hecho POST auth. No hay evidencia de explotación real ni fuga de credenciales.
+- **Resultado observable:** validar primero que el argumento sea array y que **todos** sus recursos pertenezcan a la allowlist de lectura; lote inválido => `invalid_response` fijo y **0 POST auth / 0 GET**. El lote válido sigue realizando POST técnico de autenticación y GETs read-only sin alterar su contrato.
+- **IMPLEMENTADO / FUSIONADO:** [PR #363](https://github.com/devdamig-dev/thesistema/pull/363), squash `dab3f0a3c1272fb5dd6abf3fdba526bef37711ad` en `main`. Guardia en `client.ts`, regresión en `tests/fudo-client.test.ts` y nota de roadmap. Sin DDL, escrituras hacia Fudo, secretos reales ni modificaciones comerciales.
+- **PROBADO (CI sintético, NO Fudo real):** [Quality #43597877305](https://github.com/devdamig-dev/thesistema/actions/runs/43597877305), `completed/success` sobre HEAD `f3b9cf33dc1c233c87ef8d1670e226d29235f268`, jobs `verify`, `postgres17` y `postgrest` **3/3 success**. Casos negativos exigen cero HTTP y caso positivo un POST auth + GET autorizado. Vercel preview reportó cuota `build-rate-limit`, no falla de CI. No se acredita Quality independiente del squash de `main` en esta entrada.
+- **DESPLEGADO:** [Vercel Production dpl_ALwsHNkmmMS2EMXKq5y7g6rVa2eM](https://vercel.com/damians-projects-a45d01bf/thesistema/ALwsHNkmmMS2EMXKq5y7g6rVa2eM) verificado directamente `target=production`, `readyState=READY`, SHA exacto `dab3f0a3c1272fb5dd6abf3fdba526bef37711ad`, alias `gastropilot.nexodg.com` y `aliasError=null`. READY no acredita login ni sincronización real.
+- **VALIDADO EN PRODUCCIÓN: NO — O1 PILOTO NO-GO.** Faltan cuenta Fudo Pro/API autorizada, cinco recursos reales conciliados, doble sincronización idempotente y QA autenticada A/B. Último SELECT read-only documentado (14/11) reportó cero conexiones, runs, external records y cursores; no se repitió en este cambio.
+- **Rollback:** revertir squash #363 sin migraciones, aunque recuperaría autenticación innecesaria ante lotes inválidos. O2+ pospuesto.
 
 ### O1 — Allowlist runtime para rutas de lectura Fudo (14/11/2026; [PR #361](https://github.com/devdamig-dev/thesistema/pull/361) fusionado)
 
