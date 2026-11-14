@@ -19,6 +19,8 @@ let membershipActive = true;
 let activeBusiness = A;
 let denyPageCommit = false;
 let denyFinish = false;
+let switchBusinessOnConnectionRead = false;
+let beginSyncCalls = 0;
 const runs: Row[] = [];
 const conn: Row = {
   business_id: A, connection_generation: GENERATION, credentials_ciphertext: ciphertext,
