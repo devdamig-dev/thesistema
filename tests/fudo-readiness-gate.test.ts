@@ -13,13 +13,14 @@ function view(): FudoConnectionView {
   };
 }
 const allAvailable: FudoResourcePreflight = {
-  ok: true, message: "synthetic",
+  ok: true, message: "synthetic", connectionRevision: "a".repeat(64),
   checks: FUDO_SYNC_RESOURCES.map((resource) => ({ resource, code: "available" })),
 };
 
 test("pilot readiness never says a product-only connection or a completed cursor equals go-live", () => {
   const result = view();
   result.status = "connected";
+  result.connectionRevision = "a".repeat(64);
   let steps = evaluateFudoPilotReadiness(result);
   assert.deepEqual(steps.map((step) => step.state), ["done", "pending", "pending", "pending"]);
 
@@ -42,6 +43,7 @@ test("pilot readiness never says a product-only connection or a completed cursor
 test("pilot never marks a legacy cursor with unknown cycle provenance as a complete import", () => {
   const result = view();
   result.status = "connected";
+  result.connectionRevision = "a".repeat(64);
   result.lastSyncStatus = "completed";
   result.lastSyncedAt = "2026-11-06T03:01:00Z";
   result.recentRuns = [{
@@ -66,6 +68,7 @@ test("pilot never marks a legacy cursor with unknown cycle provenance as a compl
 test("pilot readiness is fail-closed for incomplete data, failed sync and partial permissions", () => {
   const result = view();
   result.status = "connected";
+  result.connectionRevision = "a".repeat(64);
   result.lastSyncStatus = "failed";
   result.nextPages = Object.fromEntries(FUDO_SYNC_RESOURCES.map((resource) => [resource, 0]));
   result.recentRuns = [{
@@ -73,7 +76,7 @@ test("pilot readiness is fail-closed for incomplete data, failed sync and partia
     status: "failed", counts: {}, errorCode: "invalid_response",
   }];
   const incomplete: FudoResourcePreflight = {
-    ok: false, message: "synthetic",
+    ok: false, message: "synthetic", connectionRevision: "a".repeat(64),
     checks: FUDO_SYNC_RESOURCES.map((resource, i) => ({
       resource, code: i === 0 ? "forbidden" : "available",
     })),
@@ -97,6 +100,7 @@ test("pilot readiness never accepts stale green permissions for a disconnected o
   assert.equal(evaluateFudoPilotReadiness(result, allAvailable)[1].state, "pending",
     "a failed retest cannot borrow an earlier successful permission probe");
   result.status = "connected";
+  result.connectionRevision = "a".repeat(64);
   assert.equal(evaluateFudoPilotReadiness(result, allAvailable)[1].state, "done");
 });
 
@@ -135,6 +139,7 @@ test("permission probes cannot cross businesses with the same status and last te
 test("pilot rejects a completed run without a verified, chronological SQL closure", () => {
   const base = view();
   base.status = "connected";
+  base.connectionRevision = "a".repeat(64);
   base.lastSyncStatus = "completed";
   base.lastSyncedAt = "2026-11-09T12:05:00Z";
   base.nextPages = Object.fromEntries(FUDO_SYNC_RESOURCES.map((resource) => [resource, 0]));
@@ -184,4 +189,25 @@ test("O1 never binds five successful GETs from a newer server connection to stal
   const failed = { ...serverProbed, ok: false };
   assert.equal(bindCurrentFudoPreflight(refreshed, failed), null,
     "contradictory success and five available resources remain blocked");
+});
+
+test("O1 rejects a stale or missing server revision even when a wrapper claims the current business", () => {
+  const current = view();
+  current.status = "connected";
+  current.connectionRevision = "b".repeat(64);
+  const previousProbe = allAvailable; // Server verified generation A, not B.
+  const falselyRebound = { revision: current.connectionRevision, result: previousProbe };
+  assert.equal(selectCurrentFudoPreflight(current, falselyRebound), null,
+    "a forged local wrapper must not transplant business A permissions into B");
+  assert.equal(evaluateFudoPilotReadiness(current, previousProbe)[1].state, "blocked",
+    "direct readiness callers must not accept a 5/5 probe from another generation");
+  assert.equal(evaluateFudoPilotReadiness(current, {
+    ...previousProbe, connectionRevision: undefined,
+  })[1].state, "blocked", "legacy unbound probes cannot certify permissions");
+
+  const valid = { ...previousProbe, connectionRevision: current.connectionRevision };
+  assert.equal(selectCurrentFudoPreflight(current, {
+    revision: current.connectionRevision, result: valid,
+  }), valid, "same-generation validated probes remain usable");
+  assert.equal(evaluateFudoPilotReadiness(current, valid)[1].state, "done");
 });
