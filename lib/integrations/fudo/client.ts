@@ -369,7 +369,10 @@ export class FudoClient {
     // Do not echo provider-supplied token contents into errors or logs.
     if (!payload || typeof payload !== "object" || Array.isArray(payload)
       || typeof payload.token !== "string" || payload.token.length === 0
-      || payload.token.length > 8192 || /[\s\x00-\x1f\x7f]/.test(payload.token)) {
+      // Authorization bearer credentials must consist of visible ASCII.
+      // Headers rejects non-ByteString Unicode while Latin-1 can be forwarded
+      // as an invalid bearer; neither is a transient provider outage.
+      || payload.token.length > 8192 || /[^\x21-\x7e]/.test(payload.token)) {
       throw new FudoApiError(
         "invalid_response",
         "Fudo no devolvió un token utilizable.",
