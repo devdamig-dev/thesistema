@@ -383,14 +383,18 @@ test("Fudo O1 pagination keeps one cycle UUID then flags a provider ID absent on
       if (phase === "first") {
         assert.equal(page, "1");
         return new Response(JSON.stringify({
-          data: [{ id: "item-1", attributes: { name: "fixture product" } }],
+          // A non-terminal 100-row read may safely continue with size 100.
+          // A short first page cannot prove the provider's effective offset.
+          data: Array.from({ length: 100 }, (_, index) => ({
+            id: `item-${index + 1}`, attributes: { name: "fixture product" },
+          })),
           links: { next: "/v1alpha1/products?page=2" },
         }), { status: 200 });
       }
       if (phase === "resume") {
         assert.equal(page, "2");
         return new Response(JSON.stringify({
-          data: [{ id: "item-2", attributes: { name: "fixture product 2" } }],
+          data: [{ id: "item-101", attributes: { name: "fixture product 101" } }],
           links: { next: null },
         }), { status: 200 });
       }
@@ -409,14 +413,14 @@ test("Fudo O1 pagination keeps one cycle UUID then flags a provider ID absent on
     assert.equal(progress.find((row) => row.resource_type === "products")?.next_page, 2);
     const firstCycle = progress.find((row) => row.resource_type === "products")?.cycle_id;
     assert.match(String(firstCycle), /^[a-f0-9-]{36}$/i);
-    assert.equal(records.filter((row) => row.resource_type === "products").length, 1);
+    assert.equal(records.filter((row) => row.resource_type === "products").length, 100);
 
     phase = "resume";
     const second = await syncFudoReadOnly();
     assert.equal(second.ok, true, JSON.stringify(second));
     assert.equal(progress.find((row) => row.resource_type === "products")?.cycle_id, firstCycle);
     assert.equal(progress.find((row) => row.resource_type === "products")?.next_page, 0);
-    assert.equal(records.filter((row) => row.resource_type === "products").length, 2);
+    assert.equal(records.filter((row) => row.resource_type === "products").length, 101);
 
     phase = "rescan";
     const third = await syncFudoReadOnly();
@@ -424,12 +428,12 @@ test("Fudo O1 pagination keeps one cycle UUID then flags a provider ID absent on
     const newCycle = progress.find((row) => row.resource_type === "products")?.cycle_id;
     assert.notEqual(newCycle, firstCycle);
     assert.equal(records.find((row) => row.external_id === "item-1")?.last_seen_cycle_id, newCycle);
-    assert.equal(records.find((row) => row.external_id === "item-2")?.last_seen_cycle_id, firstCycle);
+    assert.equal(records.find((row) => row.external_id === "item-101")?.last_seen_cycle_id, firstCycle);
     const view = await getFudoConnectionView();
     assert.ok(view);
-    assert.equal(view.importedCounts.products, 2, "staging history is retained");
+    assert.equal(view.importedCounts.products, 101, "staging history is retained");
     assert.equal(view.seenThisCycleCounts.products, 1);
-    assert.equal(view.possiblyMissingCounts.products, 1);
+    assert.equal(view.possiblyMissingCounts.products, 100);
     assert.ok(providerVerbs.length > 0 && providerVerbs.every((verb) => verb === "GET"),
       "never write to provider API");
     assert.doesNotMatch(JSON.stringify(view), /synthetic-pilot|synthetic-token|credentials_ciphertext|payload/);
