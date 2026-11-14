@@ -15,6 +15,8 @@ test("Fudo O1 source provenance accepts only explicit timezone instants", () => 
   assert.equal(importedTimestamp("2026-11-09T15:00:00Z", "updated_at"), "2026-11-09T15:00:00.000Z");
   assert.equal(importedTimestamp("2024-02-29T23:59:59.123Z"), "2024-02-29T23:59:59.123Z");
   assert.equal(importedTimestamp("2026-11-09T15:00:00+00:00"), "2026-11-09T15:00:00.000Z");
+  assert.equal(importedTimestamp("0001-01-01T00:00:00Z"), "0001-01-01T00:00:00.000Z");
+  assert.equal(importedTimestamp("9999-12-31T23:59:59Z"), "9999-12-31T23:59:59.000Z");
 });
 
 test("Fudo O1 source provenance never invents instants for ambiguous or impossible dates", () => {
@@ -30,6 +32,9 @@ test("Fudo O1 source provenance never invents instants for ambiguous or impossib
     "2026-11-09T12:00:00+15:00",
     "2026-11-09T12:00:00+14:01",
     "2026-11-09T12:00:00+01:60",
+    "0000-01-01T00:00:00Z", // JS accepts year zero; PostgreSQL timestamptz rejects it.
+    "0001-01-01T00:00:00+14:00", // Local year 1 becomes UTC year 0.
+    "9999-12-31T23:00:00-14:00", // Local year 9999 becomes extended ISO year +010000.
     "not-a-date",
     "",
     null,
