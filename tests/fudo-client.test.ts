@@ -1211,3 +1211,47 @@ test("Fudo O1 distinguishes remaining provider 4xx contract rejections from tran
     }
   }
 });
+
+test("Fudo O1 rejects untrusted resource paths before auth and never exposes their values", async () => {
+  const calls: Array<{ url: string; method: string | undefined }> = [];
+  const now = 1_800_000_000_000;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    calls.push({ url: String(input), method: init?.method });
+    if (String(input) === "https://auth.fu.do/api") {
+      return jsonResponse({ token: "private-fixture-bearer", exp: Math.floor((now + 86_400_000) / 1000) });
+    }
+    return jsonResponse({ data: [], links: { next: null } });
+  };
+  const client = new FudoClient(
+    { apiKey: "private-fixture-key", apiSecret: "private-fixture-secret" },
+    { fetchImpl, now: () => now },
+  );
+
+  // An untyped future action, JS consumer or forged value must not bypass the
+  // FudoResource TypeScript union and make an arbitrary API GET.
+  for (const path of ["../users", "products/123", "products?include=payments",
+    "https://example.invalid/", "/products", "", "__proto__", null]) {
+    await assert.rejects(() => client.list(path as never), (error: unknown) => {
+      assert.ok(error instanceof FudoApiError);
+      assert.equal(error.code, "invalid_response");
+      assert.equal(error.status, null);
+      assert.equal(error.retryable, false);
+      assert.doesNotMatch(error.message, /private-|example|products|payments|__proto__/);
+      return true;
+    });
+  }
+  assert.equal(calls.length, 0, "even authentication must not begin for invalid resources");
+
+  // Existing O1 resources are still routed as GET to the fixed Fudo API host.
+  for (const resource of ["products", "ingredients", "providers", "orders", "sales"] as const) {
+    await client.list(resource, { "page[number]": 1, "page[size]": 1 });
+  }
+  assert.equal(calls.filter((call) => call.method === "POST").length, 1);
+  assert.deepEqual(
+    calls.filter((call) => call.method === "GET").map((call) => new URL(call.url).pathname),
+    ["products", "ingredients", "providers", "orders", "sales"].map((resource) => `/v1alpha1/${resource}`),
+  );
+  assert.ok(calls.filter((call) => call.method === "GET").every((call) =>
+    new URL(call.url).origin === "https://api.fu.do"));
+  assert.doesNotMatch(JSON.stringify(calls.filter((call) => call.method === "GET")), /private-fixture/);
+});
