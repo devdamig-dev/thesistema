@@ -25,6 +25,7 @@ const view: FudoConnectionView = {
 
 const green: FudoResourcePreflight = {
   ok: true,
+  connectionRevision: REVISION,
   message: "provider diagnostic must not be copied",
   checks: [
     { resource: "products", code: "available" },
