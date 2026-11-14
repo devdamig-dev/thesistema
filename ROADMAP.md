@@ -46,6 +46,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Reautorizar el contexto antes de iniciar una importación (14/11/2026; PR en revisión)
+
+- **Hallazgo (prevención de carrera entre pestañas):** entre la autorización inicial y el retorno de la lectura de `fudo_connections`, el owner puede cambiar su negocio activo mientras conserva membresía en el anterior. `syncFudoReadOnly` descifraba las credenciales e intentaba iniciar `fudo_begin_sync` antes de volver a comprobar ese contexto. El RPC revalida membresía/generación, pero no puede inferir un cambio del negocio activo en la sesión Next.js; un inicio tardío puede dejar auditoría o reiniciar cursores del negocio anterior. Sin evidencia de ocurrencia en producción.
+- **Resultado observable:** si el negocio o la membresía cambian durante la lectura de conexión, denegar antes de descifrar, ejecutar el RPC de inicio o contactar Fudo; sin alterar runs, cursores, staging ni metadata. Se conserva el control transaccional SQL contra cambios posteriores (la comprobación de sesión no sustituye un lock).
+- **IMPLEMENTADO EN RAMA:** `fix/o1-fudo-sync-live-auth-before-begin-20261114`; guardia de autorización inmediatamente posterior a la lectura de conexión en `lib/integrations/fudo/service.ts` y regresión de cambio de tenant en `tests/fudo-sync-cycle.test.ts`. No DDL, no credenciales reales ni escrituras al proveedor.
+- **PROBADO:** pendiente de Quality y revisión del PR. El test nuevo usa el contexto auth y fetch sintéticos; no representa una cuenta Fudo real.
+- **DESPLEGADO:** NO, rama sin fusionar. **VALIDADO EN PRODUCCIÓN:** NO — **O1 PILOTO NO-GO**. Continúa faltando cuenta Fudo Pro/API autorizada, conciliación de cinco recursos, doble sync idempotente y QA autenticada A/B. O2+ pospuesto.
+- **Rollback:** revertir únicamente guardia y test; sin migraciones. No presentar protección absoluta frente al cambio de sesión justo después de la comprobación.
+
 ### O1 — Evidencia de permisos Fudo vinculada a revisión servidor (14/11/2026; [PR #367](https://github.com/devdamig-dev/thesistema/pull/367) fusionado)
 
 - **Hallazgo (integridad de piloto):** el selector y el evaluador de readiness podían aceptar un diagnóstico 5/5 con wrapper local coincidente pero sin exigir que `connectionRevision` del resultado del servidor correspondiera a la misma generación. Podía indicar permisos antiguos como actuales o copiarlos en el acta. Corrección preventiva; **sin evidencia de cruce de datos ni abuso real**.
