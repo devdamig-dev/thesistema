@@ -20,7 +20,14 @@ export function selectCurrentFudoPreflight(
   stored: { revision: string; result: FudoResourcePreflight } | null,
 ): FudoResourcePreflight | null {
   const revision = fudoConnectionRevision(view);
-  return revision !== null && stored?.revision === revision ? stored.result : null;
+  // Do not trust only the client-side wrapper revision: a legacy/corrupted
+  // state could label a probe from another business or a rotated credential
+  // generation as current. Require the revision returned by the server and
+  // the complete five-resource contract before showing permission evidence.
+  return revision !== null && stored?.revision === revision
+    && stored.result?.connectionRevision === revision
+    && isWellFormedFudoPreflight(stored.result)
+    ? stored.result : null;
 }
 
 /**
@@ -135,8 +142,14 @@ export function evaluateFudoPilotReadiness(
   const connectionOk = view.status === "connected";
   // A successful probe belongs to the connection that was active when it ran.
   // Never show a green permission check if the connection is now disconnected or invalid.
-  const malformedPreflight = connectionOk && preflight !== null && !isWellFormedFudoPreflight(preflight);
-  const currentPreflight = connectionOk && !malformedPreflight ? preflight : null;
+  // Readiness is also called outside the UI wrapper. A five-for-five probe
+  // is advisory only for the exact tenant/credential test revision read from
+  // the server; a stale or unbound result must never turn the badge green.
+  const revision = fudoConnectionRevision(view);
+  const validPreflight = revision !== null && preflight?.connectionRevision === revision
+    && isWellFormedFudoPreflight(preflight);
+  const malformedPreflight = connectionOk && preflight !== null && !validPreflight;
+  const currentPreflight = validPreflight ? preflight : null;
   const permissionsOk = currentPreflight?.ok === true;
   // A legacy or interrupted cursor can say "0" without a stable scan UUID.
   // The server exposes a null seen-count for such a cursor: it is NOT a
