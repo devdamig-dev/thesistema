@@ -46,6 +46,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Fechas Fudo fuera del rango seguro de PostgreSQL (14/11/2026; [PR #359](https://github.com/devdamig-dev/thesistema/pull/359) en revisión)
+
+- **Hallazgo (integridad del staging):** `Date.parse` de JavaScript admite un año ISO `0000` y permite que `0001-01-01T00:00:00+14:00` normalice al año UTC `0000`. `parseStrictFudoTimestamp` devolvía una cadena `0000-...` aparentemente válida y `fudo_commit_sync_page` podía fallar por `source_updated_at::timestamptz` incompatible, bloqueando la tanda. Un **SELECT de solo lectura** en Supabase `thesistema` reprodujo SQLSTATE `22008` para ese timestamp. Una fecha local extrema `9999` puede normalizar a un año ISO extendido `+010000`, fuera del contrato UTC de cuatro dígitos.
+- **Resultado observable:** aceptar años UTC 0001–9999 con fecha y zona estrictas; para el resto, `source_updated_at=null` y conservar el texto crudo sólo en el `payload` protegido, sin inventar fechas ni exponer datos. Así una fecha no representable no aborta el guardado de todo un lote; no se altera el `external_id`, hash ni cursor.
+- **IMPLEMENTADO / RAMA:** [PR #359](https://github.com/devdamig-dev/thesistema/pull/359) en borrador: validación antes y después de convertir a UTC, regresiones para año 0, cruces de zona y extremos admitidos. Sin SQL/DDL, cambios de autorización ni operaciones mutantes Fudo.
+- **PROBADO:** reproducido el comportamiento anterior con Node y el rechazo de PostgreSQL mediante SELECT no mutante. **Quality del PR pendiente**, no declarar gate aprobado antes de concluir `verify`, `postgres17` y `postgrest`; sin credenciales reales.
+- **DESPLEGADO:** NO; el PR todavía no está fusionado. **VALIDADO EN PRODUCCIÓN:** NO — O1 PILOTO NO-GO, pendiente cuenta Fudo Pro/API, cinco recursos reales, conciliación, dos ciclos idempotentes y sesiones A/B. O2+ sigue pospuesto.
+- **Rollback:** revertir el helper y tests, sin migración. Preferir el fallo seguro (sin guardar fecha) a persistir una fecha incompatible.
+
 ### O1 — Páginas cortas con `links.next` y tamaño efectivo no verificable (14/11/2026; [PR #357](https://github.com/devdamig-dev/thesistema/pull/357) fusionado)
 
 - **Hallazgo (integridad):** la importación solicita `page[size]=100`, pero si Fudo devolvía menos filas con `links.next` a la página siguiente, el adaptador aceptaba la continuación aunque Fudo pudiese haber limitado el tamaño efectivo a 20. El siguiente GET seguía solicitando 100, con riesgo de omitir IDs 21–100 y declarar una conciliación incompleta como válida. Comparar `page[size]` en la URL no prueba el tamaño realmente usado.
