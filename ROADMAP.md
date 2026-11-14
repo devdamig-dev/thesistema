@@ -46,12 +46,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — Allowlist runtime para rutas de lectura Fudo (14/11/2026; [PR #361](https://github.com/devdamig-dev/thesistema/pull/361) en revisión)
+### O1 — Allowlist runtime para rutas de lectura Fudo (14/11/2026; [PR #361](https://github.com/devdamig-dev/thesistema/pull/361) fusionado)
 
-- **Riesgo identificado:** el método público `FudoClient.list(resource)` confiaba exclusivamente en la unión TypeScript `FudoResource`. Esa validación desaparece en runtime: un futuro caller JS/sin tipos o un cast podría pasar un path con segmentos `../`, query o ruta ajena y provocar un GET no previsto en el host del proveedor. No hay evidencia de que los flujos O1 vigentes exploten esta posibilidad; es defensa en profundidad para evitar ampliar accidentalmente el alcance read-only.
-- **Resultado verificable:** rechazar un recurso fuera de la allowlist de lectura **antes de POST de auth o cualquier GET**, con error sanitizado; mantener funcionando los cinco recursos O1 y los demás recursos declarados por el adaptador. No se habilitan operaciones de escritura Fudo.
-- **IMPLEMENTADO en rama:** `fix/o1-fudo-runtime-resource-allowlist-20261114`; validación runtime + regresiones negativas/positivas con fixture, sin DDL ni modificaciones comerciales. **PROBADO:** Quality Gate de PR pendiente. **DESPLEGADO:** NO. **VALIDADO EN PRODUCCIÓN:** NO — O1 PILOTO NO-GO.
-- **Rollback:** revertir cambios al adaptador/test; no requiere migración. No habilitar el piloto sin credenciales Pro/API autorizadas, conciliación de cinco recursos, doble sync idempotente y QA A/B autenticada.
+- **Riesgo identificado (defensa en profundidad):** el método `FudoClient.list(resource)` confiaba sólo en la unión TypeScript `FudoResource`, inexistente al ejecutar JS. Un consumidor sin tipos o un cast podría pasar segmentos `../`, parámetros query o una ruta no declarada. No existe evidencia de explotación real del flujo O1.
+- **Resultado observable:** validar una allowlist runtime de 12 recursos read-only **antes de POST auth o cualquier GET**, emitir error fijo `invalid_response` para rutas no permitidas, y mantener los cinco recursos O1 sin escrituras a Fudo.
+- **IMPLEMENTADO / FUSIONADO:** [PR #361](https://github.com/devdamig-dev/thesistema/pull/361), squash `d625f4d6ec962509d4ab8b36c812d9fbc61592d3` en `main`. Adaptador, regresiones y documentación. Sin migraciones SQL, cambios comerciales ni secretos reales.
+- **PROBADO (sintético; NO Fudo real):** [Quality #43583925516](https://github.com/devdamig-dev/thesistema/actions/runs/43583925516) `completed/success` sobre HEAD `3d2ff73c4b150d7e715cbed78326baa8d0382a01`: `verify`, `postgres17`, `postgrest` **3/3 success**. Regresión confirma cero solicitudes salientes para valores inválidos y POST de autenticación + cinco GET válidos para recursos O1. No se acredita un Quality independiente del squash de `main` aquí.
+- **DESPLEGADO:** [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/5tajbF8pcoC2pkz6wzFR4Lrob7NM), `target=production`, SHA exacto `d625f4d6ec962509d4ab8b36c812d9fbc61592d3`, alias `gastropilot.nexodg.com` y `aliasError=null` comprobados mediante proveedor. READY no acredita login, sincronización real ni aislamiento E2E.
+- **VALIDADO EN PRODUCCIÓN: NO — O1 PILOTO NO-GO.** Faltan cuenta Fudo Pro/API autorizada, conciliación de los cinco recursos, dos ciclos idempotentes y sesiones A/B autenticadas. Un SELECT exclusivamente de lectura en Supabase `thesistema` del 14/11/2026 reconfirmó **0 conexiones, 0 runs, 0 external records y 0 cursores**; las cuatro tablas tienen RLS y ninguna expone SELECT directo a `anon`/`authenticated`. Eso no sustituye QA con sesiones reales.
+- **Rollback:** revertir squash #361 sin migraciones; no ejecutar operaciones de escritura a Fudo en O1. O2+ pospuesto.
 
 ### O1 — Fechas Fudo fuera del rango seguro de PostgreSQL (14/11/2026; [PR #359](https://github.com/devdamig-dev/thesistema/pull/359) fusionado)
 
