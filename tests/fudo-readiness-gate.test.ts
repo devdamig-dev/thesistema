@@ -172,7 +172,7 @@ test("O1 never binds five successful GETs from a newer server connection to stal
 
   assert.equal(bindCurrentFudoPreflight(rendered, serverProbed), null,
     "after another admin rotates credentials, the old browser render cannot show green checks");
-  assert.equal(bindCurrentFudoPreflight(rendered, allAvailable), null,
+  assert.equal(bindCurrentFudoPreflight(rendered, { ...allAvailable, connectionRevision: undefined }), null,
     "a legacy action without a server-derived revision cannot authorize permission badges");
   assert.equal(selectCurrentFudoPreflight(rendered, {
     revision: serverProbed.connectionRevision, result: serverProbed,
