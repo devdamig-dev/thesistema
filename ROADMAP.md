@@ -46,7 +46,7 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — Allowlist runtime para rutas de lectura Fudo (14/11/2026; PR en preparación)
+### O1 — Allowlist runtime para rutas de lectura Fudo (14/11/2026; [PR #361](https://github.com/devdamig-dev/thesistema/pull/361) en revisión)
 
 - **Riesgo identificado:** el método público `FudoClient.list(resource)` confiaba exclusivamente en la unión TypeScript `FudoResource`. Esa validación desaparece en runtime: un futuro caller JS/sin tipos o un cast podría pasar un path con segmentos `../`, query o ruta ajena y provocar un GET no previsto en el host del proveedor. No hay evidencia de que los flujos O1 vigentes exploten esta posibilidad; es defensa en profundidad para evitar ampliar accidentalmente el alcance read-only.
 - **Resultado verificable:** rechazar un recurso fuera de la allowlist de lectura **antes de POST de auth o cualquier GET**, con error sanitizado; mantener funcionando los cinco recursos O1 y los demás recursos declarados por el adaptador. No se habilitan operaciones de escritura Fudo.
