@@ -91,17 +91,20 @@ test("Fudo preserves numeric safe IDs but refuses rounded or fractional external
     "valid opaque IDs are stored byte-for-byte, not canonicalized");
 });
 
-test("Fudo keeps paging a short provider-capped page when JSON:API links.next exists", () => {
+test("Fudo rejects short linked import pages but accepts compatible full-page continuation", () => {
   const shortPage = { data: [{ id: "x1" }, { id: "x2" }],
     links: { next: "https://api.fu.do/v1alpha1/products?page%5Bnumber%5D=2" } };
   const rows = parseFudoPage(shortPage);
   assert.equal(rows.length, 2);
-  assert.equal(nextFudoPage(shortPage, 1, rows.length), 2);
-  // Only a compatible page-number link can signal continuation.
-  // Reject a foreign URL rather than hiding the provider mismatch.
+  assert.throws(() => nextFudoPage(shortPage, 1, rows.length), /invalid_fudo_page/,
+    "an unverified effective page size could make the next 100-row GET skip records");
+  const fullPage = { ...shortPage,
+    data: Array.from({ length: FUDO_SYNC_PAGE_SIZE }, (_, index) => ({ id: `x${index + 1}` })) };
+  assert.equal(nextFudoPage(fullPage, 1, parseFudoPage(fullPage).length), 2);
+  // Reject a foreign continuation even after a full requested page.
   // We never fetch links supplied in provider response bodies.
-  const offOrigin = { ...shortPage, links: { next: "https://malicious.invalid/exfiltrate" } };
-  assert.throws(() => nextFudoPage(offOrigin, 1, rows.length), /invalid_fudo_page/);
+  const offOrigin = { ...fullPage, links: { next: "https://malicious.invalid/exfiltrate" } };
+  assert.throws(() => nextFudoPage(offOrigin, 1, FUDO_SYNC_PAGE_SIZE), /invalid_fudo_page/);
 });
 
 test("Fudo pagination honors explicit end, even on a full page", () => {
