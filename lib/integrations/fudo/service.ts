@@ -652,8 +652,8 @@ export async function syncFudoReadOnly(expectedConnectionRevision?: string): Pro
         ))) {
       return fail("connection_changed", "La conexión o el negocio activo cambió. Actualizá y reintentá la lectura.");
     }
-    // The active business or the owner's membership can change while the
-    // connection row is being read. Avoid decrypting A's credentials or
+    // Membership and effective business scope can change while the
+    // connection row is being read. Avoid decrypting stale credentials or
     // starting a durable audit run after that context has already changed.
     // The transactional begin/commit RPCs still fence membership and generation.
     if (!(await isStillAuthorized(authorized.actor))) {
