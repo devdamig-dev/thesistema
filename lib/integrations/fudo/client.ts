@@ -46,6 +46,17 @@ export type FudoResource =
   | "payments"
   | "kitchens";
 
+// TypeScript's FudoResource union vanishes at runtime. A future untyped
+// server caller must not turn list() into an arbitrary Fudo path (including
+// dot segments, query injection or endpoints outside the read adapter).
+// Keep every existing typed read resource compatible; O1 sync still uses only
+// the five resources defined by FUDO_SYNC_RESOURCES.
+const FUDO_READ_RESOURCES: ReadonlySet<string> = new Set<FudoResource>([
+  "products", "ingredients", "providers", "sales", "orders",
+  "customers", "tables", "rooms", "users", "payment-methods",
+  "payments", "kitchens",
+]);
+
 export type FudoReadResourceStatus = {
   resource: FudoResource;
   code: "available" | FudoApiError["code"];
@@ -517,6 +528,13 @@ export class FudoClient {
 
   /** Generic read-only listing for explicitly allowed Fudo resources. */
   list(resource: FudoResource, params: FudoListParams = {}): Promise<unknown> {
+    // Fail closed before authentication or any provider request. A compile-time
+    // union alone cannot protect a JavaScript/cast caller at this boundary.
+    if (!FUDO_READ_RESOURCES.has(resource)) {
+      return Promise.reject(new FudoApiError(
+        "invalid_response", "Recurso de lectura Fudo no permitido.", null, false,
+      ));
+    }
     return this.getJson(resource, params);
   }
 
