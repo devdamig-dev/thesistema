@@ -28,6 +28,7 @@ let writes = 0;
 const rpcCalls: Array<Record<string, unknown>> = [];
 let revokeDuringRpc = false;
 let switchDuringRpc = false;
+let afterInitialConnectionRead: (() => void) | null = null;
 
 const db = {
   from(table: string) {
@@ -54,7 +55,9 @@ const db = {
         const matching = Object.entries(filters).every(([field, value]) =>
           (connection as unknown as Record<string, unknown>)[field] === value);
         if (!matching) return { error: null, data: null };
-        return { error: null, data: { ...connection } };
+        const observed = { ...connection };
+        afterInitialConnectionRead?.();
+        return { error: null, data: observed };
       },
     };
   },
@@ -406,6 +409,44 @@ test("stale rendered retest revision refuses rotation/retest before any provider
   } finally {
     activeBusiness = BUSINESS;
     isMember = true;
+    globalThis.fetch = oldFetch;
+    if (oldKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = oldKey;
+  }
+});
+
+test("Fudo stored retest denies revoked or switched actors before decrypt/auth GET", async () => {
+  const oldKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const oldFetch = globalThis.fetch;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  let outbound = 0;
+  globalThis.fetch = async () => {
+    outbound++;
+    throw new Error("No upstream request allowed after context change");
+  };
+  try {
+    for (const scenario of ["revoked", "switched"] as const) {
+      isMember = true; activeBusiness = BUSINESS; outbound = 0;
+      writes = 0; rpcCalls.length = 0;
+      connection = {
+        business_id: BUSINESS, connection_generation: ORIGINAL_GENERATION,
+        credentials_ciphertext: originalCiphertext, status: "connected",
+        last_error_code: null, last_tested_at: null,
+      };
+      afterInitialConnectionRead = () => {
+        afterInitialConnectionRead = null;
+        if (scenario === "revoked") isMember = false;
+        else activeBusiness = OTHER_BUSINESS;
+      };
+      const outcome = await testStoredFudoConnection();
+      assert.equal(outcome.ok, false, scenario);
+      if (!outcome.ok) assert.equal(outcome.code, "forbidden", scenario);
+      assert.equal(outbound, 0, "no Fudo auth POST or GET");
+      assert.equal(writes, 0, "no mutation of connection health");
+      assert.equal(rpcCalls.length, 0, "no audit write RPC for revoked actor");
+    }
+  } finally {
+    isMember = true; activeBusiness = BUSINESS; afterInitialConnectionRead = null;
     globalThis.fetch = oldFetch;
     if (oldKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = oldKey;
