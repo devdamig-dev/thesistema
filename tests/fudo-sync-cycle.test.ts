@@ -125,6 +125,7 @@ const db = {
   from,
   async rpc(name: string, args: Record<string, any>) {
     if (name === "fudo_begin_sync") {
+      beginSyncCalls++;
       if (!membershipActive || activeBusiness !== A
         || args.p_business_id !== A || args.p_actor_id !== USER) {
         return { data: { code: "forbidden" }, error: null };
