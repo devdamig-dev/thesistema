@@ -82,8 +82,9 @@ function from(table: string) {
     async maybeSingle() {
       if (table === "profiles") return { data: { active: true }, error: null };
       if (table === "business_members") return { data: membershipActive ? { id: "active-member" } : null, error: null };
-      // The owner may select another business while the initial connection
-      // lookup is in flight, even if they retain membership in business A.
+      // Model an effective-context change during the connection lookup.
+      // Current database auth uses a single membership, so this also
+      // represents an administrative reassignment of the actor's business.
       if (table === "fudo_connections" && switchBusinessOnConnectionRead) {
         switchBusinessOnConnectionRead = false;
         activeBusiness = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
