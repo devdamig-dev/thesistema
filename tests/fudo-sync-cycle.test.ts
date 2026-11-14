@@ -817,8 +817,13 @@ test("Fudo O1 overlapping pages fail before staging and cursor, without leaking 
     const url = new URL(String(input));
     if (url.pathname.endsWith("/products")) {
       const second = url.searchParams.get("page[number]") === "2";
-      return new Response(JSON.stringify({ data: [{ id: "overlap-id-fixture",
-        type: "Product", attributes: { name: second ? "must-not-stage" : "original" } }],
+      return new Response(JSON.stringify({
+        data: second
+          ? [{ id: "overlap-id-fixture", type: "Product", attributes: { name: "must-not-stage" } }]
+          : Array.from({ length: 100 }, (_, index) => ({
+            id: index === 0 ? "overlap-id-fixture" : `first-page-${index}`,
+            type: "Product", attributes: { name: "original" },
+          })),
         links: { next: second ? null : "https://api.fu.do/v1alpha1/products?page[number]=2&page[size]=100" },
       }), { status: 200 });
     }
@@ -830,7 +835,7 @@ test("Fudo O1 overlapping pages fail before staging and cursor, without leaking 
     if (first.ok) assert.equal(first.hasMorePages, true);
     const beforeRecords = JSON.stringify(records.filter((row) => row.resource_type === "products"));
     const beforeCursor = JSON.stringify(progress.filter((row) => row.resource_type === "products"));
-    assert.equal(records.filter((row) => row.resource_type === "products").length, 1);
+    assert.equal(records.filter((row) => row.resource_type === "products").length, 100);
     const second = await syncFudoReadOnly();
     assert.equal(second.ok, false);
     if (!second.ok) {
