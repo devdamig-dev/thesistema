@@ -98,13 +98,13 @@ La sincronización construye su propio GET con `page[number]` y `page[size]`; no
 
 La regla inicial está cubierta por fixtures sintéticos en [PR #195](https://github.com/devdamig-dev/thesistema/pull/195), integrado a main (`86d02e10`) con [Quality #41835366420](https://github.com/devdamig-dev/thesistema/actions/runs/41835366420) verde (verify/Playwright, PostgreSQL 17 y PostgREST), [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/2WT9buSBnxLRFVMKvh4auiis9VJe) y alias `gastropilot.nexodg.com` confirmado. No se validó con Fudo real.
 
-### Página no terminal más corta que lo solicitado (PR #357; en revisión)
+### Página no terminal más corta que lo solicitado (PR #357; fusionado)
 
 Un enlace `links.next` numéricamente correcto **no garantiza que Fudo haya respetado** el `page[size]` solicitado. Ejemplo: GastroPilot pide 100 registros, el proveedor limita a 20 y emite `page[number]=2`; al reconstruir el próximo GET con tamaño 100, pueden omitirse registros entre páginas. Incluso si el enlace informa `page[size]=100`, el cuerpo sólo demuestra que llegaron 20 filas.
 
-Por seguridad, la importación O1 propuesta en [PR #357](https://github.com/devdamig-dev/thesistema/pull/357) rechaza antes de staging/cursor cualquier página con `links.next` no nulo cuyo número de registros sea **menor** que el `page[size]` solicitado. El resultado es un error sanitizado y no una supuesta sincronización completa. Las páginas completas y una última página explícitamente terminada (`links.next: null`) siguen permitidas. Si el proveedor realmente usa un tamaño máximo menor, se necesita negociar y persistir el **tamaño efectivo de página por recurso/negocio/ciclo** antes de retomar. No modificar silenciosamente el tamaño durante el ciclo ni asumir compatibilidad hasta una prueba real.
+Por seguridad, la importación O1 publicada por [PR #357](https://github.com/devdamig-dev/thesistema/pull/357) rechaza antes de staging/cursor cualquier página con `links.next` no nulo cuyo número de registros sea **menor** que el `page[size]` solicitado. El resultado es un error sanitizado y no una supuesta sincronización completa. Las páginas completas y una última página explícitamente terminada (`links.next: null`) siguen permitidas. Si el proveedor realmente usa un tamaño máximo menor, se necesita negociar y persistir el **tamaño efectivo de página por recurso/negocio/ciclo** antes de retomar. No modificar silenciosamente el tamaño durante el ciclo ni asumir compatibilidad hasta una prueba real.
 
-**Estado:** cambio en revisión y QA pendiente; sin DDL ni llamadas de escritura a Fudo. No acredita piloto GO.
+**Estado (14/11/2026):** [PR #357](https://github.com/devdamig-dev/thesistema/pull/357) fusionado (`7ae3b77d`); [Quality #43549622184](https://github.com/devdamig-dev/thesistema/actions/runs/43549622184) exitoso en `verify`, `postgres17` y `postgrest` (3/3) sobre el HEAD del PR; [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/3Nc5XcDHMZKGHjPVq75MxsQapEUG) verificado en SHA exacto de main, alias `gastropilot.nexodg.com`. Sin DDL ni escrituras a Fudo. **NO VALIDADO EN PRODUCCIÓN** con cuenta real: O1 permanece NO-GO; falta piloto Fudo Pro/API, conciliación, doble sync y QA A/B.
 
 ### Consistencia de `page[size]` entre páginas (PR #196; publicado)
 
