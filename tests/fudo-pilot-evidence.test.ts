@@ -26,6 +26,7 @@ const view: FudoConnectionView = {
 
 const probe: FudoResourcePreflight = {
   ok: true,
+  connectionRevision: REVISION,
   message: "private-upstream-message",
   checks: ["products", "ingredients", "providers", "orders", "sales"].map(
     (resource) => ({ resource, code: "available" }),
@@ -159,4 +160,19 @@ test("pilot acta refuses a completed cursor with uncommitted or reversed run tim
     assert.match(report, /\| Productos \| GET compatible \| 7 \| 7 \| No verificable \| Cursor 0 sin cierre verificable \|/);
     assert.doesNotMatch(report, /\| Productos \|[^\n]*Ciclo leído/);
   }
+});
+
+test("Fudo acta refuses a locally relabeled probe from another tenant/generation", () => {
+  const report = buildFudoPilotEvidence(view, {
+    revision: REVISION,
+    result: { ...probe, connectionRevision: "b".repeat(64) },
+  });
+  assert.match(report, /Sin diagnóstico vigente/);
+  assert.doesNotMatch(report, /GET compatible/);
+  const legacy = buildFudoPilotEvidence(view, {
+    revision: REVISION,
+    result: { ...probe, connectionRevision: undefined },
+  });
+  assert.match(legacy, /Sin diagnóstico vigente/);
+  assert.doesNotMatch(legacy, /GET compatible/);
 });
