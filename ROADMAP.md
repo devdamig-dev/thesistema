@@ -46,6 +46,13 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Allowlist runtime para rutas de lectura Fudo (14/11/2026; PR en preparación)
+
+- **Riesgo identificado:** el método público `FudoClient.list(resource)` confiaba exclusivamente en la unión TypeScript `FudoResource`. Esa validación desaparece en runtime: un futuro caller JS/sin tipos o un cast podría pasar un path con segmentos `../`, query o ruta ajena y provocar un GET no previsto en el host del proveedor. No hay evidencia de que los flujos O1 vigentes exploten esta posibilidad; es defensa en profundidad para evitar ampliar accidentalmente el alcance read-only.
+- **Resultado verificable:** rechazar un recurso fuera de la allowlist de lectura **antes de POST de auth o cualquier GET**, con error sanitizado; mantener funcionando los cinco recursos O1 y los demás recursos declarados por el adaptador. No se habilitan operaciones de escritura Fudo.
+- **IMPLEMENTADO en rama:** `fix/o1-fudo-runtime-resource-allowlist-20261114`; validación runtime + regresiones negativas/positivas con fixture, sin DDL ni modificaciones comerciales. **PROBADO:** Quality Gate de PR pendiente. **DESPLEGADO:** NO. **VALIDADO EN PRODUCCIÓN:** NO — O1 PILOTO NO-GO.
+- **Rollback:** revertir cambios al adaptador/test; no requiere migración. No habilitar el piloto sin credenciales Pro/API autorizadas, conciliación de cinco recursos, doble sync idempotente y QA A/B autenticada.
+
 ### O1 — Fechas Fudo fuera del rango seguro de PostgreSQL (14/11/2026; [PR #359](https://github.com/devdamig-dev/thesistema/pull/359) fusionado)
 
 - **Hallazgo (integridad del staging):** `Date.parse` de JavaScript admite un año ISO `0000` y permite que `0001-01-01T00:00:00+14:00` normalice al año UTC `0000`. `parseStrictFudoTimestamp` devolvía una cadena `0000-...` aparentemente válida y `fudo_commit_sync_page` podía fallar por `source_updated_at::timestamptz` incompatible, bloqueando la tanda. Un **SELECT de solo lectura** en Supabase `thesistema` reprodujo SQLSTATE `22008` para ese timestamp. Una fecha local extrema `9999` puede normalizar a un año ISO extendido `+010000`, fuera del contrato UTC de cuatro dígitos.
