@@ -19,6 +19,8 @@ let membershipActive = true;
 let activeBusiness = A;
 let denyPageCommit = false;
 let denyFinish = false;
+let switchBusinessOnConnectionRead = false;
+let beginSyncCalls = 0;
 const runs: Row[] = [];
 const conn: Row = {
   business_id: A, connection_generation: GENERATION, credentials_ciphertext: ciphertext,
@@ -80,6 +82,13 @@ function from(table: string) {
     async maybeSingle() {
       if (table === "profiles") return { data: { active: true }, error: null };
       if (table === "business_members") return { data: membershipActive ? { id: "active-member" } : null, error: null };
+      // Model an effective-context change during the connection lookup.
+      // Current database auth uses a single membership, so this also
+      // represents an administrative reassignment of the actor's business.
+      if (table === "fudo_connections" && switchBusinessOnConnectionRead) {
+        switchBusinessOnConnectionRead = false;
+        activeBusiness = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+      }
       return { data: matching()[0] ?? null, error: null };
     },
     then(resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) {
@@ -117,6 +126,7 @@ const db = {
   from,
   async rpc(name: string, args: Record<string, any>) {
     if (name === "fudo_begin_sync") {
+      beginSyncCalls++;
       if (!membershipActive || activeBusiness !== A
         || args.p_business_id !== A || args.p_actor_id !== USER) {
         return { data: { code: "forbidden" }, error: null };
@@ -235,6 +245,43 @@ loader._load = function(name: string, ...args: any[]) {
 const { syncFudoReadOnly, getFudoConnectionView } =
   require("../lib/integrations/fudo/service") as typeof import("../lib/integrations/fudo/service");
 loader._load = previousLoad;
+
+test("Fudo O1 refuses to start a sync if the active business changes during connection lookup", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  membershipActive = true;
+  activeBusiness = A;
+  const beforeBegin = beginSyncCalls;
+  const beforeRuns = runs.length;
+  const beforeProgress = JSON.stringify(progress);
+  const beforeRecords = JSON.stringify(records);
+  const beforeConnection = { ...conn };
+  const providerCalls: string[] = [];
+  switchBusinessOnConnectionRead = true;
+  globalThis.fetch = async (input) => {
+    providerCalls.push(String(input));
+    throw new Error("Unexpected provider call from stale business");
+  };
+  try {
+    const outcome = await syncFudoReadOnly();
+    assert.equal(outcome.ok, false);
+    if (!outcome.ok) assert.equal(outcome.code, "forbidden");
+    assert.equal(beginSyncCalls, beforeBegin, "stale tenant cannot invoke the begin-sync RPC");
+    assert.equal(runs.length, beforeRuns, "no audit run should start under the former tenant");
+    assert.equal(JSON.stringify(progress), beforeProgress, "do not reset or advance the old tenant's cursors");
+    assert.equal(JSON.stringify(records), beforeRecords, "no staging writes");
+    assert.deepEqual(conn, beforeConnection, "no connection metadata changes");
+    assert.deepEqual(providerCalls, [], "no Fudo authentication or resource reads");
+  } finally {
+    switchBusinessOnConnectionRead = false;
+    activeBusiness = A;
+    membershipActive = true;
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
 
 test("Fudo O1 refuses staging and cursor writes if owner is revoked or switches tenant during GET", async () => {
   const previousFetch = globalThis.fetch;

@@ -652,6 +652,13 @@ export async function syncFudoReadOnly(expectedConnectionRevision?: string): Pro
         ))) {
       return fail("connection_changed", "La conexión o el negocio activo cambió. Actualizá y reintentá la lectura.");
     }
+    // Membership and effective business scope can change while the
+    // connection row is being read. Avoid decrypting stale credentials or
+    // starting a durable audit run after that context has already changed.
+    // The transactional begin/commit RPCs still fence membership and generation.
+    if (!(await isStillAuthorized(authorized.actor))) {
+      return fail("forbidden", "Tu acceso al negocio cambió antes de iniciar la sincronización. Volvé a ingresar.");
+    }
     const encryptedConnection: string = connection.data.credentials_ciphertext;
     const credentials = decryptFudoCredentials(actor.businessId, encryptedConnection);
     const client = new FudoClient(credentials);
