@@ -46,6 +46,13 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Validación de bearer ASCII antes de usar la API (14/11/2026; [PR #365](https://github.com/devdamig-dev/thesistema/pull/365) en borrador)
+
+- **Hallazgo verificable:** FudoClient aceptaba un token devuelto por auth con caracteres Unicode/Latin-1 sin espacios ni controles. Un `Authorization: Bearer token-😀` lanza `TypeError` en la construcción de encabezados web antes de llegar a la red; el catch de transporte podía clasificar la falla como `provider_unavailable` reintentable, cuando la respuesta de auth era incompatible. No hay evidencia de que Fudo haya emitido esos tokens en una cuenta real.
+- **Resultado observable:** sólo aceptar tokens bearer ASCII visible; cualquier token con Unicode o Latin-1 fuera del contrato se rechaza como `invalid_response` no reintentable, con cero GET a recursos. Mantener los bearer normales y los cinco recursos O1 sin cambios.
+- **IMPLEMENTADO EN RAMA:** PR #365, cambio en `lib/integrations/fudo/client.ts` y regresión de Unicode/Latin-1 en `tests/fudo-client.test.ts`.
+- **PROBADO:** Quality Gate del PR pendiente; reproducción independiente de Headers con Node no reemplaza CI. **DESPLEGADO: NO. VALIDADO EN PRODUCCIÓN: NO — O1 NO-GO.** Sin migraciones ni escrituras al proveedor; rollback por revertir PR. Cuenta Fudo real, conciliación, doble sync y QA A/B aún pendientes. O2+ pospuesto.
+
 ### O1 — Preflight valida toda la allowlist antes del POST de autenticación (14/11/2026; [PR #363](https://github.com/devdamig-dev/thesistema/pull/363) fusionado)
 
 - **Hallazgo (defensa preventiva):** #361 protegía `FudoClient.list(resource)` antes de HTTP, pero `probeReadAccess(resources)` autenticaba antes de verificar el lote. Un consumidor JS/sin tipos podía incluir un recurso inválido; el método evitaría el GET inválido, pero habría hecho POST auth. No hay evidencia de explotación real ni fuga de credenciales.
