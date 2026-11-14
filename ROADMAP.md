@@ -46,13 +46,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — Páginas cortas con `links.next` y tamaño efectivo no verificable (14/11/2026; [PR #357](https://github.com/devdamig-dev/thesistema/pull/357) en revisión)
+### O1 — Páginas cortas con `links.next` y tamaño efectivo no verificable (14/11/2026; [PR #357](https://github.com/devdamig-dev/thesistema/pull/357) fusionado)
 
 - **Hallazgo (integridad):** la importación solicita `page[size]=100`, pero si Fudo devolvía menos filas con `links.next` a la página siguiente, el adaptador aceptaba la continuación aunque Fudo pudiese haber limitado el tamaño efectivo a 20. El siguiente GET seguía solicitando 100, con riesgo de omitir IDs 21–100 y declarar una conciliación incompleta como válida. Comparar `page[size]` en la URL no prueba el tamaño realmente usado.
 - **Resultado observable:** rechazar toda página **no terminal** con menos registros que el tamaño solicitado antes de `fudo_commit_sync_page`; error fijo `invalid_response`, run fallido auditable, **sin staging ni avance del cursor del recurso afectado**. Conservar página completa, probe de 1 registro y página final corta marcada expresamente `links.next: null`.
-- **IMPLEMENTADO (rama de PR; no fusionado):** corrección conservadora en `snapshot.ts`, regresiones del parser y de sincronización en [#357](https://github.com/devdamig-dev/thesistema/pull/357). Sin cambios SQL, secretos ni escrituras a Fudo.
-- **PROBADO:** pendiente de Quality Gate en HEAD del PR; fixtures sintéticas no sustituyen contraste con Fudo real.
-- **DESPLEGADO:** NO para este cambio. **VALIDADO EN PRODUCCIÓN:** NO — O1 PILOTO NO-GO.
+- **IMPLEMENTADO / FUSIONADO:** [PR #357](https://github.com/devdamig-dev/thesistema/pull/357), squash `7ae3b77dc0ae1d458df3d1837ab11ac34cb67c26` en `main`; corrección conservadora en `snapshot.ts` y regresiones de parser/sync. Sin DDL, secretos ni escrituras a Fudo o datos comerciales.
+- **PROBADO (CI sintético; NO Fudo real):** [Quality #43549622184](https://github.com/devdamig-dev/thesistema/actions/runs/43549622184) `completed/success` en HEAD `b9860ae2b47ddc726cafb1d5f65795e1f7e50e64`, jobs `verify`, `postgres17` y `postgrest` **3/3 success**. La preview Vercel informó `build-rate-limit`; no fue fallo de tests. Quality independiente sobre el squash de `main` no acreditado aún.
+- **DESPLEGADO / VERCEL Production READY:** [deployment `dpl_3Nc5XcDHMZKGHjPVq75MxsQapEUG`](https://vercel.com/damians-projects-a45d01bf/thesistema/3Nc5XcDHMZKGHjPVq75MxsQapEUG) verificado directamente: `target=production`, `readyState=READY`, SHA exacto `7ae3b77dc0ae1d458df3d1837ab11ac34cb67c26`, alias `gastropilot.nexodg.com`, `aliasError=null`. READY no equivale a QA autenticada ni conciliación con Fudo real.
+- **VALIDADO EN PRODUCCIÓN: NO — O1 PILOTO NO-GO.** Supabase `thesistema` (SELECT de solo lectura, 14/11/2026): cero filas en `fudo_connections`, `fudo_sync_runs`, `fudo_external_records` y `fudo_sync_progress`.
 - **Compatibilidad / rollback:** si Fudo limita legítimamente el tamaño, el recurso quedará bloqueado en modo seguro hasta implementar tamaño efectivo estable y persistido por recurso, verificar offsets con el proveedor y agregar regresiones. Revertir #357 no necesita migraciones, pero restaura el riesgo de omisiones; no revertir sin evidencia contractual.
 - **Dependencia externa vigente:** cuenta autorizada Pro/API, cinco recursos y conteos/IDs conciliados, doble ciclo idempotente, sesión A/B y acta privada. O2+ pospuesto.
 
