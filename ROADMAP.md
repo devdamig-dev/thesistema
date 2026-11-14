@@ -46,6 +46,16 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Páginas cortas con `links.next` y tamaño efectivo no verificable (14/11/2026; [PR #357](https://github.com/devdamig-dev/thesistema/pull/357) en revisión)
+
+- **Hallazgo (integridad):** la importación solicita `page[size]=100`, pero si Fudo devolvía menos filas con `links.next` a la página siguiente, el adaptador aceptaba la continuación aunque Fudo pudiese haber limitado el tamaño efectivo a 20. El siguiente GET seguía solicitando 100, con riesgo de omitir IDs 21–100 y declarar una conciliación incompleta como válida. Comparar `page[size]` en la URL no prueba el tamaño realmente usado.
+- **Resultado observable:** rechazar toda página **no terminal** con menos registros que el tamaño solicitado antes de `fudo_commit_sync_page`; error fijo `invalid_response`, run fallido auditable, **sin staging ni avance del cursor del recurso afectado**. Conservar página completa, probe de 1 registro y página final corta marcada expresamente `links.next: null`.
+- **IMPLEMENTADO (rama de PR; no fusionado):** corrección conservadora en `snapshot.ts`, regresiones del parser y de sincronización en [#357](https://github.com/devdamig-dev/thesistema/pull/357). Sin cambios SQL, secretos ni escrituras a Fudo.
+- **PROBADO:** pendiente de Quality Gate en HEAD del PR; fixtures sintéticas no sustituyen contraste con Fudo real.
+- **DESPLEGADO:** NO para este cambio. **VALIDADO EN PRODUCCIÓN:** NO — O1 PILOTO NO-GO.
+- **Compatibilidad / rollback:** si Fudo limita legítimamente el tamaño, el recurso quedará bloqueado en modo seguro hasta implementar tamaño efectivo estable y persistido por recurso, verificar offsets con el proveedor y agregar regresiones. Revertir #357 no necesita migraciones, pero restaura el riesgo de omisiones; no revertir sin evidencia contractual.
+- **Dependencia externa vigente:** cuenta autorizada Pro/API, cinco recursos y conteos/IDs conciliados, doble ciclo idempotente, sesión A/B y acta privada. O2+ pospuesto.
+
 ### O1 — Preflight de permisos condicionado a la revisión visible (13/11/2026; [PR #355](https://github.com/devdamig-dev/thesistema/pull/355) fusionado)
 
 - **Hallazgo:** el diagnóstico «Revisar permisos» comprobaba el negocio, pero no comparaba la revisión de conexión *mostrada al pulsar* con la persistida antes de descifrar/consultar Fudo. El UI de #334 evitaba mostrar checks verdes desfasados al finalizar, pero una pestaña obsoleta podía enviar POST de auth y cinco GET usando credenciales nuevas de otro admin del mismo negocio.

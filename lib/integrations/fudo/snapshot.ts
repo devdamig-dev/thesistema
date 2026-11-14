@@ -190,6 +190,15 @@ export function nextFudoPage(response: unknown, currentPage: number, recordCount
           || recordCount === 0 || currentPage === 100000) {
           throw new Error("invalid_fudo_page");
         }
+        // A non-terminal page shorter than the requested size might mean
+        // Fudo capped its effective page size (e.g. 20 rows for a 100-row
+        // request). Following page[number]=2 with the *requested* size would
+        // then skip records 21..100. The link alone cannot prove which
+        // offset Fudo used. Fail closed before staging/cursor updates until
+        // we support a verified, durable per-resource effective page size.
+        if (recordCount < requestedPageSize) {
+          throw new Error("invalid_fudo_page");
+        }
 
         // Only numbered next-page links can be resumed by this adapter.
         // A merely non-empty href could be a cursor, an old page, an

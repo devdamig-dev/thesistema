@@ -383,14 +383,18 @@ test("Fudo O1 pagination keeps one cycle UUID then flags a provider ID absent on
       if (phase === "first") {
         assert.equal(page, "1");
         return new Response(JSON.stringify({
-          data: [{ id: "item-1", attributes: { name: "fixture product" } }],
+          // A non-terminal 100-row read may safely continue with size 100.
+          // A short first page cannot prove the provider's effective offset.
+          data: Array.from({ length: 100 }, (_, index) => ({
+            id: `item-${index + 1}`, attributes: { name: "fixture product" },
+          })),
           links: { next: "/v1alpha1/products?page=2" },
         }), { status: 200 });
       }
       if (phase === "resume") {
         assert.equal(page, "2");
         return new Response(JSON.stringify({
-          data: [{ id: "item-2", attributes: { name: "fixture product 2" } }],
+          data: [{ id: "item-101", attributes: { name: "fixture product 101" } }],
           links: { next: null },
         }), { status: 200 });
       }
@@ -409,14 +413,14 @@ test("Fudo O1 pagination keeps one cycle UUID then flags a provider ID absent on
     assert.equal(progress.find((row) => row.resource_type === "products")?.next_page, 2);
     const firstCycle = progress.find((row) => row.resource_type === "products")?.cycle_id;
     assert.match(String(firstCycle), /^[a-f0-9-]{36}$/i);
-    assert.equal(records.filter((row) => row.resource_type === "products").length, 1);
+    assert.equal(records.filter((row) => row.resource_type === "products").length, 100);
 
     phase = "resume";
     const second = await syncFudoReadOnly();
     assert.equal(second.ok, true, JSON.stringify(second));
     assert.equal(progress.find((row) => row.resource_type === "products")?.cycle_id, firstCycle);
     assert.equal(progress.find((row) => row.resource_type === "products")?.next_page, 0);
-    assert.equal(records.filter((row) => row.resource_type === "products").length, 2);
+    assert.equal(records.filter((row) => row.resource_type === "products").length, 101);
 
     phase = "rescan";
     const third = await syncFudoReadOnly();
@@ -424,12 +428,12 @@ test("Fudo O1 pagination keeps one cycle UUID then flags a provider ID absent on
     const newCycle = progress.find((row) => row.resource_type === "products")?.cycle_id;
     assert.notEqual(newCycle, firstCycle);
     assert.equal(records.find((row) => row.external_id === "item-1")?.last_seen_cycle_id, newCycle);
-    assert.equal(records.find((row) => row.external_id === "item-2")?.last_seen_cycle_id, firstCycle);
+    assert.equal(records.find((row) => row.external_id === "item-101")?.last_seen_cycle_id, firstCycle);
     const view = await getFudoConnectionView();
     assert.ok(view);
-    assert.equal(view.importedCounts.products, 2, "staging history is retained");
+    assert.equal(view.importedCounts.products, 101, "staging history is retained");
     assert.equal(view.seenThisCycleCounts.products, 1);
-    assert.equal(view.possiblyMissingCounts.products, 1);
+    assert.equal(view.possiblyMissingCounts.products, 100);
     assert.ok(providerVerbs.length > 0 && providerVerbs.every((verb) => verb === "GET"),
       "never write to provider API");
     assert.doesNotMatch(JSON.stringify(view), /synthetic-pilot|synthetic-token|credentials_ciphertext|payload/);
@@ -549,6 +553,52 @@ test("Fudo O1 rejects a nonempty short page without next metadata before staging
         // A valid row with no links: we cannot know whether the provider
         // silently limited the requested 100-record page to one record.
         data: [{ id: "uncommitted-short-product", attributes: { name: "synthetic-only" } }],
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+  };
+  try {
+    const outcome = await syncFudoReadOnly();
+    assert.equal(outcome.ok, false);
+    if (!outcome.ok) {
+      assert.equal(outcome.code, "invalid_response");
+      assert.match(outcome.message, /paginación no verificable/);
+      assert.doesNotMatch(outcome.message, /synthetic-token|uncommitted-short-product/);
+    }
+    assert.equal(runs.at(-1)?.status, "failed", "ambiguous provider pagination is an auditable failed run");
+    assert.equal(JSON.stringify(records.filter((row) => row.resource_type === "products")), beforeRecords,
+      "no partial staging persisted");
+    assert.equal(JSON.stringify(progress.filter((row) => row.resource_type === "products")), beforeProgress,
+      "the resource cursor must not advance or close");
+    assert.ok(verbs.length > 0 && verbs.every((verb) => verb === "GET"), "Fudo stays GET-only");
+  } finally {
+    globalThis.fetch = prevFetch;
+    if (prevKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = prevKey;
+  }
+});
+
+test("Fudo O1 rejects a short page with numbered next metadata before staging or cursor", async () => {
+  const prevFetch = globalThis.fetch;
+  const prevKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  const beforeRecords = JSON.stringify(records.filter((row) => row.resource_type === "products"));
+  const beforeProgress = JSON.stringify(progress.filter((row) => row.resource_type === "products"));
+  const verbs: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return new Response(JSON.stringify({
+        token: "synthetic-token", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    verbs.push(String(init?.method));
+    if (new URL(String(input)).pathname.endsWith("/products")) {
+      return new Response(JSON.stringify({
+        // Provider may cap a 100-row request to one row but advertise page 2.
+        // Continuing with page[size]=100 could skip source records 2..100.
+        data: [{ id: "uncommitted-short-product", attributes: { name: "synthetic-only" } }],
+        links: { next: "/v1alpha1/products?page[number]=2&page[size]=100" },
       }), { status: 200 });
     }
     return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
@@ -767,8 +817,13 @@ test("Fudo O1 overlapping pages fail before staging and cursor, without leaking 
     const url = new URL(String(input));
     if (url.pathname.endsWith("/products")) {
       const second = url.searchParams.get("page[number]") === "2";
-      return new Response(JSON.stringify({ data: [{ id: "overlap-id-fixture",
-        type: "Product", attributes: { name: second ? "must-not-stage" : "original" } }],
+      return new Response(JSON.stringify({
+        data: second
+          ? [{ id: "overlap-id-fixture", type: "Product", attributes: { name: "must-not-stage" } }]
+          : Array.from({ length: 100 }, (_, index) => ({
+            id: index === 0 ? "overlap-id-fixture" : `first-page-${index}`,
+            type: "Product", attributes: { name: "original" },
+          })),
         links: { next: second ? null : "https://api.fu.do/v1alpha1/products?page[number]=2&page[size]=100" },
       }), { status: 200 });
     }
@@ -780,7 +835,7 @@ test("Fudo O1 overlapping pages fail before staging and cursor, without leaking 
     if (first.ok) assert.equal(first.hasMorePages, true);
     const beforeRecords = JSON.stringify(records.filter((row) => row.resource_type === "products"));
     const beforeCursor = JSON.stringify(progress.filter((row) => row.resource_type === "products"));
-    assert.equal(records.filter((row) => row.resource_type === "products").length, 1);
+    assert.equal(records.filter((row) => row.resource_type === "products").length, 100);
     const second = await syncFudoReadOnly();
     assert.equal(second.ok, false);
     if (!second.ok) {

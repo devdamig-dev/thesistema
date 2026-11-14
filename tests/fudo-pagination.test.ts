@@ -8,13 +8,13 @@ test("Fudo O1 numbered links continue to the actual next page without following 
     links: { next: "/v1alpha1/products?page%5Bnumber%5D=2&page%5Bsize%5D=20" },
   }, 1, 20, "products", 20), 2);
   assert.equal(nextFudoPage({ data: [] }, 1, 0), 0);
-  assert.equal(nextFudoPage({ links: { next: "/v1alpha1/products?page=2" } }, 1, 1), 2);
+  assert.equal(nextFudoPage({ links: { next: "/v1alpha1/products?page=2" } }, 1, 1, "products", 1), 2);
   assert.equal(nextFudoPage({
     links: { next: "https://api.fu.do/v1alpha1/orders?page%5Bnumber%5D=13&page%5Bsize%5D=20" },
   }, 12, 20, "orders", 20), 13);
   assert.equal(nextFudoPage({
     links: { next: { href: "?page[number]=3&page[size]=100" } },
-  }, 2, 12), 3);
+  }, 2, 100), 3);
   // A full page without explicit metadata is the legacy compatibility fallback.
   assert.equal(nextFudoPage({ data: [] }, 1, 100), 2);
 });
@@ -46,7 +46,7 @@ test("Fudo O1 refuses malformed, non-numbered, skipped or external next links", 
     { href: true },
   ];
   for (const next of rejected) {
-    assert.throws(() => nextFudoPage({ links: { next } }, 1, 1), (error: unknown) => {
+    assert.throws(() => nextFudoPage({ links: { next } }, 1, 100), (error: unknown) => {
       assert.ok(error instanceof Error);
       assert.equal(error.message, "invalid_fudo_page");
       assert.doesNotMatch(error.message, /untrusted|cursor|user|pass/);
@@ -54,7 +54,7 @@ test("Fudo O1 refuses malformed, non-numbered, skipped or external next links", 
     }, JSON.stringify(next));
   }
   assert.throws(() => nextFudoPage({ links: { next: "/v1alpha1/products?page=2" } }, 1, 0), /invalid_fudo_page/);
-  assert.throws(() => nextFudoPage({ links: { next: "/v1alpha1/products?page=100001" } }, 100000, 1), /invalid_fudo_page/);
+  assert.throws(() => nextFudoPage({ links: { next: "/v1alpha1/products?page=100001" } }, 100000, 100), /invalid_fudo_page/);
 });
 
 test("Fudo O1 rejects size mismatch in a test-connection probe without leaking the provider URL", () => {
@@ -72,7 +72,7 @@ test("Fudo O1 continuation metadata must refer to the resource being imported", 
     "https://api.fu.do/v1alpha1/orders?page%5Bnumber%5D=2",
   ];
   for (const next of valid) {
-    assert.equal(nextFudoPage({ links: { next } }, 1, 1, "orders"), 2, next);
+    assert.equal(nextFudoPage({ links: { next } }, 1, 100, "orders"), 2, next);
   }
 
   const wrongResource = [
@@ -83,7 +83,7 @@ test("Fudo O1 continuation metadata must refer to the resource being imported", 
     "/v1alpha1/orders/../products?page=2",
   ];
   for (const next of wrongResource) {
-    assert.throws(() => nextFudoPage({ links: { next } }, 1, 1, "orders"),
+    assert.throws(() => nextFudoPage({ links: { next } }, 1, 100, "orders"),
       /invalid_fudo_page/, next);
   }
 });
@@ -96,6 +96,35 @@ test("Fudo O1 refuses an overfilled page even when links.next is null", () => {
     /invalid_fudo_page/, "provider did not honor the requested one-record probe size");
   assert.equal(nextFudoPage(overfilled, 1, rows.length, "products", 2), 0,
     "the same data is valid if the caller explicitly requested two records");
+});
+
+test("Fudo O1 rejects short import pages with a next link before staging could skip offsets", () => {
+  // A provider might cap a 100-record request at 20, then link to page 2.
+  // Our next GET would still request 100, skipping IDs 21..100. An explicit
+  // page[size]=100 in the link does not prove the provider honored that size.
+  // Fail closed regardless of whether the hint omits, matches or changes size.
+  const hints = [
+    "/v1alpha1/products?page[number]=2",
+    "/v1alpha1/products?page[number]=2&page[size]=100",
+    "/v1alpha1/products?page[number]=2&page[size]=20",
+  ];
+  for (const count of [1, 20, 99]) {
+    for (const next of hints) {
+      assert.throws(() => nextFudoPage({ links: { next } }, 1, count, "products", 100),
+        (error: unknown) => {
+          assert.ok(error instanceof Error);
+          assert.equal(error.message, "invalid_fudo_page");
+          assert.doesNotMatch(error.message, /products|size|\/v1alpha1/);
+          return true;
+        }, `short page with ${count} records and continuation must fail closed`);
+    }
+  }
+  // Valid complete pages, one-record probes and explicit terminal short pages
+  // remain supported. The next hint is inspected, not fetched.
+  assert.equal(nextFudoPage({ links: { next: "?page[number]=2" } }, 1, 100, "products", 100), 2);
+  assert.equal(nextFudoPage({ links: { next: "?page[number]=2&page[size]=20" } }, 1, 20, "products", 20), 2);
+  assert.equal(nextFudoPage({ links: { next: "?page[number]=2&page[size]=1" } }, 1, 1, "products", 1), 2);
+  assert.equal(nextFudoPage({ links: { next: null } }, 1, 20, "products", 100), 0);
 });
 
 test("Fudo O1 never marks a nonempty short import page complete without an explicit next link", () => {
