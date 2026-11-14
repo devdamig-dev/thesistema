@@ -245,6 +245,43 @@ const { syncFudoReadOnly, getFudoConnectionView } =
   require("../lib/integrations/fudo/service") as typeof import("../lib/integrations/fudo/service");
 loader._load = previousLoad;
 
+test("Fudo O1 refuses to start a sync if the active business changes during connection lookup", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  membershipActive = true;
+  activeBusiness = A;
+  const beforeBegin = beginSyncCalls;
+  const beforeRuns = runs.length;
+  const beforeProgress = JSON.stringify(progress);
+  const beforeRecords = JSON.stringify(records);
+  const beforeConnection = { ...conn };
+  const providerCalls: string[] = [];
+  switchBusinessOnConnectionRead = true;
+  globalThis.fetch = async (input) => {
+    providerCalls.push(String(input));
+    throw new Error("Unexpected provider call from stale business");
+  };
+  try {
+    const outcome = await syncFudoReadOnly();
+    assert.equal(outcome.ok, false);
+    if (!outcome.ok) assert.equal(outcome.code, "forbidden");
+    assert.equal(beginSyncCalls, beforeBegin, "stale tenant cannot invoke the begin-sync RPC");
+    assert.equal(runs.length, beforeRuns, "no audit run should start under the former tenant");
+    assert.equal(JSON.stringify(progress), beforeProgress, "do not reset or advance the old tenant's cursors");
+    assert.equal(JSON.stringify(records), beforeRecords, "no staging writes");
+    assert.deepEqual(conn, beforeConnection, "no connection metadata changes");
+    assert.deepEqual(providerCalls, [], "no Fudo authentication or resource reads");
+  } finally {
+    switchBusinessOnConnectionRead = false;
+    activeBusiness = A;
+    membershipActive = true;
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
+
 test("Fudo O1 refuses staging and cursor writes if owner is revoked or switches tenant during GET", async () => {
   const previousFetch = globalThis.fetch;
   const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
