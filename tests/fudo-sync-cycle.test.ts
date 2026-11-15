@@ -1005,3 +1005,97 @@ test("Fudo O1 service does not refresh a provider bearer after membership revoca
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
   }
 });
+
+test("Fudo O1 sync stops fresh provider GETs after a connection retest during auth", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const previousStatus = conn.status;
+  const previousTestedAt = conn.last_tested_at;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  membershipActive = true;
+  activeBusiness = A;
+  conn.status = "connected";
+  conn.last_tested_at = "2026-11-15T00:00:00Z";
+  const recordsBefore = JSON.stringify(records);
+  const previousRuns = runs.length;
+  let authPosts = 0;
+  let resourceGets = 0;
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      authPosts++;
+      // A second admin completes a successful retest while bearer auth is in flight.
+      conn.last_tested_at = "2026-11-15T00:00:01Z";
+      return new Response(JSON.stringify({
+        token: "synthetic-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    resourceGets++;
+    throw new Error("A stale sync must not start a new resource GET");
+  };
+  try {
+    const result = await syncFudoReadOnly();
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.code, "connection_changed");
+      assert.doesNotMatch(result.message, /synthetic-bearer|synthetic-pilot-secret/);
+    }
+    assert.equal(authPosts, 1, "auth POST already in flight may complete");
+    assert.equal(resourceGets, 0, "no new GET under a superseded retest revision");
+    assert.equal(JSON.stringify(records), recordsBefore, "no snapshots staged");
+    assert.equal(runs.length, previousRuns + 1);
+    assert.equal(runs.at(-1)?.status, "failed", "failed run remains auditable");
+  } finally {
+    conn.status = previousStatus;
+    conn.last_tested_at = previousTestedAt;
+    membershipActive = true;
+    activeBusiness = A;
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
+
+test("Fudo O1 sync cannot schedule later pages after retest during first GET", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const previousStatus = conn.status;
+  const previousTestedAt = conn.last_tested_at;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  membershipActive = true;
+  activeBusiness = A;
+  conn.status = "connected";
+  conn.last_tested_at = "2026-11-15T00:00:00Z";
+  let resourceGets = 0;
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return new Response(JSON.stringify({
+        token: "synthetic-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    assert.equal(init?.method, "GET", "Fudo stays read-only");
+    resourceGets++;
+    if (resourceGets === 1) {
+      // Already-launched GETs may settle, but later workers must recheck.
+      conn.last_tested_at = "2026-11-15T00:00:01Z";
+    }
+    return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+  };
+  try {
+    const result = await syncFudoReadOnly();
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.code, "connection_changed");
+    assert.ok(resourceGets >= 1 && resourceGets <= 3,
+      "at most the bounded initial batch may issue GETs before detecting a retest");
+    assert.equal(runs.at(-1)?.status, "failed", "close failed run after all workers settle");
+  } finally {
+    conn.status = previousStatus;
+    conn.last_tested_at = previousTestedAt;
+    membershipActive = true;
+    activeBusiness = A;
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
