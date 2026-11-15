@@ -61,6 +61,17 @@ const db = {
       },
     };
   },
+  async rpc(name: string, args: Record<string, unknown>) {
+    assert.equal(name, "fudo_record_connection_test", "only the stored retest may update metadata");
+    if (args.p_expected_generation !== connectionGeneration
+      || args.p_expected_last_tested_at !== connectionTestedAt) {
+      return { data: "connection_changed", error: null };
+    }
+    if (!isMember || role !== "owner" && role !== "admin" || !profileActive || tenant !== A) {
+      return { data: "forbidden", error: null };
+    }
+    return { data: "recorded", error: null };
+  },
 };
 
 const loader = Module as any;
@@ -75,8 +86,65 @@ loader._load = function(name: string, ...args: any[]) {
   if (name === "@/lib/env") return { isDatabaseMode: () => true };
   return originalLoad.call(this, name, ...args);
 };
-const { inspectFudoReadPermissions } = require("../lib/integrations/fudo/service") as typeof import("../lib/integrations/fudo/service");
+const { inspectFudoReadPermissions, testStoredFudoConnection } =
+  require("../lib/integrations/fudo/service") as typeof import("../lib/integrations/fudo/service");
 loader._load = originalLoad;
+
+test("Fudo stored retest stops product GET after a concurrent connection rotation or retest", async () => {
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const previousFetch = globalThis.fetch;
+  const initialTestAt = "2026-11-07T00:00:00Z";
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  try {
+    for (const transition of ["rotation", "retest", "stable"] as const) {
+      tenant = A; role = "owner"; isMember = true; profileActive = true;
+      connectionStatus = "connected"; connectionGeneration = GENERATION;
+      connectionTestedAt = initialTestAt; connectionReads = 0;
+      duringInitialConnectionRead = null; duringFinalConnectionRead = null;
+      let authPosts = 0;
+      let productGets = 0;
+      globalThis.fetch = async (url, init) => {
+        if (String(url) === "https://auth.fu.do/api") {
+          assert.equal(init?.method, "POST");
+          authPosts++;
+          if (transition === "rotation") {
+            connectionGeneration = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+          } else if (transition === "retest") {
+            connectionTestedAt = "2026-11-07T00:00:01Z";
+          }
+          return new Response(JSON.stringify({
+            token: "synthetic-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+          }), { status: 200 });
+        }
+        assert.ok(String(url).startsWith("https://api.fu.do/v1alpha1/products"));
+        assert.equal(init?.method, "GET", "no Fudo business writes are permitted");
+        productGets++;
+        return new Response(JSON.stringify({
+          data: [], links: { next: null },
+        }), { status: 200 });
+      };
+      const result = await testStoredFudoConnection();
+      assert.equal(authPosts, 1, transition);
+      if (transition === "stable") {
+        assert.equal(result.ok, true, "unchanged stored credentials remain testable");
+        assert.equal(productGets, 1, "products probe still performs one read-only GET");
+      } else {
+        assert.equal(result.ok, false, transition);
+        if (!result.ok) assert.equal(result.code, "connection_changed", transition);
+        assert.equal(productGets, 0, "no new GET with obsolete Fudo credentials");
+      }
+      assert.doesNotMatch(JSON.stringify(result), /synthetic-bearer|synthetic-api-key|synthetic-api-secret/);
+    }
+  } finally {
+    tenant = A; role = "owner"; isMember = true; profileActive = true;
+    connectionStatus = "connected"; connectionGeneration = GENERATION;
+    connectionTestedAt = initialTestAt; connectionReads = 0;
+    duringInitialConnectionRead = null; duringFinalConnectionRead = null;
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
 
 test("Fudo preflight rejects checks if owner is revoked during its last privileged reread", async () => {
   const originalKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
