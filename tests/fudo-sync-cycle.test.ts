@@ -956,3 +956,48 @@ test("Fudo O1 blocks a stale foreground tenant/credential revision before any pr
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
   }
 });
+
+test("Fudo O1 service does not refresh a provider bearer after membership revocation during 401 GET", async () => {
+  // Exercise the service wiring, not merely the standalone client hook.
+  membershipActive = true;
+  activeBusiness = A;
+  denyPageCommit = false;
+  denyFinish = false;
+  switchBusinessOnConnectionRead = false;
+  progress.length = 0;
+  records.length = 0;
+  runs.length = 0;
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string | undefined }> = [];
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    calls.push({ url, method: init?.method });
+    if (url === "https://auth.fu.do/api") {
+      return new Response(JSON.stringify({ token: "synthetic-expiring-bearer" }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    }
+    // A provider 401 arrives immediately after the owner is revoked.
+    // The FudoClient 401 branch must not start a second auth/GET request.
+    membershipActive = false;
+    return new Response(null, { status: 401 });
+  }) as typeof fetch;
+
+  try {
+    const result = await syncFudoReadOnly();
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.code, "forbidden");
+    assert.equal(calls.filter((call) => call.method === "POST").length, 1);
+    // Three concurrent read workers can already have initiated their first
+    // GETs, but no worker may start a second GET after a 401 revocation.
+    const gets = calls.filter((call) => call.method === "GET");
+    assert.ok(gets.length >= 1 && gets.length <= 3);
+    assert.equal(new Set(gets.map((call) => call.url)).size, gets.length);
+    assert.equal(records.length, 0);
+    assert.equal(progress.length, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+    membershipActive = true;
+    activeBusiness = A;
+  }
+});
