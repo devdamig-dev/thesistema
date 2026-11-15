@@ -485,7 +485,13 @@ export async function testStoredFudoConnection(
     // No ciphertext enters PostgREST filters, RPC arguments or logs.
     let providerFailure: FudoActionResult | null = null;
     try {
-      await authorizedFudoClient(credentials, actor).testConnection();
+      // A parallel admin can rotate, disconnect, or retest after technical auth
+      // starts. Do not send a products GET with the now-obsolete revision;
+      // the transactional fudo_record_connection_test fence still protects
+      // persisted status from any request already in flight.
+      await authorizedFudoClient(credentials, actor, {
+        generation, status: stored.data.status, lastTestedAt: testedAtStart,
+      }).testConnection();
     } catch (error) {
       providerFailure = safeFailure(error);
     }
