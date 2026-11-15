@@ -968,6 +968,8 @@ test("Fudo O1 service does not refresh a provider bearer after membership revoca
   records.length = 0;
   runs.length = 0;
   const previousFetch = globalThis.fetch;
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
   const calls: Array<{ url: string; method: string | undefined }> = [];
   globalThis.fetch = (async (input, init) => {
     const url = String(input);
@@ -999,5 +1001,7 @@ test("Fudo O1 service does not refresh a provider bearer after membership revoca
     globalThis.fetch = previousFetch;
     membershipActive = true;
     activeBusiness = A;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
   }
 });
