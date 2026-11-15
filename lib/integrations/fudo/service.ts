@@ -140,6 +140,18 @@ async function isStillAuthorized(actor: Actor): Promise<boolean> {
     && current.actor.businessId === actor.businessId;
 }
 
+/** Revoke access to EVERY new Fudo HTTP request, including a 401-triggered
+ * auth refresh and retry. Post-GET checks and SQL fences remain necessary
+ * for requests already in flight and persistence races.
+ */
+function authorizedFudoClient(credentials: FudoCredentials, actor: Actor): FudoClient {
+  return new FudoClient(credentials, {
+    beforeRequest: async () => {
+      if (!(await isStillAuthorized(actor))) throw new Error("fudo_actor_revoked");
+    },
+  });
+}
+
 export async function getFudoConnectionView(): Promise<FudoConnectionView | null> {
   const authorized = await authorize();
   if (!authorized) return null;
@@ -379,7 +391,7 @@ export async function connectFudo(
     const creds = { apiKey, apiSecret };
     // Fail closed if encryption is not available; never persist plaintext credentials.
     const encrypted = encryptFudoCredentials(authorized.actor.businessId, creds);
-    await new FudoClient(creds).testConnection();
+    await authorizedFudoClient(creds, authorized.actor).testConnection();
     // A provider probe can take 15 seconds. The owner/admin may be removed
     // from this business (or switch session/tenant) while that GET is pending.
     // Recheck the current authenticated actor AND their live DB membership
@@ -448,7 +460,7 @@ export async function testStoredFudoConnection(
     // No ciphertext enters PostgREST filters, RPC arguments or logs.
     let providerFailure: FudoActionResult | null = null;
     try {
-      await new FudoClient(credentials).testConnection();
+      await authorizedFudoClient(credentials, actor).testConnection();
     } catch (error) {
       providerFailure = safeFailure(error);
     }
@@ -537,7 +549,7 @@ export async function inspectFudoReadPermissions(
       return { ok: false, message: "Tu acceso al negocio cambió antes de revisar los permisos. Volvé a ingresar.", checks: [] };
     }
     const credentials = decryptFudoCredentials(actor.businessId, stored.data.credentials_ciphertext);
-    const checks = await new FudoClient(credentials).probeReadAccess(FUDO_SYNC_RESOURCES);
+    const checks = await authorizedFudoClient(credentials, actor).probeReadAccess(FUDO_SYNC_RESOURCES);
     // Read-only permission results must not survive role revocation or a
     // business switch that happened during the five provider GETs.
     if (!(await isStillAuthorized(actor))) {
@@ -679,7 +691,7 @@ export async function syncFudoReadOnly(expectedConnectionRevision?: string): Pro
     }
     const encryptedConnection: string = connection.data.credentials_ciphertext;
     const credentials = decryptFudoCredentials(actor.businessId, encryptedConnection);
-    const client = new FudoClient(credentials);
+    const client = authorizedFudoClient(credentials, authorized.actor);
 
     // Fences disconnected/rotated credentials at sync startup, using the same
     // transaction-level business lock as rotation and disconnection.
