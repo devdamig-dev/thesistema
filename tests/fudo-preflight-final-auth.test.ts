@@ -56,7 +56,7 @@ const db = {
         // A concurrent revocation lands during the LAST connection metadata
         // read, before the preflight would otherwise publish five green checks.
         if (connectionReads === 1) duringInitialConnectionRead?.();
-        if (connectionReads === 2) duringFinalConnectionRead?.();
+        if (connectionReads === 8) duringFinalConnectionRead?.();
         return { data: row, error: null };
       },
     };
@@ -108,7 +108,7 @@ test("Fudo preflight rejects checks if owner is revoked during its last privileg
         if (scenario === "tenant") tenant = B;
       };
       const result = await inspectFudoReadPermissions();
-      assert.equal(connectionReads, 2, `must reach final reread: ${scenario}`);
+      assert.equal(connectionReads, 8, `must recheck the connection before each provider HTTP and at final reread: ${scenario}`);
       assert.deepEqual(verbs, Array(5).fill("GET"), `Fudo must remain read-only: ${scenario}`);
       assert.equal(result.ok, false, scenario);
       assert.deepEqual(result.checks, [], `must discard all five checks: ${scenario}`);
@@ -214,7 +214,7 @@ test("Fudo permission probe refuses stale same-business rotation/retest before a
     assert.equal(fresh.connectionRevision, renderedRevision);
     assert.equal(fresh.checks.length, 5);
     assert.equal(outbound, 6, "one auth POST and five read-only GETs");
-    assert.equal(connectionReads, 2, "final revision fence must remain active");
+    assert.equal(connectionReads, 8, "six per-HTTP generation checks and the final revision fence must remain active");
   } finally {
     connectionGeneration = GENERATION;
     connectionTestedAt = originalTestTime;
@@ -265,5 +265,86 @@ test("Fudo permissions never authenticate after context changes during initial c
     globalThis.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = originalKey;
+  }
+});
+
+test("Fudo five-resource probe stops new GETs when credentials rotate during auth", async () => {
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const previousFetch = globalThis.fetch;
+  const rotatedGeneration = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  tenant = A; role = "owner"; isMember = true; profileActive = true;
+  connectionStatus = "connected"; connectionGeneration = GENERATION;
+  connectionTestedAt = "2026-11-07T00:00:00Z";
+  connectionReads = 0;
+  let authPosts = 0;
+  let resourceGets = 0;
+  globalThis.fetch = async (url, init) => {
+    if (String(url) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      authPosts++;
+      // Disconnect or rotation succeeds while auth HTTP is in flight.
+      connectionGeneration = rotatedGeneration;
+      return new Response(JSON.stringify({
+        token: "synthetic-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    resourceGets++;
+    throw new Error("Old connection must not initiate any GET after rotation");
+  };
+  try {
+    const result = await inspectFudoReadPermissions();
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.checks, [], "old generation cannot produce usable permission evidence");
+    assert.equal(result.connectionRevision, undefined);
+    assert.equal(authPosts, 1, "only technical authentication was already in flight");
+    assert.equal(resourceGets, 0, "no resource GET under rotated credentials");
+    assert.doesNotMatch(result.message, /synthetic-bearer|synthetic-api-key|synthetic-api-secret/);
+  } finally {
+    tenant = A; role = "owner"; isMember = true; profileActive = true;
+    connectionStatus = "connected"; connectionGeneration = GENERATION;
+    connectionTestedAt = "2026-11-07T00:00:00Z";
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
+
+test("Fudo five-resource probe refuses later GETs after mid-probe disconnect", async () => {
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const previousFetch = globalThis.fetch;
+  const rotatedGeneration = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  tenant = A; role = "owner"; isMember = true; profileActive = true;
+  connectionStatus = "connected"; connectionGeneration = GENERATION;
+  connectionTestedAt = "2026-11-07T00:00:00Z";
+  connectionReads = 0;
+  let resourceGets = 0;
+  globalThis.fetch = async (url, init) => {
+    if (String(url) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return new Response(JSON.stringify({
+        token: "synthetic-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    assert.equal(init?.method, "GET");
+    resourceGets++;
+    if (resourceGets === 1) connectionGeneration = rotatedGeneration;
+    return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+  };
+  try {
+    const result = await inspectFudoReadPermissions();
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.checks, [], "do not publish evidence from old credentials");
+    assert.equal(result.connectionRevision, undefined);
+    assert.ok(resourceGets >= 1 && resourceGets <= 3,
+      "only already-launched bounded GETs may complete; later resources must be fenced");
+  } finally {
+    tenant = A; role = "owner"; isMember = true; profileActive = true;
+    connectionStatus = "connected"; connectionGeneration = GENERATION;
+    connectionTestedAt = "2026-11-07T00:00:00Z";
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
   }
 });
