@@ -42,9 +42,10 @@ https://soporte.fu.do/es/articles/11939789-api-publica-de-proposito-general
 
 ## O1 QA adicional — paginación y auditoría de piloto (03/11/2026)
 
-- El integrador usa ahora `links.next` cuando Fudo incluye metadatos JSON:API. Esto evita cerrar un recurso prematuramente si el proveedor limita cada página a menos de 100 registros, aunque se pidan 100.
-- Nunca se siguen URLs devueltas por el proveedor: el sistema incrementa exclusivamente el parámetro de página del endpoint Fudo allowlisted.
-- Si no hay `links.next`, se conserva la inferencia histórica por longitud de página; esa modalidad **no acredita cobertura completa** sin conciliación real.
+- **Contrato vigente (15/11/2026):** `links.next` solo permite continuar cuando identifica la página numérica inmediatamente siguiente del **mismo recurso**, sin parámetros no reproducibles ni cambios de `page[size]`. Nunca se sigue la URL devuelta por Fudo: GastroPilot reconstruye el GET al endpoint permitido.
+- **Límite efectivo del proveedor:** si Fudo devuelve menos registros que los `100` solicitados y simultáneamente indica `links.next`, la página se rechaza con error sanitizado **antes de staging o avance de cursor**. Continuar con `page[number]+1` y tamaño 100 podría omitir registros si Fudo hubiera paginado con otro tamaño efectivo. No marcar el recurso como completo ni insistir cambiando tamaños manualmente: requiere verificar el contrato real y diseñar un tamaño estable por recurso/ciclo.
+- **Sin `links.next`:** una página corta *no vacía* también se rechaza en la importación O1, porque no demuestra que el recurso terminó; una página llena continúa y una página vacía puede cerrar la lectura. Los sondeos de conexión/permisos usan `page[size]=1` y **no acreditan cobertura completa**.
+- Para aprobar el piloto, aun con cinco cursores terminados, contrastar contra Fudo real **conteos, IDs y períodos** de cada recurso; repetir el ciclo para validar idempotencia y ejecutar aislamiento autenticado A/B.
 - La UI del owner/admin muestra registros **únicos almacenados** por recurso en la generación actual de conexión y un resumen de las cinco últimas corridas, con estado, conteos de cada tanda y códigos de error sanitizados; jamás credenciales ni payloads.
 - Los totales de staging **no equivalen a los totales definitivos de Fudo**. Al habilitar piloto real hay que comparar contra cada recurso/rango y registrar discrepancias. Las generaciones anteriores se conservan privadas pero no se agregan a la conexión vigente.
 - Regresiones automáticas: página corta con `links.next`, página llena con `links.next=null`, ausencia/metadatos inválidos, control de rol y separación entre tenants/generaciones en reporte. Pruebas de API real siguen pendientes.
