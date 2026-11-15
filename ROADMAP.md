@@ -47,13 +47,13 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — Invalidar diagnóstico de cinco recursos cuando se rota o desconecta Fudo (15/11/2026; PR en preparación)
+### O1 — Invalidar diagnóstico de cinco recursos cuando se rota o desconecta Fudo (15/11/2026; [PR #376](https://github.com/devdamig-dev/thesistema/pull/376))
 
 - **Hallazgo de inspección:** `inspectFudoReadPermissions` verifica la revisión de credenciales antes y después de los cinco GET, pero el `beforeRequest` agregado en #373 sólo reválida actor/tenant. Si otro administrador desconecta, rota o vuelve a probar las credenciales durante la autenticación técnica o entre los GET concurrentes, podían iniciarse **nuevas lecturas con una generación ya reemplazada**. La lectura final descarta la evidencia obsoleta, pero no evita ese tráfico. Es una carrera sintética, **sin evidencia de incidente real**.
 - **Resultado observable:** el diagnóstico comprueba `connection_generation`, `status` y `last_tested_at` mediante lectura privilegiada asociada al negocio **antes de cada POST auth y GET**, además de la autorización de actor. Cambio de generación/revisión o desconexión => detener nuevas solicitudes de esa revisión, no publicar checks/acta y no alterar Fudo ni registros comerciales. Las solicitudes ya enviadas pueden completar; no se promete cancelación retroactiva.
-- **IMPLEMENTADO EN RAMA:** guarda de generación sólo para el diagnóstico de cinco recursos y dos regresiones sintéticas: rotación durante auth y desconexión/rotación durante las primeras lecturas. PR, Quality y merge por verificar. Sin SQL/DDL, secretos reales, escrituras hacia Fudo o módulos O2+.
-- **PROBADO:** pendiente de Quality para el HEAD final; no se acredita prueba real con Fudo.
-- **DESPLEGADO:** NO; cambios limitados a rama de trabajo.
+- **IMPLEMENTADO EN PR (sin merge aún):** [PR #376](https://github.com/devdamig-dev/thesistema/pull/376) con guarda de generación sólo para el diagnóstico de cinco recursos y dos regresiones sintéticas: rotación durante auth y desconexión/rotación durante las primeras lecturas. Sin SQL/DDL, secretos reales, escrituras hacia Fudo o módulos O2+.
+- **PROBADO (CI sintético, NO Fudo real):** [Quality #43756892229](https://github.com/devdamig-dev/thesistema/actions/runs/43756892229), `completed/success`, 3/3 jobs (`verify` con tests, fixtures, tipos, lint, SQL, build y Playwright; `postgres17`; `postgrest`) sobre commit funcional `b749001051b53be7f3d9507264b23480c6b70d92`. Este registro documental posterior requiere su propio Quality de HEAD final antes de merge; no extrapolar el resultado de CI a un negocio real.
+- **DESPLEGADO:** [Vercel Preview READY](https://vercel.com/damians-projects-a45d01bf/thesistema/8es6WSS9CmtZwx7EeRRBCADQrUrm) sobre el commit funcional del PR. **Producción NO acreditada** para #376; Preview READY no equivale a validación Fudo real.
 - **VALIDADO EN PRODUCCIÓN:** NO — O1 permanece **PILOTO NO-GO**. Requiere Fudo Pro/API autorizada, cinco recursos conciliados, doble sync idempotente, QA A/B autenticada y acta privada.
 - **Rollback:** revertir el PR si sus regresiones no aprueban; no contiene migraciones.
 
