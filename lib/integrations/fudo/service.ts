@@ -718,7 +718,15 @@ export async function syncFudoReadOnly(expectedConnectionRevision?: string): Pro
     }
     const encryptedConnection: string = connection.data.credentials_ciphertext;
     const credentials = decryptFudoCredentials(actor.businessId, encryptedConnection);
-    const client = authorizedFudoClient(credentials, authorized.actor);
+    // A concurrent credential retest may invalidate the connection while the
+    // bounded sync authenticates or reads its first pages. SQL fences staging,
+    // but must not be the only protection against NEW HTTP using an obsolete
+    // connection revision. Rotation/disconnect are also checked here.
+    const client = authorizedFudoClient(credentials, authorized.actor, {
+      generation: generation!,
+      status: connection.data.status,
+      lastTestedAt: connection.data.last_tested_at ?? null,
+    });
 
     // Fences disconnected/rotated credentials at sync startup, using the same
     // transaction-level business lock as rotation and disconnection.
