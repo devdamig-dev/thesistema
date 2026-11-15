@@ -28,6 +28,8 @@ export type FudoClientOptions = {
   fetchImpl?: typeof fetch;
   now?: () => number;
   timeoutMs?: number;
+  /** Optional server-side authorization fence checked immediately before every provider HTTP request. */
+  beforeRequest?: () => Promise<void>;
 };
 
 export type FudoListParams = Record<string, string | number | boolean | undefined>;
@@ -275,6 +277,7 @@ export class FudoClient {
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
   private readonly timeoutMs: number;
+  private readonly beforeRequest?: () => Promise<void>;
   private token: string | null = null;
   private tokenExpiresAt = 0;
   // Share a single auth/refresh request across concurrent read probes.
@@ -298,9 +301,14 @@ export class FudoClient {
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.now = options.now ?? Date.now;
     this.timeoutMs = Math.min(30000, Math.max(1000, options.timeoutMs ?? 15000));
+    this.beforeRequest = options.beforeRequest;
   }
 
   private async authenticate(): Promise<void> {
+    // A 401 retry can start a fresh authentication long after a caller's
+    // initial permission check. Reauthorize immediately before any POST.
+    // This hook stays outside the transport catch, preserving revocation errors.
+    await this.beforeRequest?.();
     let response: Response;
     try {
       response = await this.fetchImpl(this.authUrl, {
@@ -451,6 +459,9 @@ export class FudoClient {
     // A later 401 can invalidate the cache, but it must never produce a GET
     // with "Bearer null" or with a newer unrelated token.
     const attemptedToken = await this.ensureAuthenticated();
+    // The actor may have lost access during authentication or a prior 401 GET.
+    // Never start a new resource GET with credentials from a revoked tenant.
+    await this.beforeRequest?.();
     let response: Response;
     try {
       response = await this.fetchImpl(
