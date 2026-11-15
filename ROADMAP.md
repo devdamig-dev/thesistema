@@ -43,6 +43,7 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Sync read-only es repetible sin duplicar entidades.
 - [ ] Se registra origen externo y external_id.
 - [ ] Se muestra última sincronización y errores sin datos sensibles.
+- [ ] Paginación real conciliada: enlaces de continuación, tamaño efectivo de página y fin de cada uno de los cinco recursos verificados contra Fudo; jamás aceptar páginas cortas ambiguas como ciclo completo (ver `docs/integrations/fudo-connection-rollout.md`).
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
