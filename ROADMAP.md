@@ -47,6 +47,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Invalidar lecturas nuevas de sync tras un retest concurrente (15/11/2026)
+
+- **Hallazgo de inspección:** el fence por HTTP del diagnóstico de cinco recursos ya comprueba generación, estado y revisión; sin embargo, `syncFudoReadOnly` seguía creando un cliente que revisaba sólo membresía/tenant. Un segundo administrador puede registrar un **retest** de la misma generación mientras la importación autentica o lee las primeras páginas. Los RPC de staging/fin verifican generación, permisos y estado, pero no detienen por sí solos **nuevos GET con una revisión de conexión ya obsoleta**. Carrera sintética, sin evidencia de incidente real. Rotación/desconexión durante run ya están protegidas mediante locks SQL; este cambio cubre además el retest.
+- **Resultado observable:** pasar la revisión exacta de la conexión (`connection_generation`, `status`, `last_tested_at`) al cliente read-only de sincronización y revalidarla en servidor antes de cada POST de auth y GET, incluidos los reintentos por 401. Ante retest concurrente, detener lecturas nuevas, cerrar el run fallido con su error saneado y mantener los fences transaccionales; las solicitudes ya enviadas pueden finalizar. Ninguna escritura operativa hacia Fudo.
+- **IMPLEMENTADO EN RAMA / PROBADO PENDIENTE:** rama `fix/o1-fudo-sync-retest-http-fence-20261115` con cambio en `service.ts` y dos regresiones sintéticas (`tests/fudo-sync-cycle.test.ts`): retest durante auth ⇒ cero GET; retest tras primer GET ⇒ no iniciar lecturas posteriores al lote concurrente (máximo tres). **No** declarar Quality Gate hasta obtener CI del HEAD exacto del PR.
+- **DESPLEGADO:** no acreditado para esta rama. **VALIDADO EN PRODUCCIÓN:** NO, O1 PILOTO **NO-GO**.
+- **Dependencia de GO:** cuenta Fudo Pro/API autorizada conectada por UI, conciliación real de cinco recursos/paginación, doble sync idempotente, QA A/B autenticada y acta privada.
+- **Rollback:** revertir el commit/PR; sin migraciones, nuevas variables, secretos de clientes, modificación de datos nativos ni módulos O2+.
+
 ### O1 — Invalidar diagnóstico de cinco recursos cuando se rota o desconecta Fudo (15/11/2026; [PR #376](https://github.com/devdamig-dev/thesistema/pull/376))
 
 - **Hallazgo de inspección:** `inspectFudoReadPermissions` verifica la revisión de credenciales antes y después de los cinco GET, pero el `beforeRequest` agregado en #373 sólo reválida actor/tenant. Si otro administrador desconecta, rota o vuelve a probar las credenciales durante la autenticación técnica o entre los GET concurrentes, podían iniciarse **nuevas lecturas con una generación ya reemplazada**. La lectura final descarta la evidencia obsoleta, pero no evita ese tráfico. Es una carrera sintética, **sin evidencia de incidente real**.
