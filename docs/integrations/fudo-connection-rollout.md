@@ -40,7 +40,7 @@
 https://soporte.fu.do/es/articles/11939789-api-publica-de-proposito-general
 
 
-## O1 QA adicional — paginación y auditoría de piloto (03/11/2026)
+## O1 QA adicional — paginación y auditoría de piloto (03/11/2026; contrato actualizado 15/11/2026)
 
 - **Contrato vigente (15/11/2026):** `links.next` solo permite continuar cuando identifica la página numérica inmediatamente siguiente del **mismo recurso**, sin parámetros no reproducibles ni cambios de `page[size]`. Nunca se sigue la URL devuelta por Fudo: GastroPilot reconstruye el GET al endpoint permitido.
 - **Límite efectivo del proveedor:** si Fudo devuelve menos registros que los `100` solicitados y simultáneamente indica `links.next`, la página se rechaza con error sanitizado **antes de staging o avance de cursor**. Continuar con `page[number]+1` y tamaño 100 podría omitir registros si Fudo hubiera paginado con otro tamaño efectivo. No marcar el recurso como completo ni insistir cambiando tamaños manualmente: requiere verificar el contrato real y diseñar un tamaño estable por recurso/ciclo.
@@ -48,7 +48,7 @@ https://soporte.fu.do/es/articles/11939789-api-publica-de-proposito-general
 - Para aprobar el piloto, aun con cinco cursores terminados, contrastar contra Fudo real **conteos, IDs y períodos** de cada recurso; repetir el ciclo para validar idempotencia y ejecutar aislamiento autenticado A/B.
 - La UI del owner/admin muestra registros **únicos almacenados** por recurso en la generación actual de conexión y un resumen de las cinco últimas corridas, con estado, conteos de cada tanda y códigos de error sanitizados; jamás credenciales ni payloads.
 - Los totales de staging **no equivalen a los totales definitivos de Fudo**. Al habilitar piloto real hay que comparar contra cada recurso/rango y registrar discrepancias. Las generaciones anteriores se conservan privadas pero no se agregan a la conexión vigente.
-- Regresiones automáticas: página corta con `links.next`, página llena con `links.next=null`, ausencia/metadatos inválidos, control de rol y separación entre tenants/generaciones en reporte. Pruebas de API real siguen pendientes.
+- Regresiones automáticas: **rechazo** de página corta con `links.next`, aceptación de página llena con `links.next=null`, rechazo de metadatos inválidos, control de rol y separación entre tenants/generaciones en reporte. Pruebas de API real siguen pendientes.
 - No se habilitan escrituras, cron, movimientos de caja ni de stock.
 
 ## O1 — Validación semántica del test de conexión (03/11/2026)
