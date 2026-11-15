@@ -146,7 +146,8 @@ test("Fudo preflight rejects resource checks from a rotated or disconnected conn
         }), { status: 200 });
       };
       const result = await inspectFudoReadPermissions();
-      assert.equal(resourceReads, 5, "all read probes settled before the generation check");
+      assert.ok(resourceReads >= 1 && resourceReads <= 3,
+        "only the already-launched bounded GETs may finish after rotation/disconnect");
       assert.equal(result.ok, false);
       assert.deepEqual(result.checks, [], "stale provider permissions must not be shown");
       assert.match(result.message, /conexión Fudo cambió/i);
@@ -202,7 +203,8 @@ test("Fudo preflight discards permissions when a same-generation retest changes 
         }), { status: 200 });
       };
       const result = await inspectFudoReadPermissions();
-      assert.equal(calls, 5, "the five GETs remain read-only and bounded");
+      assert.ok(calls >= 1 && calls <= 3,
+        "retest during a GET must prevent new resource reads beyond the launched batch");
       assert.equal(result.ok, false);
       assert.deepEqual(result.checks, [], "outdated green checks must not leave the server");
       assert.match(result.message, /conexión Fudo cambió/i);

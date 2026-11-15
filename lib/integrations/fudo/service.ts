@@ -144,10 +144,35 @@ async function isStillAuthorized(actor: Actor): Promise<boolean> {
  * auth refresh and retry. Post-GET checks and SQL fences remain necessary
  * for requests already in flight and persistence races.
  */
-function authorizedFudoClient(credentials: FudoCredentials, actor: Actor): FudoClient {
+type FudoConnectionFence = {
+  generation: string;
+  status: string;
+  lastTestedAt: string | null;
+};
+
+/** For multi-resource diagnostics, a valid tenant role alone is insufficient:
+ * another admin may disconnect, rotate or retest the connection between GETs.
+ * Check the stored generation and test revision before EVERY fresh provider HTTP,
+ * never returning previous credentials to a disconnected or replaced account.
+ */
+function authorizedFudoClient(
+  credentials: FudoCredentials, actor: Actor, connectionFence?: FudoConnectionFence,
+): FudoClient {
   return new FudoClient(credentials, {
     beforeRequest: async () => {
       if (!(await isStillAuthorized(actor))) throw new Error("fudo_actor_revoked");
+      if (connectionFence) {
+        const current = await (createSupabaseAdminClient() as any)
+          .from("fudo_connections").select("connection_generation,status,last_tested_at")
+          .eq("business_id", actor.businessId).maybeSingle();
+        if (current.error) throw new Error("fudo_storage_failed");
+        if (!current.data
+          || current.data.connection_generation !== connectionFence.generation
+          || current.data.status !== connectionFence.status
+          || (current.data.last_tested_at ?? null) !== connectionFence.lastTestedAt) {
+          throw new Error("fudo_connection_changed");
+        }
+      }
     },
   });
 }
@@ -549,7 +574,9 @@ export async function inspectFudoReadPermissions(
       return { ok: false, message: "Tu acceso al negocio cambió antes de revisar los permisos. Volvé a ingresar.", checks: [] };
     }
     const credentials = decryptFudoCredentials(actor.businessId, stored.data.credentials_ciphertext);
-    const checks = await authorizedFudoClient(credentials, actor).probeReadAccess(FUDO_SYNC_RESOURCES);
+    const checks = await authorizedFudoClient(credentials, actor, {
+      generation, status: statusAtStart, lastTestedAt: testedAtStart,
+    }).probeReadAccess(FUDO_SYNC_RESOURCES);
     // Read-only permission results must not survive role revocation or a
     // business switch that happened during the five provider GETs.
     if (!(await isStillAuthorized(actor))) {
