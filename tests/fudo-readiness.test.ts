@@ -260,7 +260,9 @@ test("Fudo preflight never returns stale permissions after membership revocation
       assert.equal(result.ok, false, transition);
       assert.deepEqual(result.checks, [], "revoked actor must not see provider permission checks");
       assert.match(result.message, /acceso al negocio cambió/i);
-      assert.equal(methods.length, 5);
+      // Only the first bounded batch (up to 3 GETs) may start before the
+      // first response revokes the actor. No remaining resource GET is allowed.
+      assert.ok(methods.length >= 1 && methods.length <= 3, `unexpected GET count: ${methods.length}`);
       assert.ok(methods.every((method) => method === "GET"));
       assert.doesNotMatch(JSON.stringify(result), /PRIVATE_|synthetic-private-bearer|pilot-secret/i);
     }
