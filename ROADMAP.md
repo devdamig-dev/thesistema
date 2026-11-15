@@ -46,6 +46,16 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Revalidar permisos antes de CADA HTTP Fudo, incluido refresh tras 401 (15/11/2026; PR en preparación)
+
+- **Hallazgo de inspección:** las reautorizaciones existentes protegían el inicio y el fin de las acciones, pero `FudoClient` podía emitir un nuevo POST de auth y/o GET al renovar un bearer después de un 401 recibido mientras el usuario había perdido membresía o cambiado de negocio. La verificación posterior a la consulta no impide **nuevas solicitudes de reintento** en ese intervalo. Es un riesgo de carrera reproducible con fixtures sintéticos, sin evidencia de incidente real.
+- **Resultado observable:** el servicio entrega al adaptador una guarda server-side de membresía, rol, perfil y tenant efectivo; cada POST de autenticación y cada GET (incluido reintento por 401) la consulta inmediatamente antes del HTTP. Ante revocación => `forbidden`, **sin nuevos requests posteriores a la guarda fallida**, sin persistir snapshots o cursores, conservando los fences SQL.
+- **IMPLEMENTADO EN RAMA:** `fix/o1-fudo-provider-request-reauth-20261115`; `lib/integrations/fudo/client.ts`, `service.ts`, regresiones unitarias y de servicio. Sin cambios SQL, secretos ni escrituras a Fudo (POST de auth técnica; GET de recursos).
+- **PROBADO:** pendiente del Quality Gate del PR; los fixtures no acreditan una cuenta Fudo real ni la ausencia absoluta de requests ya iniciados antes de la revocación.
+- **DESPLEGADO:** NO, pendiente de CI, revisión y merge.
+- **VALIDADO EN PRODUCCIÓN:** NO — O1 PILOTO **NO-GO**. Sigue faltando Fudo Pro/API autorizada, conciliación de cinco recursos, dos sincronizaciones idempotentes, aislamiento autenticado A/B y acta privada.
+- **Rollback:** revertir el PR, sin migraciones. O1 sigue prioritario y O2+ pospuesto.
+
 ### O1 — Reautorizar antes del primer HTTP Fudo en conexión, retest y diagnóstico (14/11/2026; [PR #371](https://github.com/devdamig-dev/thesistema/pull/371) fusionado)
 
 - **Hallazgo de inspección:** en `connectFudo`, `testStoredFudoConnection` e `inspectFudoReadPermissions`, la lectura inicial de `fudo_connections` podía concluir tras la revocación de membresía/rol, la desactivación del perfil o un cambio del negocio efectivo. Las guardas posteriores al GET y los fences SQL siguen siendo necesarios, pero no impedían iniciar HTTP usando un actor recién revocado. **Sin evidencia de incidente en producción.**
