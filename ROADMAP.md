@@ -47,6 +47,16 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Invalidar diagnóstico de cinco recursos cuando se rota o desconecta Fudo (15/11/2026; PR en preparación)
+
+- **Hallazgo de inspección:** `inspectFudoReadPermissions` verifica la revisión de credenciales antes y después de los cinco GET, pero el `beforeRequest` agregado en #373 sólo reválida actor/tenant. Si otro administrador desconecta, rota o vuelve a probar las credenciales durante la autenticación técnica o entre los GET concurrentes, podían iniciarse **nuevas lecturas con una generación ya reemplazada**. La lectura final descarta la evidencia obsoleta, pero no evita ese tráfico. Es una carrera sintética, **sin evidencia de incidente real**.
+- **Resultado observable:** el diagnóstico comprueba `connection_generation`, `status` y `last_tested_at` mediante lectura privilegiada asociada al negocio **antes de cada POST auth y GET**, además de la autorización de actor. Cambio de generación/revisión o desconexión => detener nuevas solicitudes de esa revisión, no publicar checks/acta y no alterar Fudo ni registros comerciales. Las solicitudes ya enviadas pueden completar; no se promete cancelación retroactiva.
+- **IMPLEMENTADO EN RAMA:** guarda de generación sólo para el diagnóstico de cinco recursos y dos regresiones sintéticas: rotación durante auth y desconexión/rotación durante las primeras lecturas. PR, Quality y merge por verificar. Sin SQL/DDL, secretos reales, escrituras hacia Fudo o módulos O2+.
+- **PROBADO:** pendiente de Quality para el HEAD final; no se acredita prueba real con Fudo.
+- **DESPLEGADO:** NO; cambios limitados a rama de trabajo.
+- **VALIDADO EN PRODUCCIÓN:** NO — O1 permanece **PILOTO NO-GO**. Requiere Fudo Pro/API autorizada, cinco recursos conciliados, doble sync idempotente, QA A/B autenticada y acta privada.
+- **Rollback:** revertir el PR si sus regresiones no aprueban; no contiene migraciones.
+
 ### O1 — Revalidar permisos antes de CADA HTTP Fudo, incluido refresh tras 401 (15/11/2026; [PR #373](https://github.com/devdamig-dev/thesistema/pull/373) fusionado)
 
 - **Hallazgo de inspección:** las reautorizaciones existentes protegían el inicio y el fin de las acciones, pero `FudoClient` podía emitir un nuevo POST de auth y/o GET al renovar un bearer después de un 401 recibido mientras el usuario había perdido membresía o cambiado de negocio. La verificación posterior a la consulta no impide **nuevas solicitudes de reintento** en ese intervalo. Es un riesgo de carrera reproducible con fixtures sintéticos, sin evidencia de incidente real.
