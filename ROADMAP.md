@@ -47,6 +47,14 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Frenar nuevas lecturas en prueba de credenciales guardadas tras rotación o retest (15/11/2026)
+
+- **Hallazgo:** `testStoredFudoConnection` revisaba la revisión al inicio y protegía la escritura de estado con RPC transaccional, pero utilizaba el cliente HTTP sin `connectionFence`. Si otro administrador cambiaba generación/retest durante el POST técnico de autenticación, podía iniciarse todavía un GET de productos con la revisión anterior. Carrera sintética, **sin evidencia de incidente real**.
+- **Resultado observable:** reválida de `connection_generation`, `status` y `last_tested_at` antes de cada POST de auth / GET (y un eventual 401), sin devolver secretos; un cambio concurrente detiene nuevos GET y no puede registrar salud obsoleta por el fence SQL existente. Un retest estable sigue realizando un GET de productos.
+- **IMPLEMENTADO EN RAMA; PROBADO PENDIENTE:** cambio acotado en `service.ts` y regresión sintética en `tests/fudo-preflight-final-auth.test.ts` (rotación durante auth ⇒ 0 GET; retest durante auth ⇒ 0 GET; control sano ⇒ 1 GET). CI de HEAD exacto del PR pendiente; no se acreditan pruebas locales.
+- **DESPLEGADO:** no. **VALIDADO EN PRODUCCIÓN:** no — piloto **NO-GO**. Requiere cuenta Fudo Pro/API, conciliación de cinco recursos/paginación, doble sync y QA autenticada A/B.
+- **Rollback:** revertir este PR, sin DDL ni nuevas variables; nunca escribir en Fudo ni modificar datos comerciales.
+
 ### O1 — Invalidar lecturas nuevas de sync tras un retest concurrente (15/11/2026)
 
 - **Hallazgo de inspección:** el fence por HTTP del diagnóstico de cinco recursos ya comprueba generación, estado y revisión; sin embargo, `syncFudoReadOnly` seguía creando un cliente que revisaba sólo membresía/tenant. Un segundo administrador puede registrar un **retest** de la misma generación mientras la importación autentica o lee las primeras páginas. Los RPC de staging/fin verifican generación, permisos y estado, pero no detienen por sí solos **nuevos GET con una revisión de conexión ya obsoleta**. Carrera sintética, sin evidencia de incidente real. Rotación/desconexión durante run ya están protegidas mediante locks SQL; este cambio cubre además el retest.
