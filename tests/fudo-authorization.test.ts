@@ -338,6 +338,67 @@ test("Fudo stale same-business form and late provider response cannot overwrite 
   }
 });
 
+test("Fudo connect refuses new GETs when the business connection changes during provider auth", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32, 53).toString("base64");
+  const oldRow = {
+    business_id: A, status: "connected", credentials_ciphertext: "fixture-only",
+    connection_generation: "00000000-0000-4000-8000-000000000041",
+    last_tested_at: "2026-11-13T07:00:00.000Z",
+  };
+  try {
+    for (const change of ["first_connect", "rotation", "retest", "disconnect", "unchanged"] as const) {
+      role = "owner"; tenant = A; validMembership = true; profileActive = true;
+      syncRunning = false; forceRpcForbidden = false; afterConnectConnectionRead = null;
+      storedRow = change === "first_connect" || change === "unchanged" ? null : { ...oldRow };
+      const writesBefore = rpcCalls.filter((name) => name === "fudo_replace_connection_guarded").length;
+      let authPosts = 0;
+      let productGets = 0;
+      globalThis.fetch = async (input, init) => {
+        if (String(input) === "https://auth.fu.do/api") {
+          assert.equal(init?.method, "POST");
+          authPosts++;
+          // A competing owner commits while our technical POST is in flight.
+          if (change === "first_connect") storedRow = { ...oldRow };
+          if (change === "rotation") storedRow = { ...oldRow,
+            connection_generation: "00000000-0000-4000-8000-000000000042" };
+          if (change === "retest") storedRow = { ...oldRow,
+            last_tested_at: "2026-11-13T07:01:00.000Z" };
+          if (change === "disconnect") storedRow = null;
+          return new Response(JSON.stringify({
+            token: "synthetic-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+          }), { status: 200 });
+        }
+        assert.equal(init?.method, "GET", "no business writes are allowed in Fudo O1");
+        productGets++;
+        return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+      };
+      const outcome = await connectFudo(credentials);
+      assert.equal(authPosts, 1, change);
+      if (change === "unchanged") {
+        assert.equal(outcome.ok, true, "a stable first-time connection remains available");
+        assert.equal(productGets, 1);
+        assert.equal(rpcCalls.filter((name) => name === "fudo_replace_connection_guarded").length,
+          writesBefore + 1);
+      } else {
+        assert.equal(outcome.ok, false, change);
+        if (!outcome.ok) assert.equal(outcome.code, "connection_changed", change);
+        assert.equal(productGets, 0, "no new product GET after competing " + change);
+        assert.equal(rpcCalls.filter((name) => name === "fudo_replace_connection_guarded").length,
+          writesBefore, "do not attempt a stale privileged write");
+      }
+      assert.doesNotMatch(JSON.stringify(outcome), /synthetic-bearer|pilot-test-api-key|pilot-test-secret/);
+    }
+  } finally {
+    storedRow = null; role = "owner"; tenant = A; validMembership = true;
+    profileActive = true; afterConnectConnectionRead = null;
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
+
 test("Fudo lifecycle surfaces a transaction-time permission denial without exposing credentials", async () => {
   role = "owner"; tenant = A; validMembership = true; profileActive = true;
   syncRunning = false; forceRpcForbidden = true;
