@@ -47,6 +47,16 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Confirmación de release productivo #386/#387 (16/11/2026)
+
+- **Resultado observable:** cerrar la diferencia anterior entre el código de conexión Fudo integrado y el despliegue activo, sin atribuir una prueba real de proveedor. La protección HTTP de #386 ya está contenida en el `main` de #387.
+- **IMPLEMENTADO:** [#386](https://github.com/devdamig-dev/thesistema/pull/386) squash `95c705d1043f5180ac823c6f69837c3f37afb8e7` (protección de revisión en cada HTTP de conexión) y [#387](https://github.com/devdamig-dev/thesistema/pull/387) squash `46ae3e778e15359be1744086a63bd161dede674e` (cierre documental). Sin nuevo DDL o escritura hacia Fudo.
+- **PROBADO (CI sintético):** [Quality del main #43821670072](https://github.com/devdamig-dev/thesistema/actions/runs/43821670072) `completed/success` para SHA exacto `46ae3e778e15359be1744086a63bd161dede674e`, **3/3** jobs `verify`, `postgres17` y `postgrest`; se suma al Quality de PR [#43814819183](https://github.com/devdamig-dev/thesistema/actions/runs/43814819183) para #386. No constituye E2E autenticado de producción.
+- **DESPLEGADO:** Vercel [Production READY #5NvnZCLj129bodw4S95RXcCrKaKB](https://vercel.com/damians-projects-a45d01bf/thesistema/5NvnZCLj129bodw4S95RXcCrKaKB) con `target=production`, SHA exacto del `main` anterior, alias `gastropilot.nexodg.com` asignado y `aliasError=null`. Se levantó así el bloqueo anterior de publicación de #386/#387. La variable `FUDO_CREDENTIALS_ENCRYPTION_KEY` figura por nombre y destino **production** en Vercel (sin revelar, desencriptar ni probar su valor); **no** figura para Preview: no asumir equivalencia de entornos ni promover una Preview automáticamente.
+- **Verificación de datos, sólo SELECT:** en Supabase `thesistema`, las cuatro tablas `fudo_connections`, `fudo_sync_runs`, `fudo_external_records` y `fudo_sync_progress` mantienen **0 registros** y **4/4 RLS habilitada**, sin SELECT directo para `anon` ni `authenticated`. No se modificó el esquema ni el historial de migraciones.
+- **VALIDADO EN PRODUCCIÓN: NO — PILOTO O1 NO-GO.** No se pudo completar smoke HTTP autenticado en el entorno de ejecución ni hay cuenta Fudo Pro/API conectada. Permanecen: contraste de cinco recursos y paginación real, dos sincronizaciones idempotentes, QA A/B con sesiones reales y acta privada. Mantener bloqueado `supabase db push` global por drift histórico. O2+ pospuesto.
+- **Rollback:** revertir el cambio funcional #386 sólo si se detecta regresión; este cierre es documental. No ejecutar migraciones ni modificar operaciones comerciales para validar el deploy.
+
 ### O1 — Detener GET de conexión con formulario obsoleto tras cambios de otro administrador (16/11/2026)
 
 - **Hallazgo en inspección:** `connectFudo` hacía un único control de revisión antes de enviar credenciales nuevas al proveedor; el RPC SQL CAS impedía sobrescribir la conexión de otro administrador, pero no detenía un GET de productos iniciado después de que se conectara/rotara/retesteara/desconectara Fudo durante la autenticación técnica. Carrera sintética, **sin incidente productivo observado**.
