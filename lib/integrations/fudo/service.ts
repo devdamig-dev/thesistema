@@ -514,6 +514,9 @@ export async function testStoredFudoConnection(
     if (recorded.data === "connection_changed") {
       return fail("connection_changed", "La conexión Fudo cambió durante la prueba. Volvé a probar las credenciales actuales.");
     }
+    if (recorded.data === "sync_running") {
+      return fail("sync_running", "Hay una sincronización Fudo en curso. Esperá a que termine antes de probar las credenciales.");
+    }
     if (recorded.data !== "recorded") return fail("storage_unavailable", UNKNOWN);
     if (providerFailure) return providerFailure;
     return { ok: true, message: "La consulta de lectura a productos Fudo respondió correctamente." };

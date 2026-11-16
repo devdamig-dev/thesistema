@@ -26,6 +26,7 @@ let connection = {
 const filtersSeen: string[] = [];
 let writes = 0;
 const rpcCalls: Array<Record<string, unknown>> = [];
+let syncRunning = false;
 let revokeDuringRpc = false;
 let switchDuringRpc = false;
 let afterInitialConnectionRead: (() => void) | null = null;
@@ -73,6 +74,10 @@ const db = {
       || args.p_expected_last_tested_at !== connection.last_tested_at) {
       return { data: "connection_changed", error: null };
     }
+    // The production SQL rejects retest commits while any active sync owns
+    // the business. A successful provider GET cannot retroactively grant a
+    // stale page/finish transaction a fresh credential-test revision.
+    if (syncRunning) return { data: "sync_running", error: null };
     assert.ok(args.p_status === "connected" || args.p_status === "error");
     assert.equal(args.p_status === "connected", args.p_error_code === null);
     writes++;
@@ -103,6 +108,58 @@ loader._load = function(name: string, ...args: any[]) {
 };
 const { testStoredFudoConnection } = require("../lib/integrations/fudo/service") as typeof import("../lib/integrations/fudo/service");
 loader._load = originalLoad;
+
+test("Fudo retest reports an active sync without updating the credential revision", async () => {
+  const oldKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const oldFetch = globalThis.fetch;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  activeBusiness = BUSINESS;
+  isMember = true;
+  syncRunning = true;
+  writes = 0;
+  rpcCalls.length = 0;
+  connection = {
+    business_id: BUSINESS, connection_generation: ORIGINAL_GENERATION,
+    credentials_ciphertext: originalCiphertext, status: "connected",
+    last_error_code: null, last_tested_at: "2026-11-15T20:00:00.000Z",
+  };
+  let getCalls = 0;
+  globalThis.fetch = async (input, init) => {
+    if (String(input).includes("auth.fu.do")) {
+      assert.equal(init?.method, "POST");
+      return new Response(JSON.stringify({
+        token: "synthetic-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    assert.equal(init?.method, "GET");
+    getCalls++;
+    return new Response(JSON.stringify({ data: [] }), { status: 200 });
+  };
+  try {
+    const result = await testStoredFudoConnection();
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.code, "sync_running");
+      assert.match(result.message, /sincronización Fudo en curso/);
+      assert.doesNotMatch(result.message, /synthetic-bearer|fixture-fudo-api|fixture-fudo-secret/);
+    }
+    assert.equal(getCalls, 1, "the in-flight read may finish, but its retest cannot update health");
+    assert.equal(rpcCalls.length, 1, "SQL lock is the final transactional fence");
+    assert.equal(writes, 0);
+    assert.equal(connection.status, "connected");
+    assert.equal(connection.last_tested_at, "2026-11-15T20:00:00.000Z");
+
+    syncRunning = false;
+    const after = await testStoredFudoConnection();
+    assert.equal(after.ok, true, "normal retest continues after the run closes");
+    assert.equal(writes, 1);
+  } finally {
+    syncRunning = false;
+    globalThis.fetch = oldFetch;
+    if (oldKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = oldKey;
+  }
+});
 
 test("Fudo retest fences stale results after credential rotation, without ciphertext URL filters", async () => {
   const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
