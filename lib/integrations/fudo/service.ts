@@ -145,8 +145,10 @@ async function isStillAuthorized(actor: Actor): Promise<boolean> {
  * for requests already in flight and persistence races.
  */
 type FudoConnectionFence = {
-  generation: string;
-  status: string;
+  // Null means the business had no Fudo connection when the connect probe
+  // started. A competing first connection must fence the subsequent GET too.
+  generation: string | null;
+  status: string | null;
   lastTestedAt: string | null;
 };
 
@@ -166,10 +168,9 @@ function authorizedFudoClient(
           .from("fudo_connections").select("connection_generation,status,last_tested_at")
           .eq("business_id", actor.businessId).maybeSingle();
         if (current.error) throw new Error("fudo_storage_failed");
-        if (!current.data
-          || current.data.connection_generation !== connectionFence.generation
-          || current.data.status !== connectionFence.status
-          || (current.data.last_tested_at ?? null) !== connectionFence.lastTestedAt) {
+        if ((current.data?.connection_generation ?? null) !== connectionFence.generation
+          || (current.data?.status ?? null) !== connectionFence.status
+          || (current.data?.last_tested_at ?? null) !== connectionFence.lastTestedAt) {
           throw new Error("fudo_connection_changed");
         }
       }
@@ -416,7 +417,16 @@ export async function connectFudo(
     const creds = { apiKey, apiSecret };
     // Fail closed if encryption is not available; never persist plaintext credentials.
     const encrypted = encryptFudoCredentials(authorized.actor.businessId, creds);
-    await authorizedFudoClient(creds, authorized.actor).testConnection();
+    // A second owner may create, disconnect, rotate or retest this business's
+    // connection while the submitted credentials are being authenticated.
+    // The SQL CAS protects persistence, but without this per-HTTP revision
+    // fence we could still initiate an unnecessary GET with a stale form.
+    // A null generation also fences concurrent first-time connections.
+    await authorizedFudoClient(creds, authorized.actor, {
+      generation: expectedGeneration,
+      status: before.data?.status ?? null,
+      lastTestedAt: expectedTestedAt,
+    }).testConnection();
     // A provider probe can take 15 seconds. The owner/admin may be removed
     // from this business (or switch session/tenant) while that GET is pending.
     // Recheck the current authenticated actor AND their live DB membership
