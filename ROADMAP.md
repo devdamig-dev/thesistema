@@ -47,6 +47,16 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — No permitir un retest de credenciales mientras hay una importación activa (16/11/2026; [PR #382](https://github.com/devdamig-dev/thesistema/pull/382))
+
+- **Hallazgo verificable en el SQL anterior:** `fudo_record_connection_test` podía registrar un retest exitoso mientras `fudo_sync_runs.status='running'`, avanzando `last_tested_at` sin rotar generación. `fudo_commit_sync_page` y `fudo_finish_sync` comprueban generación y estado, pero no la revisión del retest. Los fences HTTP #378/#380 frenan nuevos GET; **no invalidan un GET ya enviado antes del retest** y su posterior commit. No hay incidente real conocido.
+- **Resultado observable:** el RPC de retest, bajo el mismo lock del negocio que protege los otros cambios de credenciales, rechaza tanto retest exitoso como fallido con `sync_running` mientras haya una importación activa; salud/revisión no cambian. La recuperación estándar de runs abandonados tras 10 minutos evita bloquear indefinidamente. El owner/admin recibe un mensaje saneado y puede reintentar tras el cierre.
+- **IMPLEMENTADO EN RAMA:** [PR #382](https://github.com/devdamig-dev/thesistema/pull/382) draft con migración compatible de `fudo_record_connection_test`, manejo de `sync_running` en `service.ts` y regresiones SQL + TypeScript sintéticas; no hay DDL destructivo, escrituras hacia Fudo, secretos ni operaciones comerciales.
+- **PROBADO:** en espera de Quality del HEAD del PR. Las regresiones agregadas **no** equivalen a pruebas ejecutadas ni a validación con un Fudo real.
+- **DESPLEGADO:** NO; migración pendiente, requiere SQL primero y runtime después.
+- **VALIDADO EN PRODUCCIÓN:** NO, O1 PILOTO **NO-GO**. Sigue pendiente la cuenta Fudo Pro/API real autorizada, conciliación paginada de cinco recursos, doble ciclo idempotente y QA A/B con acta privada.
+- **Rollback:** revertir runtime; restaurar la función SQL anterior sólo mediante una migración revisada, sin borrar históricos. O2+ pospuesto.
+
 ### O1 — Frenar nuevas lecturas en prueba de credenciales guardadas tras rotación o retest (15/11/2026)
 
 - **Hallazgo:** `testStoredFudoConnection` revisaba la revisión al inicio y protegía la escritura de estado con RPC transaccional, pero utilizaba el cliente HTTP sin `connectionFence`. Si otro administrador cambiaba generación/retest durante el POST técnico de autenticación, podía iniciarse todavía un GET de productos con la revisión anterior. Carrera sintética, **sin evidencia de incidente real**.
