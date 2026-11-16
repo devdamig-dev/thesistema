@@ -40,6 +40,33 @@ test("Fudo client authenticates with apiKey/apiSecret and sends bearer token onl
   assert.doesNotMatch(JSON.stringify(calls[1]), /secret-value|key-value/);
 });
 
+test("Fudo test and five-resource diagnostics reject a bare array HTTP 200", async () => {
+  let requests = 0;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return jsonResponse({ token: "synthetic-bearer", exp: 2_000_000_000 });
+    }
+    assert.equal(init?.method, "GET");
+    requests++;
+    return jsonResponse([{ id: "private-product" }]);
+  };
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    { fetchImpl: fakeFetch, now: () => 1_800_000_000_000 },
+  );
+  await assert.rejects(() => client.testConnection(), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.equal(error.message, "invalid_fudo_page");
+    assert.doesNotMatch(error.message, /private-product|synthetic-/);
+    return true;
+  });
+  assert.deepEqual(await client.probeReadAccess(["products"]), [
+    { resource: "products", code: "invalid_response" },
+  ]);
+  assert.equal(requests, 2);
+});
+
 test("Fudo missing exp reuses one short-lived bearer for all five read-only probes", async () => {
   let now = 1_800_000_000_000;
   let authCalls = 0;
