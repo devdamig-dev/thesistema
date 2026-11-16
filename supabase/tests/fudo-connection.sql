@@ -553,6 +553,8 @@ select pg_temp.fudo_assert(
 
 do $retest$
 declare
+  sync_started jsonb;
+  sync_run uuid;
   a uuid := '00000000-0000-4000-8000-000000008010';
   owner_a uuid := '00000000-0000-4000-8000-000000008001';
   owner_b uuid := '00000000-0000-4000-8000-000000008002';
@@ -578,9 +580,35 @@ begin
     previous,'error','forbidden');
   perform pg_temp.fudo_assert(result='forbidden','inactive admin cannot retest');
 
+  -- A second administrator can finish a successful provider GET while the
+  -- importer's page is in flight. The database must not advance connection
+  -- revision during that run: HTTP fencing alone cannot cover this last race.
+  sync_started := public.fudo_begin_sync(a,generation_a,owner_a);
+  perform pg_temp.fudo_assert(sync_started->>'code'='started',
+    'fixture owner starts an active Fudo read-only run');
+  sync_run := (sync_started->>'run_id')::uuid;
   result := public.fudo_record_connection_test(a,generation_a,owner_a,
     previous,'connected',null);
-  perform pg_temp.fudo_assert(result='recorded','owner can record successful retest');
+  perform pg_temp.fudo_assert(result='sync_running',
+    'successful retest cannot advance revision during active sync');
+  result := public.fudo_record_connection_test(a,generation_a,owner_a,
+    previous,'error','forbidden');
+  perform pg_temp.fudo_assert(result='sync_running',
+    'failed retest cannot downgrade connection while import is active');
+  perform pg_temp.fudo_assert(
+    (select last_tested_at is not distinct from previous
+      and status='connected' and last_error_code is null
+      from public.fudo_connections where business_id=a),
+    'blocked retests do not modify any connection health metadata');
+  perform pg_temp.fudo_assert(
+    public.fudo_finish_sync(a,generation_a,owner_a,sync_run,
+      'failed','{}'::jsonb,'interrupted',false)->>'code'='finished',
+    'a failed/abandoned read can close its audit run without altering health');
+
+  result := public.fudo_record_connection_test(a,generation_a,owner_a,
+    previous,'connected',null);
+  perform pg_temp.fudo_assert(result='recorded',
+    'owner can retest again once the sync has finished');
   select last_tested_at into newest from public.fudo_connections where business_id=a;
   perform pg_temp.fudo_assert(newest > previous,'retest timestamp advances');
 
