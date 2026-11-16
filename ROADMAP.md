@@ -47,6 +47,13 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Detener GET de conexión con formulario obsoleto tras cambios de otro administrador (16/11/2026)
+
+- **Hallazgo en inspección:** `connectFudo` hacía un único control de revisión antes de enviar credenciales nuevas al proveedor; el RPC SQL CAS impedía sobrescribir la conexión de otro administrador, pero no detenía un GET de productos iniciado después de que se conectara/rotara/retesteara/desconectara Fudo durante la autenticación técnica. Carrera sintética, **sin incidente productivo observado**.
+- **Resultado verificable:** revalidar en servidor la misma fila `fudo_connections` (generación, estado, `last_tested_at`) antes de **cada** nuevo POST técnico y GET del test de alta/rotación; aceptar también la ausencia inicial de fila como revisión `null`. Ante cambio, devolver `connection_changed` sin nuevos GET ni escritura CAS, conservando el control transaccional y los caminos estables.
+- **IMPLEMENTADO:** propuesto en PR de rama `fix/o1-connect-http-revision-fence-20261116`, con regresiones sintéticas de conexión inicial concurrente, rotación, retest, desconexión y conexión sin carrera. **PROBADO:** pendiente de Quality completo del HEAD de PR; no hay cuenta Fudo real conectada. **DESPLEGADO:** no para este cambio. **VALIDADO EN PRODUCCIÓN:** NO — piloto Fudo NO-GO.
+- **Rollback:** revertir el PR; sin DDL, cambios comerciales ni escrituras hacia Fudo. O2+ continúa pospuesto.
+
 ### O1 — Reconciliar historial de migraciones Fudo read-only (16/11/2026)
 
 - **Hallazgo confirmado por inspección:** los 12 archivos Fudo de `supabase/migrations/` usaban prefijos de versión distintos de los 12 registros que Supabase `thesistema` ya reconoce aplicados (p.ej. el retest figura como `20261116020538` en `schema_migrations`, no como `20261116005000`). El RPC productivo conserva el bloqueo `sync_running` y EXECUTE sólo para `service_role`. Sin incidentes reportados.
