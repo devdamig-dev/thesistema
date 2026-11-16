@@ -47,12 +47,13 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — Reconciliar historial de migración del retest (16/11/2026)
+### O1 — Reconciliar historial de migraciones Fudo read-only (16/11/2026)
 
-- **Hallazgo verificado:** el SQL `fudo_retest_active_sync_guard` ya figura aplicado en Supabase `thesistema` con versión `20261116020538`, pero en Git estaba `20261116005000_fudo_retest_active_sync_guard.sql`. La versión de Git **no aparece** en `supabase_migrations.schema_migrations`; esto puede provocar drift y reintentos del CLI. La función productiva incluye el fence `sync_running` y mantiene EXECUTE exclusivamente para `service_role`.
-- **Resultado observable:** alinear el prefijo del archivo a `20261116020538` sin modificar **ni un byte** del SQL, ni la tabla `schema_migrations`, ni objetos/datos de la base. Revisar en Quality que los tests SQL continúan pasando. No aplicar la migración una segunda vez.
-- **IMPLEMENTADO EN RAMA:** cambio de nombre de archivo y nota en este roadmap; pendiente de Quality y PR. **PROBADO:** inspección read-only del registro de migraciones y permisos de la función; CI pendiente. **DESPLEGADO:** la función anterior ya estaba en Supabase/producción mediante #382; esta reconciliación de repositorio NO despliega SQL. **VALIDADO EN PRODUCCIÓN:** NO — piloto O1 NO-GO sin cuenta Fudo Pro/API autorizada, cinco recursos conciliados, doble sync y QA real A/B.
-- **Rollback:** revertir únicamente el cambio de nombre documental en Git si es necesario; no reescribir historial aplicado de Supabase. O2+ continúa pospuesto.
+- **Hallazgo confirmado por inspección:** los 12 archivos Fudo de `supabase/migrations/` usaban prefijos de versión distintos de los 12 registros que Supabase `thesistema` ya reconoce aplicados (p.ej. el retest figura como `20261116020538` en `schema_migrations`, no como `20261116005000`). El RPC productivo conserva el bloqueo `sync_running` y EXECUTE sólo para `service_role`. Sin incidentes reportados.
+- **Resultado observable:** renombrar **los 12 archivos Fudo** para reflejar las versiones/nombres ya registrados, preservando su **contenido SQL byte por byte**. No se ejecutan migraciones, no se corrige el historial de la base, ni se alteran tablas, funciones o datos productivos. Quality debe comprobar SQL/TS/Playwright. Referencias de despliegue en el runbook ajustadas.
+- **Límite de alcance importante:** la auditoría global detectó sólo **2 coincidencias de versión entre 92 archivos locales y 91 migraciones remotas** (90 versiones de archivos sin coincidencia). Por lo tanto, aun después de esta reconciliación Fudo, **NO es seguro habilitar `supabase db push`/migraciones CLI globales sin una revisión integral independiente**. No se reejecutan migraciones históricas.
+- **IMPLEMENTADO EN RAMA:** [PR #384](https://github.com/devdamig-dev/thesistema/pull/384) con renames Fudo + documentación; SQL intacto. **PROBADO:** auditoría Git/Supabase y consultas SELECT del RPC; Quality del HEAD final pendiente. **DESPLEGADO:** RPC actual ya disponible por #382; los renames del repositorio NO modifican la base ni se atribuyen despliegues operativos. **VALIDADO EN PRODUCCIÓN:** NO — O1 PILOTO NO-GO; faltan cuenta Fudo Pro/API real, cinco recursos/paginación conciliados, doble sync idempotente y QA A/B.
+- **Rollback:** revertir sólo renames de Git; no escribir a `schema_migrations` sin un plan de reconciliación y pruebas. O2+ pospuesto.
 
 ### O1 — No permitir un retest de credenciales mientras hay una importación activa (16/11/2026; [PR #382](https://github.com/devdamig-dev/thesistema/pull/382))
 
