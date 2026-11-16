@@ -12,7 +12,7 @@
 - Tablas de staging privadas: **NO** crean ventas, pedidos, movimientos de caja ni stock en los módulos nativos.
 
 ## Requisitos de infraestructura antes de piloto real
-1. Aplicar `supabase/migrations/20261103090000_fudo_pilot_read_only.sql` al proyecto Supabase correcto tras QA y respaldo/verificación de migraciones.
+1. Aplicar `supabase/migrations/20261103124206_fudo_pilot_read_only_20261103.sql` al proyecto Supabase correcto tras QA y respaldo/verificación de migraciones.
 2. Crear secreto de 32 bytes en Base64 estándar (por ejemplo `openssl rand -base64 32`) y guardarlo en **Vercel Production / Preview** como `FUDO_CREDENTIALS_ENCRYPTION_KEY`, nunca en `NEXT_PUBLIC_*`, issues, chats ni commits.
 3. Si el valor se cambia, los registros cifrados previamente no podrán recuperarse con la clave nueva. Para una futura rotación de la clave maestra se requiere proceso de recifrado versionado.
 4. Confirmar que `NEXT_PUBLIC_APP_MODE=database`, Supabase Auth y `SUPABASE_SERVICE_ROLE_KEY` están activos en ese deployment.
