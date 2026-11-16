@@ -47,6 +47,13 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Reconciliar historial de migración del retest (16/11/2026)
+
+- **Hallazgo verificado:** el SQL `fudo_retest_active_sync_guard` ya figura aplicado en Supabase `thesistema` con versión `20261116020538`, pero en Git estaba `20261116005000_fudo_retest_active_sync_guard.sql`. La versión de Git **no aparece** en `supabase_migrations.schema_migrations`; esto puede provocar drift y reintentos del CLI. La función productiva incluye el fence `sync_running` y mantiene EXECUTE exclusivamente para `service_role`.
+- **Resultado observable:** alinear el prefijo del archivo a `20261116020538` sin modificar **ni un byte** del SQL, ni la tabla `schema_migrations`, ni objetos/datos de la base. Revisar en Quality que los tests SQL continúan pasando. No aplicar la migración una segunda vez.
+- **IMPLEMENTADO EN RAMA:** cambio de nombre de archivo y nota en este roadmap; pendiente de Quality y PR. **PROBADO:** inspección read-only del registro de migraciones y permisos de la función; CI pendiente. **DESPLEGADO:** la función anterior ya estaba en Supabase/producción mediante #382; esta reconciliación de repositorio NO despliega SQL. **VALIDADO EN PRODUCCIÓN:** NO — piloto O1 NO-GO sin cuenta Fudo Pro/API autorizada, cinco recursos conciliados, doble sync y QA real A/B.
+- **Rollback:** revertir únicamente el cambio de nombre documental en Git si es necesario; no reescribir historial aplicado de Supabase. O2+ continúa pospuesto.
+
 ### O1 — No permitir un retest de credenciales mientras hay una importación activa (16/11/2026; [PR #382](https://github.com/devdamig-dev/thesistema/pull/382))
 
 - **Hallazgo verificado en SQL:** el RPC anterior permitía adelantar `last_tested_at` durante un sync en marcha; los fences HTTP no pueden deshacer un GET ya emitido. **Riesgo reproducible en tests sintéticos, sin evidencia de incidente real.**
