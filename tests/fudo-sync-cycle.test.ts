@@ -439,12 +439,18 @@ test("Fudo O1 pagination keeps one cycle UUID then flags a provider ID absent on
         }), { status: 200 });
       }
       if (phase === "resume") {
+        if (page === "3") return new Response(JSON.stringify({
+          data: [], links: { next: null },
+        }), { status: 200 });
         assert.equal(page, "2");
         return new Response(JSON.stringify({
           data: [{ id: "item-101", attributes: { name: "fixture product 101" } }],
           links: { next: null },
         }), { status: 200 });
       }
+      if (page === "2") return new Response(JSON.stringify({
+        data: [], links: { next: null },
+      }), { status: 200 });
       assert.equal(page, "1");
       return new Response(JSON.stringify({
         data: [{ id: "item-1", attributes: { name: "fixture product" } }],
@@ -1199,6 +1205,66 @@ test("Fudo O1 completes a documented short terminal page only after an empty suc
       && row.external_id === "verified-terminal-product"), "the validated page is staged");
     assert.equal(runs.at(-1)?.status, "completed");
     assert.doesNotMatch(JSON.stringify(outcome), /synthetic-token|synthetic-pilot-secret|synthetic-read-only/);
+  } finally {
+    globalThis.fetch = prevFetch;
+    membershipActive = true;
+    activeBusiness = A;
+    if (prevKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = prevKey;
+  }
+});
+
+test("Fudo O1 explicit next:null cannot silently close a capped short page", async () => {
+  const prevFetch = globalThis.fetch;
+  const prevKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  membershipActive = true;
+  activeBusiness = A;
+  conn.status = "connected";
+  conn.connection_generation = GENERATION;
+  conn.last_tested_at = null;
+  progress.length = 0;
+  records.length = 0;
+  runs.length = 0;
+  const productPages: string[] = [];
+  const providerMethods: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST", "POST is reserved for bearer authentication");
+      return new Response(JSON.stringify({
+        token: "synthetic-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    providerMethods.push(String(init?.method));
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/products")) {
+      productPages.push(url.searchParams.get("page[number]") ?? "");
+      assert.equal(url.searchParams.get("page[size]"), "100");
+      // The provider claims an explicit end on page 1, but page 2 proves
+      // its effective page size was capped. Never stage page 1 or close it.
+      return new Response(JSON.stringify({
+        data: [{ id: productPages.length === 1 ? "must-not-stage" : "hidden-next-page",
+          type: "Product", attributes: { name: "synthetic-private" } }],
+        links: { next: null },
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+  };
+  try {
+    const outcome = await syncFudoReadOnly();
+    assert.equal(outcome.ok, false);
+    if (!outcome.ok) {
+      assert.equal(outcome.code, "invalid_response");
+      assert.doesNotMatch(outcome.message, /synthetic-bearer|must-not-stage|hidden-next-page/);
+    }
+    assert.deepEqual(productPages, ["1", "2"], "verify the alleged terminal with exactly one extra GET");
+    assert.equal(records.filter((row) => row.resource_type === "products").length, 0,
+      "an ambiguous terminal page cannot enter staging");
+    assert.equal(progress.filter((row) => row.resource_type === "products").length, 0,
+      "an ambiguous terminal page cannot close its durable cursor");
+    assert.equal(runs.at(-1)?.status, "failed", "the failed attempt remains auditable");
+    assert.ok(providerMethods.length >= 2 && providerMethods.every((method) => method === "GET"),
+      "only GET may read provider resources");
   } finally {
     globalThis.fetch = prevFetch;
     membershipActive = true;
