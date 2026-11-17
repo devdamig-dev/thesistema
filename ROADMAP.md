@@ -47,6 +47,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Bloquear continuaciones `page=N` no compatibles con el GET `page[number]=N` (16/11/2026)
+
+- **Hallazgo por inspección de código y fixtures, sin incidente Fudo real:** `nextFudoPage` aceptaba una pista `links.next=/products?page=2`, pero `FudoClient.list` siempre envía `page[number]=2`. Esas formas no demuestran idéntica semántica de offset; podían importar la página equivocada o informar un ciclo completo sin cobertura.
+- **Resultado verificable:** admitir sólo `page[number]` (y `page[size]` idéntico al solicitado) en una continuación del mismo recurso, sin seguir URLs del proveedor. Rechazar `page=2` con `invalid_response` sanitario **antes** de persistir los 100 registros de una página completa o adelantar el cursor. Regresión unitaria y prueba sintética del servicio de importación.
+- **IMPLEMENTADO EN RAMA, NO FUSIONADO:** `fix/o1-fudo-page-number-parity-20261116`. Sólo parser de paginación, tests y documentación; sin SQL ni escrituras hacia Fudo.
+- **PROBADO:** pendiente de Quality del PR y de una cuenta real Fudo; no marcar pruebas pendientes como aprobadas.
+- **DESPLEGADO:** NO para este cambio. **VALIDADO EN PRODUCCIÓN:** NO; O1 mantiene NO-GO hasta cuenta Pro/API autorizada, conciliación de cinco recursos, doble lectura idempotente y QA A/B.
+- **Riesgo/rollback:** si Fudo real emite sólo `page=N`, la importación se detendrá con error explícito en lugar de asumir offsets equivalentes. Validar el contrato proveedor y diseñar compatibilidad persistente antes del GO; revertir el cambio en rama si la evidencia contradice la hipótesis.
+
 ### O1 — Rechazar respuestas de Fudo sin sobre JSON:API (16/11/2026; [PR #389](https://github.com/devdamig-dev/thesistema/pull/389))
 
 - **Hallazgo reproducible por inspección, sin incidente real acreditado:** `parseFudoPage` admitía arrays JSON en el nivel raíz. Un HTTP 200 con `[]` o una lista directa de registros podía pasar el test de conexión o el diagnóstico de recursos aunque faltara el objeto JSON:API `{ data: [...] }` que exige el contrato documentado; eso podía habilitar una conexión falsamente validada.
