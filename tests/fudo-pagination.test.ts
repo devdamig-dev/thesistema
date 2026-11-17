@@ -137,12 +137,14 @@ test("Fudo O1 rejects short import pages with a next link before staging could s
         }, `short page with ${count} records and continuation must fail closed`);
     }
   }
-  // Valid complete pages, one-record probes and explicit terminal short pages
+  // Valid complete pages, one-record probes and verified terminal short pages
   // remain supported. The next hint is inspected, not fetched.
   assert.equal(nextFudoPage({ links: { next: "?page[number]=2" } }, 1, 100, "products", 100), 2);
   assert.equal(nextFudoPage({ links: { next: "?page[number]=2&page[size]=20" } }, 1, 20, "products", 20), 2);
   assert.equal(nextFudoPage({ links: { next: "?page[number]=2&page[size]=1" } }, 1, 1, "products", 1), 2);
-  assert.equal(nextFudoPage({ links: { next: null } }, 1, 20, "products", 100), 0);
+  assert.throws(() => nextFudoPage({ links: { next: null } }, 1, 20, "products", 100),
+    /invalid_fudo_page/, "explicit null cannot certify a capped short page");
+  assert.equal(nextFudoPage({ links: { next: null } }, 1, 20, "products", 100, true), 0);
 });
 
 test("Fudo O1 never marks a nonempty short import page complete without an explicit next link", () => {
@@ -154,8 +156,10 @@ test("Fudo O1 never marks a nonempty short import page complete without an expli
         /invalid_fudo_page/, `unlinked short page of ${count} must fail closed`);
     }
   }
-  assert.equal(nextFudoPage({ data: [], links: { next: null } }, 1, 20, "products", 100), 0,
-    "explicit provider end marker still completes a partial last page");
+  assert.throws(() => nextFudoPage({ data: [], links: { next: null } }, 1, 20, "products", 100),
+    /invalid_fudo_page/, "explicit provider end marker alone does not prove a short page is terminal");
+  assert.equal(nextFudoPage({ data: [], links: { next: null } }, 1, 20, "products", 100, true), 0,
+    "a short explicit-null page completes only after a verified empty successor");
   assert.equal(nextFudoPage({ data: [] }, 1, 0, "products", 100), 0,
     "truly empty legacy page can complete safely");
   assert.equal(nextFudoPage({ data: [] }, 1, 100, "products", 100), 2,
@@ -165,7 +169,7 @@ test("Fudo O1 never marks a nonempty short import page complete without an expli
 });
 
 
-test("Fudo O1 requires an explicitly verified empty successor to accept an unlinked short page", () => {
+test("Fudo O1 requires an explicitly verified empty successor to accept a short page", () => {
   const short = { data: [{ id: "synthetic-terminal" }] };
   assert.throws(() => nextFudoPage(short, 3, 1, "products", 100),
     /invalid_fudo_page/, "a short page alone never proves completeness");
