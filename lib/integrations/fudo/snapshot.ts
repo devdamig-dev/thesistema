@@ -164,7 +164,10 @@ export function parseFudoPage(value: unknown, expectedResource?: string): FudoSn
  * Instead, they are only a continuation signal for our allowlisted, fixed
  * Fudo endpoint and incremented numeric page parameter.
  */
-export function nextFudoPage(response: unknown, currentPage: number, recordCount: number, expectedResource?: string, requestedPageSize = FUDO_SYNC_PAGE_SIZE): number {
+export function nextFudoPage(
+  response: unknown, currentPage: number, recordCount: number, expectedResource?: string,
+  requestedPageSize = FUDO_SYNC_PAGE_SIZE, verifiedEmptySuccessor = false,
+): number {
   if (!Number.isSafeInteger(requestedPageSize) || requestedPageSize < 1 || requestedPageSize > FUDO_SYNC_PAGE_SIZE) {
     throw new Error("invalid_fudo_page");
   }
@@ -259,13 +262,14 @@ export function nextFudoPage(response: unknown, currentPage: number, recordCount
       }
     }
   }
-  // Legacy fallback only when next-link metadata is absent. A nonempty
-  // short import page is ambiguous: Fudo could have capped the requested
-  // size while more records remain. Never commit next_page=0 and claim a
-  // complete five-resource cycle based only on that short response.
-  // Probes request page[size]=1 and do not claim a full import.
+  // Fudo's published OpenAPI pagination contract uses an unlinked short
+  // page as the terminal marker. Since an implementation could silently cap
+  // page[size], the importer must GET the following numbered page and confirm
+  // that it is EMPTY before opting in here. A raw short page is still rejected.
+  // Links with an explicit next hint are validated above, never overridden by
+  // this proof. One-record permission probes do not claim scan completeness.
   if (requestedPageSize === FUDO_SYNC_PAGE_SIZE && recordCount > 0
-    && recordCount < requestedPageSize) {
+    && recordCount < requestedPageSize && !verifiedEmptySuccessor) {
     throw new Error("invalid_fudo_page");
   }
   if (recordCount !== FUDO_SYNC_PAGE_SIZE) return 0;

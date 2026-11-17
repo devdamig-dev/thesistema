@@ -789,10 +789,35 @@ export async function syncFudoReadOnly(expectedConnectionRevision?: string): Pro
         "page[number]": page, "page[size]": FUDO_SYNC_PAGE_SIZE,
       });
       const snapshots = parseFudoPage(response, resource);
-      // A malformed next-link invalidates the entire page. Validate provider
-      // pagination BEFORE any staging upsert so the failed page cannot leave
-      // new records or cycle presence markers without a matching cursor.
-      const nextPage = nextFudoPage(response, page, snapshots.length, resource);
+      // Fudo's published OpenAPI contract ends an unlinked scan on a short
+      // page, but a server silently capping page[size] could make that same
+      // response omit IDs. Prove the immediately following numbered page is
+      // empty BEFORE accepting this terminal page or writing any staging.
+      // Every proof request is still a fixed-endpoint GET through the same
+      // tenant, role and credential-revision fences as the original read.
+      const links: unknown = response && typeof response === "object" && !Array.isArray(response)
+        ? (response as Record<string, unknown>).links : undefined;
+      const lacksNextHint = links === undefined
+        || (!!links && typeof links === "object" && !Array.isArray(links)
+          && !Object.prototype.hasOwnProperty.call(links, "next"));
+      let verifiedEmptySuccessor = false;
+      if (snapshots.length > 0 && snapshots.length < FUDO_SYNC_PAGE_SIZE && lacksNextHint) {
+        if (page >= 100000) throw new Error("invalid_fudo_page");
+        const successor = await client.list(resource, {
+          "page[number]": page + 1, "page[size]": FUDO_SYNC_PAGE_SIZE,
+        });
+        const successorRows = parseFudoPage(successor, resource);
+        if (successorRows.length !== 0
+          || nextFudoPage(successor, page + 1, 0, resource) !== 0) {
+          throw new Error("invalid_fudo_page");
+        }
+        verifiedEmptySuccessor = true;
+      }
+      // A malformed continuation or unverified short page invalidates the
+      // original page. Never advance its cursor or upsert rows on failure.
+      const nextPage = nextFudoPage(
+        response, page, snapshots.length, resource, FUDO_SYNC_PAGE_SIZE, verifiedEmptySuccessor,
+      );
       // Provider GETs are asynchronous: role revocation or session switch
       // during the request must abort before staging OR cursor writes,
       // including empty pages. SQL transaction fencing is still required

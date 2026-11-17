@@ -587,6 +587,7 @@ test("Fudo O1 rejects a nonempty short page without next metadata before staging
   const beforeRecords = JSON.stringify(records.filter((row) => row.resource_type === "products"));
   const beforeProgress = JSON.stringify(progress.filter((row) => row.resource_type === "products"));
   const verbs: string[] = [];
+  const pages: Array<string | null> = [];
   globalThis.fetch = async (input, init) => {
     if (String(input) === "https://auth.fu.do/api") {
       assert.equal(init?.method, "POST");
@@ -596,6 +597,7 @@ test("Fudo O1 rejects a nonempty short page without next metadata before staging
     }
     verbs.push(String(init?.method));
     if (new URL(String(input)).pathname.endsWith("/products")) {
+      pages.push(new URL(String(input)).searchParams.get("page[number]"));
       return new Response(JSON.stringify({
         // A valid row with no links: we cannot know whether the provider
         // silently limited the requested 100-record page to one record.
@@ -617,6 +619,7 @@ test("Fudo O1 rejects a nonempty short page without next metadata before staging
       "no partial staging persisted");
     assert.equal(JSON.stringify(progress.filter((row) => row.resource_type === "products")), beforeProgress,
       "the resource cursor must not advance or close");
+    assert.deepEqual(pages, ["1", "2"], "a nonempty successor must be checked and fail closed");
     assert.ok(verbs.length > 0 && verbs.every((verb) => verb === "GET"), "Fudo stays GET-only");
   } finally {
     globalThis.fetch = prevFetch;
@@ -1146,5 +1149,61 @@ test("Fudo O1 sync cannot schedule later pages after retest during first GET", a
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
+
+test("Fudo O1 completes a documented short terminal page only after an empty successor GET", async () => {
+  const prevFetch = globalThis.fetch;
+  const prevKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  membershipActive = true;
+  activeBusiness = A;
+  // Other integration tests share synthetic mock state; isolate the new cycle.
+  progress.splice(0, progress.length);
+  const calls: Array<{ path: string; page: string | null; method: string | undefined }> = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      return new Response(JSON.stringify({
+        token: "synthetic-token", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    const url = new URL(String(input));
+    calls.push({
+      path: url.pathname, page: url.searchParams.get("page[number]"),
+      method: init?.method,
+    });
+    if (url.pathname.endsWith("/products")) {
+      if (url.searchParams.get("page[number]") === "1") {
+        return new Response(JSON.stringify({
+          data: [{ id: "verified-terminal-product", type: "Product",
+            attributes: { name: "synthetic-read-only" } }],
+        }), { status: 200 });
+      }
+      assert.equal(url.searchParams.get("page[number]"), "2");
+      assert.equal(url.searchParams.get("page[size]"), "100");
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+  };
+  try {
+    const outcome = await syncFudoReadOnly();
+    assert.equal(outcome.ok, true, JSON.stringify(outcome));
+    if (outcome.ok) assert.equal(outcome.hasMorePages, false);
+    const products = calls.filter((call) => call.path.endsWith("/products"));
+    assert.deepEqual(products.map((call) => call.page), ["1", "2"],
+      "the importer must verify page 2 is empty before completing page 1");
+    assert.ok(calls.every((call) => call.method === "GET"),
+      "the extra pagination proof must not add a write to Fudo");
+    assert.equal(progress.find((row) => row.resource_type === "products")?.next_page, 0);
+    assert.ok(records.some((row) => row.resource_type === "products"
+      && row.external_id === "verified-terminal-product"), "the validated page is staged");
+    assert.equal(runs.at(-1)?.status, "completed");
+    assert.doesNotMatch(JSON.stringify(outcome), /synthetic-token|synthetic-pilot-secret|synthetic-read-only/);
+  } finally {
+    globalThis.fetch = prevFetch;
+    membershipActive = true;
+    activeBusiness = A;
+    if (prevKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = prevKey;
   }
 });
