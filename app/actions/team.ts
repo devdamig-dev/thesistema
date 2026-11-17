@@ -243,16 +243,32 @@ export async function revokeInvitationAction(invitationId: string): Promise<Resu
   const supabase = await createSupabaseServerClient();
   if (!supabase) return { ok: false, persisted: false, error: "connection_unavailable" };
   const db = supabase as any;
+
   const { data, error } = await db
     .from("user_invitations")
     .update({ status: "revoked" })
     .eq("id", invitationId)
     .eq("business_id", ctx.businessId)
     .eq("status", "pending")
-    .select("id")
+    .select("id,email")
     .maybeSingle();
-  if (error) return { ok: false, persisted: false, error: error.message };
+
+  if (error) {
+    console.error("[team] revoke invitation failed", error.message);
+    return { ok: false, persisted: false, error: "revoke_failed" };
+  }
   if (!data) return { ok: false, persisted: false, error: "not_found" };
+
+  await logActivity({
+    businessId: ctx.businessId!,
+    actorId: ctx.userId,
+    actorRole: ctx.role,
+    action: "team.invitation.revoked",
+    targetType: "user_invitations",
+    targetId: data.id,
+    summary: `Invitación revocada para ${data.email ?? "usuario invitado"}.`,
+  });
+
   refresh();
-  return { ok: true, persisted: true };
+  return { ok: true, persisted: true, id: data.id };
 }
