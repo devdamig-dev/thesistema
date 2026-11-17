@@ -165,6 +165,18 @@ test("Fudo O1 never marks a nonempty short import page complete without an expli
 });
 
 
+test("Fudo O1 requires an explicitly verified empty successor to accept an unlinked short page", () => {
+  const short = { data: [{ id: "synthetic-terminal" }] };
+  assert.throws(() => nextFudoPage(short, 3, 1, "products", 100),
+    /invalid_fudo_page/, "a short page alone never proves completeness");
+  assert.equal(nextFudoPage(short, 3, 1, "products", 100, true), 0,
+    "only the service may opt in after a separate empty page[number]=4 GET");
+  assert.throws(() => nextFudoPage({
+    data: [], links: { next: "/v1alpha1/products?page[number]=4" },
+  }, 3, 1, "products", 100, true), /invalid_fudo_page/,
+  "an explicit continuation must never be bypassed by the proof flag");
+});
+
 test("Fudo O1 rejects unsafe provider JSON numbers before staging or hashing", () => {
   // JSON.parse silently rounds large integer literals and accepts 1e999 as
   // Infinity; a subsequent JSON.stringify turns that Infinity into null.
