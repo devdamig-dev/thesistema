@@ -113,7 +113,7 @@ test("Fudo pagination honors explicit end, even on a full page", () => {
   assert.equal(nextFudoPage(full, 1, parseFudoPage(full).length), 0);
   assert.equal(nextFudoPage({ data: [] }, 2, 0), 0);
   assert.equal(nextFudoPage({ data: full.data }, 2, FUDO_SYNC_PAGE_SIZE), 3);
-  assert.equal(nextFudoPage({ data: full.data, links: { next: { href: "/products?page=3" } } }, 2, FUDO_SYNC_PAGE_SIZE), 3);
+  assert.equal(nextFudoPage({ data: full.data, links: { next: { href: "/products?page[number]=3" } } }, 2, FUDO_SYNC_PAGE_SIZE), 3);
 });
 
 test("Fudo rejects malformed or inconsistent pagination metadata", () => {
