@@ -1,5 +1,6 @@
 "use client";
 import { cloneElement, isValidElement, useCallback, useEffect, useRef, useState, type FormEvent, type ReactElement, type ReactNode } from "react";
+import { replaceClosureCalculationNote } from "@/lib/calculations/operating-costs";
 import { ClosureTotalsEditor } from "./closure-totals-editor";
 import { Plus, RefreshCw } from "lucide-react";
 import { SectionHeader } from "@/components/ui/section-header";
@@ -70,7 +71,7 @@ export default function DatabaseClosures() {
   }
   function save(event: FormEvent) {
     event.preventDefault(); if (!workspace || !draft || lock.current || pendingRef.current) return;
-    try { void execute(parseClosureOperation("save", { ...draft, note: [draft.note, calculationNote].filter(Boolean).join("\n\n"), requestId: crypto.randomUUID(), businessId: workspace.businessId, userId: workspace.userId })); }
+    try { void execute(parseClosureOperation("save", { ...draft, note: replaceClosureCalculationNote(draft.note, calculationNote), requestId: crypto.randomUUID(), businessId: workspace.businessId, userId: workspace.userId })); }
     catch (error) { setOperationError(error instanceof Error ? error.message : "Datos inválidos."); }
   }
   const filtered = (workspace?.closures ?? []).filter(row => (!branch || row.branch_id === branch) && (status === "all" || (status === "archived") === !!row.archived_at));

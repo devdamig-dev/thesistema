@@ -55,3 +55,11 @@ export function calculatePackUnitCost(packTotal: string, packQuantity: string): 
   if (cents > 0n && micros === 0n) throw new Error("Usá una unidad base mayor para no redondear el costo a cero.");
   return Number(micros) / 1000000;
 }
+
+
+/** Remove only exact paragraphs emitted by calculateNetSales; preserve user prose. */
+export function replaceClosureCalculationNote(note: string, calculation: string): string {
+  const generated = /^Cálculo de neto de ventas: bruto \d+\.\d{2}; Descuentos: \d+\.\d{2}; Devoluciones: \d+\.\d{2}; Comisiones de cobro: \d+\.\d{2}; Retenciones informadas: \d+\.\d{2}; Otras deducciones de ventas: \d+\.\d{2}; neto -?\d+\.\d{2}\. No es ganancia ni efectivo en caja\. Retiros y cambio no se deducen automáticamente\.$/;
+  const paragraphs = note.split(/\n\s*\n/).filter(part => !generated.test(part.trim()));
+  return [...paragraphs, calculation].filter(part => part.trim()).join("\n\n");
+}

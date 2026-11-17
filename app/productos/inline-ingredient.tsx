@@ -28,7 +28,7 @@ export function InlineIngredient({onCreated,onClose,onBusyChange}:{onCreated:(ro
     try {
       if(!createdId.current){
         const result=await saveIngredientAction(null,{name:name.trim(),unit,unitCost,active:true,supplierId:null,minimums:[]});
-        if(!result.ok){setUncertain(true);setError("No se confirmó el alta. Revisá Insumos antes de repetirla para evitar duplicados.");return;}
+        if(!result.ok){if(result.persisted===false){setError(result.error);return;}setUncertain(true);setError("No se confirmó el alta. Revisá Insumos antes de repetirla para evitar duplicados.");return;}
         createdId.current=result.id;setCreated(true);
       }
       await loadSaved();
