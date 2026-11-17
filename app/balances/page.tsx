@@ -13,21 +13,6 @@ import { SectionHeader } from "@/components/ui/section-header";
 import { Card, CardContent } from "@/components/ui/card";
 import BalancesClient from "./balances-client";
 
-const EMPTY_BALANCE = {
-  ventasMes: 0,
-  comprasMes: 0,
-  gastosMes: 0,
-  sueldosMes: 0,
-  retirosMes: 0,
-  deudasPendientes: 0,
-  pagosDeudaMes: 0,
-  stockValorizado: 0,
-  cajaEstimada: 0,
-  margenBrutoPct: 0,
-  resultadoOperativo: 0,
-  resultadoNeto: 0,
-};
-
 export default async function BalancesPage() {
   const databaseMode = isDatabaseMode();
 
@@ -60,8 +45,8 @@ export default async function BalancesPage() {
 
     const row = result.data as Record<string, number | string | boolean | null> | null;
     if (row?.sales_data_stale || row?.expenses_data_stale || row?.payroll_data_stale || row?.purchases_data_stale) return <BalancesUnavailable message="Los datos operativos cambiaron desde la generación del balance. El snapshot se conserva para auditoría y necesita regenerarse antes de mostrar sus indicadores. Consultá los módulos operativos para ver los registros vigentes." />;
-    const snapshot = row
-      ? {
+    if (!row) return <BalancesUnavailable message="Todavía no hay un balance generado para el mes actual. La ausencia de un balance no significa que las ventas, deudas o resultados sean cero. Consultá cada módulo para ver sus registros vigentes." />;
+    const snapshot = {
           ventasMes: Number(row.sales_total ?? 0),
           comprasMes: Number(row.purchases_total ?? 0),
           gastosMes: Number(row.expenses_total ?? 0),
@@ -71,11 +56,10 @@ export default async function BalancesPage() {
           pagosDeudaMes: Number(row.debt_payments_total ?? 0),
           stockValorizado: Number(row.stock_valued ?? 0),
           cajaEstimada: Number(row.cash_estimated ?? 0),
-          margenBrutoPct: Number(row.gross_margin_pct ?? 0),
+          margenBrutoPct: row.gross_margin_pct == null ? null : Number(row.gross_margin_pct),
           resultadoOperativo: Number(row.operating_result ?? 0),
           resultadoNeto: Number(row.net_result ?? 0),
-        }
-      : EMPTY_BALANCE;
+        };
 
     return (
       <ErrorBoundaryCard module="Balances">
