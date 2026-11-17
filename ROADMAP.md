@@ -47,6 +47,16 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Verificar también `links.next: null` antes de cerrar páginas cortas (17/11/2026)
+
+- **Hallazgo en código, no en Fudo real:** la confirmación de página sucesora vacía de #393 sólo se ejecutaba si `links.next` faltaba por completo. Si la respuesta traía `links: { next: null }` y menos de 100 registros, `nextFudoPage` devolvía fin inmediatamente. Un proveedor que limitara el tamaño efectivo podría dejar registros fuera sin advertencia.
+- **Resultado observable:** tratar la ausencia del enlace y su valor explícito `null` del mismo modo para importaciones de 100: pedir **un GET adicional** a `page[number]=N+1`, con igual `page[size]=100`, y aceptar fin únicamente si viene vacío y sin continuación. Una página sucesora no vacía hace fallar el recurso **antes de staging o cursor**. Test de conexión/diagnóstico con tamaño 1 y páginas vacías conservan su semántica; un `links.next` no nulo sigue validándose estrictamente.
+- **IMPLEMENTADO:** corrección acotada a `snapshot.ts`, `service.ts`, regresión unitaria y prueba sintética del servicio. Rama de trabajo `fix/o1-fudo-explicit-null-terminal-proof-20261117`; merge sujeto a Quality.
+- **PROBADO:** pendiente de CI del PR; no se declara QA concluida ni prueba con cuenta Fudo autorizada.
+- **DESPLEGADO:** NO para este cambio hasta confirmar el commit exacto en Vercel.
+- **VALIDADO EN PRODUCCIÓN:** NO — piloto O1 sigue **NO-GO** sin cinco recursos y paginación real conciliados, doble sincronización idempotente y QA autenticada A/B.
+- **Riesgo/rollback:** hasta un GET adicional por recurso con página corta y terminal `null`. El resultado depende de que Fudo real admita el `page[number]` siguiente; si no lo admite, detener el piloto y adaptar contrato real en lugar de aceptar cobertura no probada. Revertir este cambio ante incompatibilidad demostrada. Sin migraciones, movimientos nativos o escrituras operativas al proveedor.
+
 ### O1 — Cierre seguro de páginas terminales sin `links.next` (17/11/2026; [PR #393](https://github.com/devdamig-dev/thesistema/pull/393) integrado)
 
 - **Hallazgo contractual:** el OpenAPI v1alpha1 publicado por Fudo ([fuente original](https://api.fu.do/v1alpha1/openapi.yml), [espejo del texto de paginación](https://apis.io/apis/fudo/fudo-providers-api/)) indica que el último bloque termina cuando devuelve menos de `page[size]` y no exige `links.next`. El importador O1 rechazaba toda página corta no vacía sin marcador, bloqueando recursos con cantidades no múltiplos de 100. Esta discrepancia se detectó en documentación pública; **no es una prueba con cuenta real**.
