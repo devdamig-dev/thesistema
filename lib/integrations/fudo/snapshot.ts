@@ -230,12 +230,14 @@ export function nextFudoPage(response: unknown, currentPage: number, recordCount
             throw new Error("invalid_fudo_page");
           }
         }
-        // The importer constructs its own fixed GET with numbered pagination.
-        // Unknown next-link parameters (filters, offsets, cursors, etc.) would
-        // silently be dropped, so never claim that the scan is complete.
+        // The importer always sends page[number]. A provider hint using
+        // page=2 might describe a different pagination mode; mapping that
+        // alias to page[number]=2 without proof could repeat or skip rows.
+        // Only accept pagination metadata matching our actual outgoing GET.
+        // Unknown filters, cursors and offsets must fail closed as well.
         if (nextUrl.hash) throw new Error("invalid_fudo_page");
         for (const key of nextUrl.searchParams.keys()) {
-          if (key !== "page[number]" && key !== "page" && key !== "page[size]") {
+          if (key !== "page[number]" && key !== "page[size]") {
             throw new Error("invalid_fudo_page");
           }
         }
@@ -248,9 +250,8 @@ export function nextFudoPage(response: unknown, currentPage: number, recordCount
           throw new Error("invalid_fudo_page");
         }
         const numbered = nextUrl.searchParams.getAll("page[number]");
-        const simple = nextUrl.searchParams.getAll("page");
-        if (numbered.length + simple.length !== 1) throw new Error("invalid_fudo_page");
-        const nextNumber = (numbered[0] ?? simple[0]).trim();
+        if (numbered.length !== 1) throw new Error("invalid_fudo_page");
+        const nextNumber = numbered[0].trim();
         if (!/^[1-9]\d*$/.test(nextNumber) || Number(nextNumber) !== currentPage + 1) {
           throw new Error("invalid_fudo_page");
         }
