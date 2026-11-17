@@ -47,14 +47,15 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
-### O1 — Bloquear continuaciones `page=N` no compatibles con el GET `page[number]=N` (16/11/2026)
+### O1 — Bloquear continuaciones `page=N` no compatibles con el GET `page[number]=N` (17/11/2026; [PR #391](https://github.com/devdamig-dev/thesistema/pull/391))
 
 - **Hallazgo por inspección de código y fixtures, sin incidente Fudo real:** `nextFudoPage` aceptaba una pista `links.next=/products?page=2`, pero `FudoClient.list` siempre envía `page[number]=2`. Esas formas no demuestran idéntica semántica de offset; podían importar la página equivocada o informar un ciclo completo sin cobertura.
 - **Resultado verificable:** admitir sólo `page[number]` (y `page[size]` idéntico al solicitado) en una continuación del mismo recurso, sin seguir URLs del proveedor. Rechazar `page=2` con `invalid_response` sanitario **antes** de persistir los 100 registros de una página completa o adelantar el cursor. Regresión unitaria y prueba sintética del servicio de importación.
-- **IMPLEMENTADO EN RAMA, NO FUSIONADO:** `fix/o1-fudo-page-number-parity-20261116`. Sólo parser de paginación, tests y documentación; sin SQL ni escrituras hacia Fudo.
-- **PROBADO:** pendiente de Quality del PR y de una cuenta real Fudo; no marcar pruebas pendientes como aprobadas.
-- **DESPLEGADO:** NO para este cambio. **VALIDADO EN PRODUCCIÓN:** NO; O1 mantiene NO-GO hasta cuenta Pro/API autorizada, conciliación de cinco recursos, doble lectura idempotente y QA A/B.
-- **Riesgo/rollback:** si Fudo real emite sólo `page=N`, la importación se detendrá con error explícito en lugar de asumir offsets equivalentes. Validar el contrato proveedor y diseñar compatibilidad persistente antes del GO; revertir el cambio en rama si la evidencia contradice la hipótesis.
+- **IMPLEMENTADO / FUSIONADO:** [PR #391](https://github.com/devdamig-dev/thesistema/pull/391), squash [`69b96ae0a3902b83f1b8d874c2032dad29d16d2d`](https://github.com/devdamig-dev/thesistema/commit/69b96ae0a3902b83f1b8d874c2032dad29d16d2d) en `main`. Sólo parser de paginación, tests y documentación; sin SQL ni escrituras hacia Fudo.
+- **PROBADO (sintético, no Fudo real):** [Quality #43999840865](https://github.com/devdamig-dev/thesistema/actions/runs/43999840865) finalizó `completed/success`, **3/3 jobs** `verify`, `postgres17` y `postgrest`, para el HEAD exacto `19226239953cdfc0e28bcd7dbba69e7d4a6e957e`. Incluye regresión de 100 registros sin staging ni avance de cursor ante alias no verificado. El check Vercel del HEAD fue exitoso en [Preview READY](https://vercel.com/damians-projects-a45d01bf/thesistema/AYUio7Mt92JFfMP8ikkj31FSHweX). No acredita proveedor real ni sesiones A/B.
+- **DESPLEGADO:** [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/8bQpWLMVfEu7ZsNoBQeyFEeXXVuS), SHA exacto del squash `69b96ae0a3902b83f1b8d874c2032dad29d16d2d`, alias `gastropilot.nexodg.com` y `aliasError=null`. La publicación no demuestra conexión a Fudo.
+- **VALIDADO EN PRODUCCIÓN: NO — O1 NO-GO.** SELECT read-only de Supabase `thesistema` (17/11/2026): 0 conexiones, 0 corridas, 0 registros externos y 0 cursores Fudo. Falta una cuenta Pro/API autorizada, conciliación/paginación reales de cinco recursos, doble lectura idempotente y QA autenticada A/B.
+- **Riesgo/rollback:** si Fudo real emite sólo `page=N`, la importación se detendrá con error explícito en lugar de asumir offsets equivalentes. Validar el contrato proveedor y diseñar compatibilidad persistente antes del GO; revertir el squash `69b96ae0` si la evidencia obliga a rediseñar. No habilitar `supabase db push` global por drift histórico.
 
 ### O1 — Rechazar respuestas de Fudo sin sobre JSON:API (16/11/2026; [PR #389](https://github.com/devdamig-dev/thesistema/pull/389))
 
