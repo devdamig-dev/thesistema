@@ -625,6 +625,60 @@ test("Fudo O1 rejects a nonempty short page without next metadata before staging
   }
 });
 
+test("Fudo O1 completes a documented short terminal page only after an empty successor GET", async () => {
+  const prevFetch = globalThis.fetch;
+  const prevKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  membershipActive = true;
+  activeBusiness = A;
+  const calls: Array<{ path: string; page: string | null; method: string | undefined }> = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      return new Response(JSON.stringify({
+        token: "synthetic-token", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    const url = new URL(String(input));
+    calls.push({
+      path: url.pathname, page: url.searchParams.get("page[number]"),
+      method: init?.method,
+    });
+    if (url.pathname.endsWith("/products")) {
+      if (url.searchParams.get("page[number]") === "1") {
+        return new Response(JSON.stringify({
+          data: [{ id: "verified-terminal-product", type: "Product",
+            attributes: { name: "synthetic-read-only" } }],
+        }), { status: 200 });
+      }
+      assert.equal(url.searchParams.get("page[number]"), "2");
+      assert.equal(url.searchParams.get("page[size]"), "100");
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+  };
+  try {
+    const outcome = await syncFudoReadOnly();
+    assert.equal(outcome.ok, true, JSON.stringify(outcome));
+    if (outcome.ok) assert.equal(outcome.hasMorePages, false);
+    const products = calls.filter((call) => call.path.endsWith("/products"));
+    assert.deepEqual(products.map((call) => call.page), ["1", "2"],
+      "the importer must verify page 2 is empty before completing page 1");
+    assert.ok(calls.every((call) => call.method === "GET"),
+      "the extra pagination proof must not add a write to Fudo");
+    assert.equal(progress.find((row) => row.resource_type === "products")?.next_page, 0);
+    assert.ok(records.some((row) => row.resource_type === "products"
+      && row.external_id === "verified-terminal-product"), "the validated page is staged");
+    assert.equal(runs.at(-1)?.status, "completed");
+    assert.doesNotMatch(JSON.stringify(outcome), /synthetic-token|synthetic-pilot-secret|synthetic-read-only/);
+  } finally {
+    globalThis.fetch = prevFetch;
+    membershipActive = true;
+    activeBusiness = A;
+    if (prevKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = prevKey;
+  }
+});
+
 test("Fudo O1 rejects unverified page=2 continuation without staging a full page", async () => {
   const prevFetch = globalThis.fetch;
   const prevKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
