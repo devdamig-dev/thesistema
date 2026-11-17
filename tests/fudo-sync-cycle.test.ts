@@ -350,8 +350,14 @@ test("Fudo O1 SQL page fence denies a revocation after app preflight with no sna
       }), { status: 200 });
     }
     assert.equal(init?.method, "GET");
+    // A real terminal short page is now confirmed by one empty successor GET.
+    // Keep this fixture valid so the test reaches the SQL page authorization fence.
+    const url = new URL(String(input));
+    if (url.searchParams.get("page[number]") === "2") {
+      return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+    }
     return new Response(JSON.stringify({
-      data: [{ id: "must-not-write", type: new URL(String(input)).pathname.split("/").at(-1),
+      data: [{ id: "must-not-write", type: url.pathname.split("/").at(-1),
         attributes: { name: "private-mock" } }],
       links: { next: null },
     }), { status: 200 });
