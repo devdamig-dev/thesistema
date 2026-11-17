@@ -181,6 +181,16 @@ test("Fudo O1 requires an explicitly verified empty successor to accept a short 
   "an explicit continuation must never be bypassed by the proof flag");
 });
 
+test("Fudo O1 does not trust next:null to close an exactly full 100-record page", () => {
+  const page = { links: { next: null } };
+  assert.throws(() => nextFudoPage(page, 1, 100, "products", 100),
+    /invalid_fudo_page/, "100 rows are not proof that no page 2 exists");
+  assert.equal(nextFudoPage(page, 1, 100, "products", 100, true), 0,
+    "only the service may opt in after verifying page 2 is empty");
+  assert.equal(nextFudoPage({ links: {} }, 1, 100, "products", 100), 2,
+    "an unlinked full page must still advance rather than close");
+});
+
 test("Fudo O1 rejects unsafe provider JSON numbers before staging or hashing", () => {
   // JSON.parse silently rounds large integer literals and accepts 1e999 as
   // Infinity; a subsequent JSON.stringify turns that Infinity into null.
