@@ -186,12 +186,13 @@ export function nextFudoPage(
       if (Object.prototype.hasOwnProperty.call(links, "next")) {
         const next = (links as Record<string, unknown>).next;
         if (next === null) {
-          // An explicit null is an end *claim*, not proof that Fudo honored
-          // page[size]. A provider silently capping a 100-row response could
-          // still send next:null and hide a later page. Confirm page N+1 is
-          // empty before staging any nonempty short import page.
+          // An explicit null is an end *claim*, not proof that a full
+          // 100-row page was terminal. When count equals page[size], an
+          // unreported page N+1 could still exist. For any nonempty import
+          // page with next:null, require an independent empty successor GET
+          // before staging/cursor completion (short AND exactly full pages).
           if (requestedPageSize === FUDO_SYNC_PAGE_SIZE && recordCount > 0
-            && recordCount < requestedPageSize && !verifiedEmptySuccessor) {
+            && !verifiedEmptySuccessor) {
             throw new Error("invalid_fudo_page");
           }
           return 0;

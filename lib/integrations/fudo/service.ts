@@ -803,8 +803,16 @@ export async function syncFudoReadOnly(expectedConnectionRevision?: string): Pro
         || (!!links && typeof links === "object" && !Array.isArray(links)
           && (!Object.prototype.hasOwnProperty.call(links, "next")
             || (links as Record<string, unknown>).next === null));
+      // A full 100-row page with explicit next:null is also ambiguous:
+      // Fudo could have returned its maximum page size while omitting a
+      // real continuation. Confirm N+1 is empty before closing that cursor.
+      // A full page with no links already advances to N+1 normally.
+      const explicitNullEnd = !!links && typeof links === "object" && !Array.isArray(links)
+        && Object.prototype.hasOwnProperty.call(links, "next")
+        && (links as Record<string, unknown>).next === null;
       let verifiedEmptySuccessor = false;
-      if (snapshots.length > 0 && snapshots.length < FUDO_SYNC_PAGE_SIZE && lacksNextHint) {
+      if (snapshots.length > 0 && lacksNextHint
+        && (snapshots.length < FUDO_SYNC_PAGE_SIZE || explicitNullEnd)) {
         if (page >= 100000) throw new Error("invalid_fudo_page");
         const successor = await client.list(resource, {
           "page[number]": page + 1, "page[size]": FUDO_SYNC_PAGE_SIZE,

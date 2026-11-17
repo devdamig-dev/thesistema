@@ -47,6 +47,16 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Confirmar también páginas EXACTAMENTE llenas con `links.next:null` (17/11/2026)
+
+- **Hallazgo por inspección, no por proveedor real:** después de #396, una página con los 100 registros solicitados y `links.next:null` todavía se declaraba completa sin preguntar por N+1. Una página siguiente existente podía quedar sin importar si el indicador de fin era erróneo.
+- **Resultado observable:** para una página importable no vacía con `links.next:null`, sea corta o exactamente de 100 registros, exigir un GET independiente a N+1 con igual `page[size]=100`, **vacío y sin continuación**, antes de staging/cursor. Si hay datos o continuación, fallar cerrado y auditar sin duplicados. Una página llena sin `links.next` sigue avanzando normalmente; sin cambios en sondeos de tamaño 1.
+- **IMPLEMENTADO (rama de trabajo):** `fix/o1-fudo-full-null-terminal-proof-20261117`, adaptador de paginación, servicio, regresiones sintéticas y runbook. PR / Quality sujetos a comprobación; no se atribuye QA de ejecución anterior a este cambio.
+- **PROBADO:** pendiente de CI nuevo; tests añadidos no equivalen a una prueba real Fudo.
+- **DESPLEGADO:** NO acreditado para este cambio hasta confirmar SHA exacto en Production.
+- **VALIDADO EN PRODUCCIÓN: NO — O1 NO-GO.** Falta cuenta Fudo Pro/API real autorizada, cinco recursos/paginación conciliados, doble importación idempotente y QA autenticada A/B.
+- **Riesgo/rollback:** una lectura GET adicional por recurso cuando una página llena anuncia `next:null`; si Fudo no permite consultar la página siguiente, detener el piloto y revisar contrato. Revertir la corrección ante incompatibilidad real. No DDL, secretos ni escrituras al proveedor.
+
 ### O1 — Verificar también `links.next: null` antes de cerrar páginas cortas (17/11/2026)
 
 - **Hallazgo en código, no en Fudo real:** la confirmación de página sucesora vacía de #393 sólo se ejecutaba si `links.next` faltaba por completo. Si la respuesta traía `links: { next: null }` y menos de 100 registros, `nextFudoPage` devolvía fin inmediatamente. Un proveedor que limitara el tamaño efectivo podría dejar registros fuera sin advertencia.
