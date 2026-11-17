@@ -1279,3 +1279,130 @@ test("Fudo O1 explicit next:null cannot silently close a capped short page", asy
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = prevKey;
   }
 });
+
+
+test("Fudo O1 confirms full next:null terminal before staging 100 records", async () => {
+  const prevFetch = globalThis.fetch;
+  const prevKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  membershipActive = true;
+  activeBusiness = A;
+  // Other integration tests share synthetic mock state; isolate the new cycle.
+  progress.splice(0, progress.length);
+  records.splice(0, records.length);
+  runs.splice(0, runs.length);
+  const calls: Array<{ path: string; page: string | null; method: string | undefined }> = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      return new Response(JSON.stringify({
+        token: "synthetic-token", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    const url = new URL(String(input));
+    calls.push({
+      path: url.pathname, page: url.searchParams.get("page[number]"),
+      method: init?.method,
+    });
+    if (url.pathname.endsWith("/products")) {
+      if (url.searchParams.get("page[number]") === "1") {
+        return new Response(JSON.stringify({
+          data: Array.from({ length: 100 }, (_, index) => ({
+            id: index === 0 ? "verified-full-terminal-product" : `verified-full-${index}`,
+            type: "Product", attributes: { name: "synthetic-read-only" },
+          })),
+          links: { next: null },
+        }), { status: 200 });
+      }
+      assert.equal(url.searchParams.get("page[number]"), "2");
+      assert.equal(url.searchParams.get("page[size]"), "100");
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+  };
+  try {
+    const outcome = await syncFudoReadOnly();
+    assert.equal(outcome.ok, true, JSON.stringify(outcome));
+    if (outcome.ok) assert.equal(outcome.hasMorePages, false);
+    const products = calls.filter((call) => call.path.endsWith("/products"));
+    assert.deepEqual(products.map((call) => call.page), ["1", "2"],
+      "the importer must verify page 2 is empty before completing page 1");
+    assert.ok(calls.every((call) => call.method === "GET"),
+      "the extra pagination proof must not add a write to Fudo");
+    assert.equal(progress.find((row) => row.resource_type === "products")?.next_page, 0);
+    assert.ok(records.some((row) => row.resource_type === "products"
+      && row.external_id === "verified-full-terminal-product"), "the validated page is staged");
+    assert.equal(runs.at(-1)?.status, "completed");
+    assert.doesNotMatch(JSON.stringify(outcome), /synthetic-token|synthetic-pilot-secret|synthetic-read-only/);
+  } finally {
+    globalThis.fetch = prevFetch;
+    membershipActive = true;
+    activeBusiness = A;
+    if (prevKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = prevKey;
+  }
+});
+
+test("Fudo O1 full next:null cannot silently hide a nonempty successor", async () => {
+  const prevFetch = globalThis.fetch;
+  const prevKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  membershipActive = true;
+  activeBusiness = A;
+  conn.status = "connected";
+  conn.connection_generation = GENERATION;
+  conn.last_tested_at = null;
+  progress.length = 0;
+  records.length = 0;
+  runs.length = 0;
+  const productPages: string[] = [];
+  const providerMethods: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST", "POST is reserved for bearer authentication");
+      return new Response(JSON.stringify({
+        token: "synthetic-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    providerMethods.push(String(init?.method));
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/products")) {
+      productPages.push(url.searchParams.get("page[number]") ?? "");
+      assert.equal(url.searchParams.get("page[size]"), "100");
+      // Page 1 exactly fills the requested 100; even then a contradictory
+      // explicit next:null must NOT hide page 2 or commit the first page.
+      return new Response(JSON.stringify({
+        data: productPages.length === 1
+          ? Array.from({ length: 100 }, (_, index) => ({
+            id: `must-not-stage-${index}`, type: "Product",
+            attributes: { name: "synthetic-private" },
+          }))
+          : [{ id: "hidden-next-page", type: "Product",
+            attributes: { name: "synthetic-private" } }],
+        links: { next: null },
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: [], links: { next: null } }), { status: 200 });
+  };
+  try {
+    const outcome = await syncFudoReadOnly();
+    assert.equal(outcome.ok, false);
+    if (!outcome.ok) {
+      assert.equal(outcome.code, "invalid_response");
+      assert.doesNotMatch(outcome.message, /synthetic-bearer|must-not-stage|hidden-next-page/);
+    }
+    assert.deepEqual(productPages, ["1", "2"], "verify the alleged terminal with exactly one extra GET");
+    assert.equal(records.filter((row) => row.resource_type === "products").length, 0,
+      "an ambiguous terminal page cannot enter staging");
+    assert.equal(progress.filter((row) => row.resource_type === "products").length, 0,
+      "an ambiguous terminal page cannot close its durable cursor");
+    assert.equal(runs.at(-1)?.status, "failed", "the failed attempt remains auditable");
+    assert.ok(providerMethods.length >= 2 && providerMethods.every((method) => method === "GET"),
+      "only GET may read provider resources");
+  } finally {
+    globalThis.fetch = prevFetch;
+    membershipActive = true;
+    activeBusiness = A;
+    if (prevKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = prevKey;
+  }
+});
