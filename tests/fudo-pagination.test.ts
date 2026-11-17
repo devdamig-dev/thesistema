@@ -2,6 +2,23 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { nextFudoPage, parseFudoPage } from "../lib/integrations/fudo/snapshot";
 
+test("Fudo O1 requires the JSON:API data envelope before connecting or staging", () => {
+  // Previously a provider's bare array could be parsed as records. The
+  // connection probe would then accept HTTP 200 and save credentials, even
+  // though the response did not follow the declared JSON:API contract.
+  for (const incompatible of [[], [{ id: "synthetic-product" }]]) {
+    assert.throws(() => parseFudoPage(incompatible, "products"),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.message, "invalid_fudo_page");
+        assert.doesNotMatch(error.message, /synthetic-product/);
+        return true;
+      });
+  }
+  assert.equal(parseFudoPage({ data: [] }, "products").length, 0);
+  assert.equal(parseFudoPage({ data: [{ id: "synthetic-product", type: "product" }] }, "products").length, 1);
+});
+
 test("Fudo O1 numbered links continue to the actual next page without following the URL", () => {
   assert.equal(nextFudoPage({ data: [], links: { next: null } }, 1, 0), 0);
   assert.equal(nextFudoPage({

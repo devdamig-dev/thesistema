@@ -94,11 +94,12 @@ export function parseFudoPage(value: unknown, expectedResource?: string): FudoSn
     throw new Error("invalid_fudo_page");
   }
   const expectedTypes = expectedResource ? (FUDO_JSON_API_TYPES as Record<string, readonly string[]>)[expectedResource] : undefined;
-  const raw = Array.isArray(value)
-    ? value
-    : value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>).data
-      : null;
+  // A bare array is not a JSON:API response. Accepting one would make an
+  // HTTP 200 look like a working products connection, despite an incompatible
+  // provider envelope; do not persist credentials on that false positive.
+  const raw = value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>).data
+    : null;
   if (!Array.isArray(raw) || raw.length > FUDO_SYNC_PAGE_SIZE) throw new Error("invalid_fudo_page");
 
   const seen = new Set<string>();
