@@ -797,9 +797,12 @@ export async function syncFudoReadOnly(expectedConnectionRevision?: string): Pro
       // tenant, role and credential-revision fences as the original read.
       const links: unknown = response && typeof response === "object" && !Array.isArray(response)
         ? (response as Record<string, unknown>).links : undefined;
+      // A short page with next:null also needs a successor probe. Explicit
+      // null is not evidence that Fudo applied our requested page[size].
       const lacksNextHint = links === undefined
         || (!!links && typeof links === "object" && !Array.isArray(links)
-          && !Object.prototype.hasOwnProperty.call(links, "next"));
+          && (!Object.prototype.hasOwnProperty.call(links, "next")
+            || (links as Record<string, unknown>).next === null));
       let verifiedEmptySuccessor = false;
       if (snapshots.length > 0 && snapshots.length < FUDO_SYNC_PAGE_SIZE && lacksNextHint) {
         if (page >= 100000) throw new Error("invalid_fudo_page");
