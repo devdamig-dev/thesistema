@@ -52,6 +52,10 @@ https://soporte.fu.do/es/articles/11939789-api-publica-de-proposito-general
 - Regresiones automáticas: **rechazo** de página corta con `links.next`, aceptación de página llena con `links.next=null`, rechazo de metadatos inválidos, control de rol y separación entre tenants/generaciones en reporte. Pruebas de API real siguen pendientes.
 - No se habilitan escrituras, cron, movimientos de caja ni de stock.
 
+## O1 — Corregir cierre con `links.next: null` (17/11/2026)
+
+El detector previo de páginas cortas sólo hacía el GET de confirmación cuando `links.next` faltaba. Un JSON:API `links: { next: null }` permitía cerrar inmediatamente una página corta de 100 solicitados, incluso si la API hubiese aplicado un límite efectivo inferior. Desde la corrección O1, **ambos casos exigen un GET de la página N+1 con el mismo tamaño 100**, sin seguir URLs provistas por Fudo. Si N+1 no está vacía o tiene continuación, el recurso falla y no persiste staging ni cursor de la página original. Un sondeo con `page[size]=1` y un recurso sin resultados no necesita ese GET adicional. La regresión es sintética: todavía hay que contrastar con la API autorizada del negocio piloto. Sólo métodos GET para recursos, sin escrituras a Fudo ni a ventas/stock nativos.
+
 ## O1 — Validación semántica del test de conexión (03/11/2026)
 
 - Riesgo identificado: una respuesta HTTP 200 con JSON válido pero sin `data` JSON:API podía marcar la cuenta como conectada y guardar credenciales, aunque la importación posterior fallaría.
