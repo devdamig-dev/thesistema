@@ -47,6 +47,16 @@ Un negocio de GastroPilot puede conectar una cuenta Fudo autorizada y consultar 
 - [ ] Quality Gate del cambio aprobado.
 - [ ] Prueba piloto real documentada con una cuenta Fudo autorizada.
 
+### O1 — Cierre seguro de páginas terminales sin `links.next` (17/11/2026; PR pendiente de QA)
+
+- **Hallazgo contractual:** el OpenAPI v1alpha1 publicado por Fudo ([fuente original](https://api.fu.do/v1alpha1/openapi.yml), [espejo del texto de paginación](https://apis.io/apis/fudo/fudo-providers-api/)) indica que el último bloque termina cuando devuelve menos de `page[size]` y no exige `links.next`. El importador O1 rechazaba toda página corta no vacía sin marcador, bloqueando recursos con cantidades no múltiplos de 100. Esta discrepancia se detectó en documentación pública; **no es una prueba con cuenta real**.
+- **Resultado verificable:** cuando un recurso devuelve una página corta sin `links.next`, pedir una sola página sucesora con el **mismo** `page[size]=100` y `page[number]+1`. Si y sólo si vuelve vacía y sin continuación, persistir la página original y finalizar el cursor; si hay elementos o continuación, fallar antes de staging/cursor. Mantener rechazo de páginas cortas con `links.next` y enlaces incompatibles. Todos los HTTP de recursos siguen siendo **GET** con autorización y revisión de conexión antes de cada solicitud; no hay DDL ni movimientos nativos.
+- **IMPLEMENTADO:** cambio en rama `fix/fudo-o1-terminal-short-page-proof-20261117` para `snapshot.ts`, `service.ts`, regresiones sintéticas de importación y guía operativa. Pendiente revisión, CI y merge del PR.
+- **PROBADO:** NO ACREDITADO hasta ejecutar Quality sobre el HEAD del PR. Los tests agregados son sintéticos, no prueban Fudo real.
+- **DESPLEGADO:** NO para este cambio hasta verificar release/commit exacto.
+- **VALIDADO EN PRODUCCIÓN:** NO — O1 sigue **NO-GO** sin cuenta Pro/API autorizada, conciliación de cinco recursos, dos ciclos idempotentes y QA autenticada A/B.
+- **Riesgo/rollback:** la confirmación agrega hasta un GET final por recurso; un negocio cuyos datos cambien entre páginas todavía requiere conciliación real. Si la API real usa paginación diferente, detener el piloto y revisar el contrato sin inferir paridad por conteos de staging. Revertir PR si CI/QA detecta incompatibilidad. Sin migraciones y sin escrituras hacia Fudo.
+
 ### O1 — Bloquear continuaciones `page=N` no compatibles con el GET `page[number]=N` (17/11/2026; [PR #391](https://github.com/devdamig-dev/thesistema/pull/391))
 
 - **Hallazgo por inspección de código y fixtures, sin incidente Fudo real:** `nextFudoPage` aceptaba una pista `links.next=/products?page=2`, pero `FudoClient.list` siempre envía `page[number]=2`. Esas formas no demuestran idéntica semántica de offset; podían importar la página equivocada o informar un ciclo completo sin cobertura.
