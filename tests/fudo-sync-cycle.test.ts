@@ -587,6 +587,7 @@ test("Fudo O1 rejects a nonempty short page without next metadata before staging
   const beforeRecords = JSON.stringify(records.filter((row) => row.resource_type === "products"));
   const beforeProgress = JSON.stringify(progress.filter((row) => row.resource_type === "products"));
   const verbs: string[] = [];
+  const pages: Array<string | null> = [];
   globalThis.fetch = async (input, init) => {
     if (String(input) === "https://auth.fu.do/api") {
       assert.equal(init?.method, "POST");
@@ -596,6 +597,7 @@ test("Fudo O1 rejects a nonempty short page without next metadata before staging
     }
     verbs.push(String(init?.method));
     if (new URL(String(input)).pathname.endsWith("/products")) {
+      pages.push(new URL(String(input)).searchParams.get("page[number]"));
       return new Response(JSON.stringify({
         // A valid row with no links: we cannot know whether the provider
         // silently limited the requested 100-record page to one record.
@@ -617,6 +619,7 @@ test("Fudo O1 rejects a nonempty short page without next metadata before staging
       "no partial staging persisted");
     assert.equal(JSON.stringify(progress.filter((row) => row.resource_type === "products")), beforeProgress,
       "the resource cursor must not advance or close");
+    assert.deepEqual(pages, ["1", "2"], "a nonempty successor must be checked and fail closed");
     assert.ok(verbs.length > 0 && verbs.every((verb) => verb === "GET"), "Fudo stays GET-only");
   } finally {
     globalThis.fetch = prevFetch;
