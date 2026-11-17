@@ -63,3 +63,7 @@ El detector previo de páginas cortas sólo hacía el GET de confirmación cuand
 - Una respuesta 200 incompatible se informa como `invalid_response`; no autoriza persistir nuevas credenciales ni confirma acceso funcional.
 - Cobertura añadida: un falso 200 con payload privado no produce persistencia ni exposición de secretos, mientras que páginas válidas vacías/con un producto siguen habilitando la conexión.
 - Esta prueba sigue siendo **un sondeo de una sola página de productos**, no una conciliación de los cinco recursos ni una prueba de cuenta real. El diagnóstico por recurso y el piloto E2E continúan siendo necesarios.
+
+## O1 — Cierre seguro de página exactamente llena con `links.next:null` (17/11/2026)
+
+Incluso si Fudo devuelve exactamente 100 registros para `page[size]=100`, `links.next:null` por sí solo no demuestra que no exista la página N+1. Para una página importable **no vacía** con ese indicador, el adaptador consulta N+1 con el mismo tamaño; solo un JSON:API válido, vacío y sin continuación permite cerrar el cursor y persistir N. Una página sucesora con datos o continuación provoca fallo saneado sin staging/cursor de la página original. Las páginas llenas **sin** indicador de continuación siguen avanzando naturalmente a N+1; los sondeos `page[size]=1` no se consideran conciliación. Se agregaron pruebas sintéticas de aceptación y rechazo para 100 registros, sin solicitudes de escritura a Fudo. Se requiere confirmar contrato real con la cuenta autorizada antes de declarar O1 GO.
