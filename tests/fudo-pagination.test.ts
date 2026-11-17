@@ -25,7 +25,7 @@ test("Fudo O1 numbered links continue to the actual next page without following 
     links: { next: "/v1alpha1/products?page%5Bnumber%5D=2&page%5Bsize%5D=20" },
   }, 1, 20, "products", 20), 2);
   assert.equal(nextFudoPage({ data: [] }, 1, 0), 0);
-  assert.equal(nextFudoPage({ links: { next: "/v1alpha1/products?page=2" } }, 1, 1, "products", 1), 2);
+  assert.equal(nextFudoPage({ links: { next: "/v1alpha1/products?page[number]=2" } }, 1, 1, "products", 1), 2);
   assert.equal(nextFudoPage({
     links: { next: "https://api.fu.do/v1alpha1/orders?page%5Bnumber%5D=13&page%5Bsize%5D=20" },
   }, 12, 20, "orders", 20), 13);
@@ -39,6 +39,7 @@ test("Fudo O1 numbered links continue to the actual next page without following 
 test("Fudo O1 refuses malformed, non-numbered, skipped or external next links", () => {
   const rejected: unknown[] = [
     "broken-link",
+    "/v1alpha1/products?page=2", // Alias is not proven equivalent to the outgoing page[number] GET.
     "",
     "/v1alpha1/products?cursor=abc",
     "/v1alpha1/products?page[number]=1",
@@ -84,7 +85,7 @@ test("Fudo O1 rejects size mismatch in a test-connection probe without leaking t
 test("Fudo O1 continuation metadata must refer to the resource being imported", () => {
   const valid = [
     "?page[number]=2",
-    "/v1alpha1/orders?page=2",
+    "/v1alpha1/orders?page[number]=2",
     "/orders?page[number]=2",
     "https://api.fu.do/v1alpha1/orders?page%5Bnumber%5D=2",
   ];
@@ -93,11 +94,11 @@ test("Fudo O1 continuation metadata must refer to the resource being imported", 
   }
 
   const wrongResource = [
-    "/v1alpha1/products?page=2",
+    "/v1alpha1/products?page[number]=2",
     "/products?page[number]=2",
-    "https://api.fu.do/v1alpha1/sales?page=2",
-    "/v1alpha1/orders/123?page=2",
-    "/v1alpha1/orders/../products?page=2",
+    "https://api.fu.do/v1alpha1/sales?page[number]=2",
+    "/v1alpha1/orders/123?page[number]=2",
+    "/v1alpha1/orders/../products?page[number]=2",
   ];
   for (const next of wrongResource) {
     assert.throws(() => nextFudoPage({ links: { next } }, 1, 100, "orders"),
