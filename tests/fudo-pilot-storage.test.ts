@@ -107,10 +107,12 @@ test("Fudo rejects short linked import pages but accepts compatible full-page co
   assert.throws(() => nextFudoPage(offOrigin, 1, FUDO_SYNC_PAGE_SIZE), /invalid_fudo_page/);
 });
 
-test("Fudo pagination honors explicit end, even on a full page", () => {
+test("Fudo pagination requires an empty-successor proof for an explicit full-page end", () => {
   const full = { data: Array.from({ length: FUDO_SYNC_PAGE_SIZE }, (_, i) => ({ id: String(i) })),
     links: { next: null } };
-  assert.equal(nextFudoPage(full, 1, parseFudoPage(full).length), 0);
+  assert.throws(() => nextFudoPage(full, 1, parseFudoPage(full).length),
+    /invalid_fudo_page/, "a full page with next:null alone cannot prove terminality");
+  assert.equal(nextFudoPage(full, 1, parseFudoPage(full).length, undefined, FUDO_SYNC_PAGE_SIZE, true), 0);
   assert.equal(nextFudoPage({ data: [] }, 2, 0), 0);
   assert.equal(nextFudoPage({ data: full.data }, 2, FUDO_SYNC_PAGE_SIZE), 3);
   assert.equal(nextFudoPage({ data: full.data, links: { next: { href: "/products?page[number]=3" } } }, 2, FUDO_SYNC_PAGE_SIZE), 3);
