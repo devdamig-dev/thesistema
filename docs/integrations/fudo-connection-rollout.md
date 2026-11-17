@@ -49,7 +49,7 @@ https://soporte.fu.do/es/articles/11939789-api-publica-de-proposito-general
 - Para aprobar el piloto, aun con cinco cursores terminados, contrastar contra Fudo real **conteos, IDs y períodos** de cada recurso; repetir el ciclo para validar idempotencia y ejecutar aislamiento autenticado A/B.
 - La UI del owner/admin muestra registros **únicos almacenados** por recurso en la generación actual de conexión y un resumen de las cinco últimas corridas, con estado, conteos de cada tanda y códigos de error sanitizados; jamás credenciales ni payloads.
 - Los totales de staging **no equivalen a los totales definitivos de Fudo**. Al habilitar piloto real hay que comparar contra cada recurso/rango y registrar discrepancias. Las generaciones anteriores se conservan privadas pero no se agregan a la conexión vigente.
-- Regresiones automáticas: **rechazo** de página corta con `links.next`, aceptación de página llena con `links.next=null`, rechazo de metadatos inválidos, control de rol y separación entre tenants/generaciones en reporte. Pruebas de API real siguen pendientes.
+- Regresiones automáticas: **rechazo** de página corta con `links.next`, aceptación de página llena con `links.next=null` **sólo tras comprobar N+1 vacía** (#398), rechazo de metadatos inválidos, control de rol y separación entre tenants/generaciones en reporte. Pruebas de API real siguen pendientes.
 - No se habilitan escrituras, cron, movimientos de caja ni de stock.
 
 ## O1 — Corregir cierre con `links.next: null` (17/11/2026)
