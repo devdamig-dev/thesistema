@@ -185,7 +185,17 @@ export function nextFudoPage(
       }
       if (Object.prototype.hasOwnProperty.call(links, "next")) {
         const next = (links as Record<string, unknown>).next;
-        if (next === null) return 0;
+        if (next === null) {
+          // An explicit null is an end *claim*, not proof that Fudo honored
+          // page[size]. A provider silently capping a 100-row response could
+          // still send next:null and hide a later page. Confirm page N+1 is
+          // empty before staging any nonempty short import page.
+          if (requestedPageSize === FUDO_SYNC_PAGE_SIZE && recordCount > 0
+            && recordCount < requestedPageSize && !verifiedEmptySuccessor) {
+            throw new Error("invalid_fudo_page");
+          }
+          return 0;
+        }
         const href = typeof next === "string" ? next
           : next && typeof next === "object" && !Array.isArray(next)
             ? (next as Record<string, unknown>).href
