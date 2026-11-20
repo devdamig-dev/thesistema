@@ -1,0 +1,27 @@
+name: GastroPilot production API authorization
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/qa-production-api.yml'
+      - 'tests/qa/production-chat-auth.test.mjs'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/qa-production-api.yml'
+      - 'tests/qa/production-chat-auth.test.mjs'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  unauthenticated:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - run: node --test tests/qa/production-chat-auth.test.mjs
