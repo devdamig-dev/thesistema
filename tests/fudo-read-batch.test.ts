@@ -47,6 +47,32 @@ test("Fudo sync drains in-flight page persistence before reporting an unrelated 
   assert.equal(finishedSlow, true, "no page write is left running after failure finalization");
 });
 
+test("Fudo stops scheduling new resource GETs after failure and drains already-started reads", async () => {
+  const resources = ["bad", "in-flight-1", "in-flight-2", "not-started-1", "not-started-2"];
+  const started: string[] = [];
+  const finished: string[] = [];
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const batch = runFudoReadBatch(resources, async (resource) => {
+    started.push(resource);
+    if (resource === "bad") throw new Error("first_fudo_resource_failed");
+    await gate;
+    finished.push(resource);
+    return resource;
+  });
+
+  // The first wave launches three resources concurrently; the initial
+  // rejection must not schedule a fourth or fifth provider GET.
+  await Promise.resolve();
+  assert.deepEqual(started, resources.slice(0, 3));
+  release();
+  await assert.rejects(batch, /first_fudo_resource_failed/);
+  assert.deepEqual(started, resources.slice(0, 3),
+    "no new Fudo reads start after a detected provider failure");
+  assert.deepEqual(finished, resources.slice(1, 3),
+    "already-started resource reads settle before the failed run is finalized");
+});
+
 test("Fudo read batch handles empty resource lists without provider calls", async () => {
   let calls = 0;
   const results = await runFudoReadBatch([] as string[], async () => { calls++; return true; });

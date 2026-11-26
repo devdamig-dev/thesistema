@@ -61,3 +61,21 @@ test("Google invitation resumes existing acceptance while recovery preserves its
   assert.equal(invited.searchParams.get("oauth"), "complete");
   assert.equal((await callback("code=fixture&flow=recovery&next=/ventas")).pathname, "/restablecer-contrasena");
 });
+
+test("every failed callback preserves the invitation and only a safe retry destination", async () => {
+  for (const scenario of [
+    { query: "error=access_denied&error_description=private", configured: true, error: null },
+    { query: "", configured: true, error: null },
+    { query: "code=expired", configured: true, error: { message: "private" } },
+    { query: "code=fixture", configured: false, error: null },
+  ]) {
+    configured = scenario.configured; error = scenario.error;
+    const target = await callback(`${scenario.query}&next=%2F%2Fevil.test&invite_token=bound`);
+    assert.equal(target.pathname, "/login");
+    assert.equal(target.searchParams.get("next"), "/");
+    assert.equal(target.searchParams.get("invite_token"), "bound");
+    assert.equal(target.searchParams.has("oauth"), false);
+    assert.equal(target.href.includes("private"), false);
+  }
+  configured = true; error = null;
+});

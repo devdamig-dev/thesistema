@@ -17,7 +17,19 @@ Centro de ayuda: https://soporte.fu.do/es/articles/11939789-api-publica-de-propo
 - No implementar escrituras en esta fase.
 
 ## Fase 2 — conexión
-Ruta propuesta: `/ajustes/integraciones/fudo`.
+Ruta implementada: `/ajustes/integraciones/fudo`.
+
+### Activación autónoma del negocio piloto (verificado 09/11/2026)
+
+Fudo documenta [habilitación autogestionada de la API Pública General](https://soporte.fu.do/es/articles/11939789-api-publica-de-proposito-general) para **Plan Pro** (artículo oficial del 02/10/2026). El bloqueo del piloto es tener una cuenta real autorizada, no esperar una habilitación manual de soporte cuando el negocio ya tiene Plan Pro.
+
+1. El **titular del negocio**, en su sesión de Fudo, abre **Aplicaciones externas > API Pública General**, confirma el uso y habilita la API. Si el plan no es Pro, debe contratarlo por los canales propios de Fudo; no modificar el plan desde GastroPilot.
+2. En **Administración > Usuarios**, crea un usuario exclusivo para la integración, con los permisos **mínimos de consulta** requeridos por los cinco recursos O1: `products`, `ingredients`, `providers`, `orders` y `sales`. El alcance efectivo se confirma con el diagnóstico real, no por el nombre del rol.
+3. Desde ese usuario obtiene la **API Key** y usa **Establecer** para generar su **API Secret**. Fudo informa que el secreto se muestra una sola vez. No enviarlo por chat, correo, GitHub, tickets o logs.
+4. El owner/admin del **mismo negocio** en GastroPilot entra en **Ajustes > Integraciones > Fudo**, ingresa ambas credenciales sólo en la UI segura, ejecuta **Conectar y validar** y después **Revisar permisos de importación**. No usar credenciales de otro negocio.
+5. Con 5/5 recursos disponibles, ejecutar lectura paginada, conciliación de conteos e IDs, una segunda lectura idempotente y QA de dos sesiones/negocios independientes conforme al [acta del piloto](./fudo-pilot-evidence-template.md). **No aprobar GO por un test de conexión ni por un 5/5 sin conciliación.**
+
+La autenticación emite un POST **únicamente a auth.fu.do**; los recursos de la API se consultan con GET. O1 no permite escrituras operativas a Fudo. Las claves se almacenan cifradas por negocio y el servicio no las revela en respuestas o registros. La ausencia de una cuenta autorizada sigue bloqueando la validación de producción.
 
 La configuración debe:
 - requerir owner/admin;
@@ -40,6 +52,17 @@ Crear mapeos externos con:
 
 La primera importación no debe escribir movimientos financieros ni de stock propios. Debe poder repetirse sin duplicar.
 
+## O1 — Checklist de preparación del piloto (publicado 04/11/2026)
+
+Ajustes > Integraciones > Fudo muestra ahora el avance por pasos **informativos**, no un permiso automático para operar sin Fudo:
+
+1. **Conexión segura:** la prueba de productos confirma una lectura compatible, pero no acredita permisos en los otros cuatro recursos.
+2. **Diagnóstico de recursos:** ejecutar `Revisar permisos de importación` comprueba cinco GET read-only; los checks solo viven en la sesión de interfaz y se deben repetir al recargar/rotar.
+3. **Ciclo de lectura:** los cinco cursores deben estar en `0`, `lastSyncStatus` y la última corrida deben indicar `completed`. Un cursor finalizado no confirma paridad con Fudo.
+4. **Conciliación / multiempresa:** **siempre pendiente de evidencia manual** de conteos/IDs por recurso, sesiones owner/empleado y separación real negocio A/B; ninguna UI ni test sintético puede habilitar GO.
+
+El aviso **Piloto NO-GO** permanece mientras falte esa validación operativa. No se almacena un resultado GO ni un nuevo secreto en la interfaz. [PR #200](https://github.com/devdamig-dev/thesistema/pull/200) (merge `d6781a2b`) pasó [Quality](https://github.com/devdamig-dev/thesistema/actions/runs/41883782458), y su compilación se publicó [en Vercel Production](https://vercel.com/damians-projects-a45d01bf/thesistema/DgXEtWqQazaSEYnao7fbjm131fo3) con alias `gastropilot.nexodg.com`. **Fudo real: NO VALIDADO.** Sin escrituras al proveedor, a ventas/stock nativos ni nuevas migraciones.
+
 ## Fase 4 — piloto
 1. El cliente habilita API Pública General en Fudo (Plan Pro).
 2. Crea usuario API de permisos mínimos.
@@ -56,6 +79,54 @@ La primera importación no debe escribir movimientos financieros ni de stock pro
 - Cambios de schema/API requieren adapter versionado.
 - No asumir que un 200 significa datos completos; reconciliar conteos y rangos.
 - No mezclar IDs Fudo con IDs internos.
+- Integridad de IDs: si Fudo devuelve un ID numérico JSON fuera del rango entero seguro de JavaScript o fraccionario, rechazar la página con error sanitizado antes de hacer upsert o avanzar el cursor. Los IDs largos son válidos **como strings**. Sin esto, dos IDs distintos podrían colisionar por redondeo. Requiere contraste con datos reales del piloto.
+
+
+## Invariante de importación: página y paginación válidas antes de staging
+
+Una respuesta HTTP 200 no es una página importable por sí sola. El test inicial de conexión y el diagnóstico por recurso también verifican el `links.next` de la primera página, para no reportar un falso positivo que falle al importar. Antes de insertar snapshots o actualizar `last_seen_cycle_id`, el importador valida tanto los registros e IDs como los metadatos JSON:API de paginación (`links.next`, página actual, límites). Si el proveedor devuelve una página con registros válidos pero un siguiente enlace malformado, el recurso falla sin añadir staging ni avanzar su cursor. El resto de recursos puede cerrar sus lecturas iniciadas; la ejecución global queda en estado fallido con un código sanitizado y **no modifica el proveedor ni ventas/stock nativos**. Repetir el intento no debe duplicar datos. Esta garantía se verifica con fixtures y aún necesita contraste en el piloto con Fudo real.
+
+## O1 — Integridad del enlace de continuación de paginación
+
+El importador continúa usando **únicamente GET al endpoint Fudo permitido**, sin seguir links del proveedor. Un `links.next` no vacío no es suficiente para acreditar continuidad: el adaptador solo soporta paginación por número, por lo que verifica que el enlace use HTTPS de `api.fu.do`, indique exactamente un parámetro `page[number]` y apunte a la página inmediatamente siguiente. Rechaza links malformados, de otra procedencia, de cursor, repetidos, saltos de página y credenciales embebidas; el error es fijo/sanitizado y no incluye la URL. Esta validación ocurre junto con la del cuerpo **antes** de modificar staging o cursor. Cuando Fudo use otro contrato de paginación, debe adaptarse expresamente y verificarse con una cuenta autorizada: no asumir una importación completa por un link no interpretable.
+
+Pruebas del contrato: links absolutos/relativos válidos, salto/repetición, duplicados, cursor y origen ajeno. **No validado todavía contra una conexión Fudo real.**
+
+### Parámetros de continuación no reproducibles (PR #195; publicado)
+
+La sincronización construye su propio GET con `page[number]` y `page[size]`; no sigue la URL provista por Fudo. Un enlace `links.next` con filtros, cursores, offsets, fragmentos o cualquier parámetro extra no soportado **no puede interpretarse como continuidad válida**: esos criterios se perderían al pedir la siguiente página. En el contrato vigente de O1, el parser sólo admite `page[number]` y un `page[size]` opcional, sin duplicados. La versión original de #195 admitía `page=N`, pero #391 la excluyó al no poder demostrar equivalencia con el GET `page[number]=N`. De lo contrario rechaza la página con error sanitizado antes de upsert de staging o avance de cursor. El control inicial de #195 aceptaba tamaños menores al solicitado aunque el importador seguía consultando con su tamaño fijo; el PR posterior de consistencia cierra esa brecha.
+
+La regla inicial está cubierta por fixtures sintéticos en [PR #195](https://github.com/devdamig-dev/thesistema/pull/195), integrado a main (`86d02e10`) con [Quality #41835366420](https://github.com/devdamig-dev/thesistema/actions/runs/41835366420) verde (verify/Playwright, PostgreSQL 17 y PostgREST), [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/2WT9buSBnxLRFVMKvh4auiis9VJe) y alias `gastropilot.nexodg.com` confirmado. No se validó con Fudo real.
+
+### Página no terminal más corta que lo solicitado (PR #357; fusionado)
+
+Un enlace `links.next` numéricamente correcto **no garantiza que Fudo haya respetado** el `page[size]` solicitado. Ejemplo: GastroPilot pide 100 registros, el proveedor limita a 20 y emite `page[number]=2`; al reconstruir el próximo GET con tamaño 100, pueden omitirse registros entre páginas. Incluso si el enlace informa `page[size]=100`, el cuerpo sólo demuestra que llegaron 20 filas.
+
+Por seguridad, la importación O1 publicada por [PR #357](https://github.com/devdamig-dev/thesistema/pull/357) rechaza antes de staging/cursor cualquier página con `links.next` no nulo cuyo número de registros sea **menor** que el `page[size]` solicitado. El resultado es un error sanitizado y no una supuesta sincronización completa. Una página llena con continuación numérica compatible sigue permitida. Si una página no vacía indica `links.next: null`, incluso con exactamente 100 registros, el adaptador actual exige confirmar mediante GET que N+1 esté vacía y sin continuación antes de persistir o cerrar el cursor (#396 y #398). Si el proveedor realmente usa un tamaño máximo menor, se necesita negociar y persistir el **tamaño efectivo de página por recurso/negocio/ciclo** antes de retomar. No modificar silenciosamente el tamaño durante el ciclo ni asumir compatibilidad hasta una prueba real.
+
+**Estado (14/11/2026):** [PR #357](https://github.com/devdamig-dev/thesistema/pull/357) fusionado (`7ae3b77d`); [Quality #43549622184](https://github.com/devdamig-dev/thesistema/actions/runs/43549622184) exitoso en `verify`, `postgres17` y `postgrest` (3/3) sobre el HEAD del PR; [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/3Nc5XcDHMZKGHjPVq75MxsQapEUG) verificado en SHA exacto de main, alias `gastropilot.nexodg.com`. Sin DDL ni escrituras a Fudo. **NO VALIDADO EN PRODUCCIÓN** con cuenta real: O1 permanece NO-GO; falta piloto Fudo Pro/API, conciliación, doble sync y QA A/B.
+
+### Consistencia de `page[size]` entre páginas (PR #196; publicado)
+
+El adaptador solicita un tamaño fijo de 100 para la sincronización y 1 para el test y el diagnóstico. No basta con que el `page[size]` de `links.next` sea numérico y menor que 100: si ese tamaño es distinto al solicitado, la siguiente petición con el tamaño fijo podría saltear registros o afirmar una importación completa falsa. El parser lo rechaza **antes de persistir la página o el cursor**, comparándolo con el tamaño realmente solicitado en cada flujo. El error es sanitizado y no incluye el enlace.
+
+Esto es conservador: si Fudo limita el tamaño efectivo y devuelve un enlace con tamaño menor al solicitado, la sincronización quedará bloqueada para ese recurso hasta implementar, persistir y probar un tamaño efectivo estable por ciclo y por `business_id`. No normalizar ni aceptar silenciosamente hints de tamaño contradictorio. Pruebas sintéticas positivas/negativas [PR #196](https://github.com/devdamig-dev/thesistema/pull/196): [Quality #41844046177](https://github.com/devdamig-dev/thesistema/actions/runs/41844046177) completo/success (verify/Playwright, PostgreSQL 17, PostgREST). [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/BAMjbbg9xnm494XNTEZQkkDCXXqR) para commit `f1d66ba1`, con alias `gastropilot.nexodg.com` comprobado. **Proveedor Fudo real, sesión autenticada y conciliación E2E pendientes.**
+
+No afirmar compatibilidad real hasta importar una cuenta autorizada; si Fudo emite parámetros legítimos adicionales, extender expresamente el adaptador y sus pruebas.
+
+
+### Tamaño efectivamente devuelto por Fudo (PR #198; publicado)
+
+El test de conexión y el diagnóstico read-only solicitan `page[size]=1`. Una respuesta HTTP 200 con **más registros que los solicitados**, aunque contenga `links.next: null`, incumple el contrato del probe: la conexión **no se debe acreditar como utilizable**. El mismo control se aplica al proceso de sincronización con tamaño 100; `nextFudoPage` rechaza la página antes de persistir staging o cursor. Los errores son fijos/sanitizados; ni las credenciales ni el payload del proveedor se incorporan al resultado del diagnóstico.
+
+La regresión utiliza exclusivamente datos sintéticos. [PR #198](https://github.com/devdamig-dev/thesistema/pull/198) integrado a main (squash `3f8716ac0e07876415cc47e16a48ad12c4460c34`); [Quality #41864719700](https://github.com/devdamig-dev/thesistema/actions/runs/41864719700) `completed/success` (verify con Playwright, postgres17 y postgrest); [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/9W92bJ7L9AT248nTzx135nvU6d3T) para ese commit, alias `gastropilot.nexodg.com` confirmado. **No probado aún con la API de un cliente real**: la activación del piloto depende de autorización, cinco recursos, conciliación y pruebas con sesiones de dos negocios. Sin migraciones SQL ni escrituras hacia Fudo.
+
+### Continuación vinculada al recurso (CI y despliegue publicados; piloto real pendiente)
+
+Los enlaces `links.next` de un recurso solo pueden apuntar a **ese mismo recurso**. Estar en `api.fu.do` no es suficiente: un enlace de productos a pedidos, aunque contenga la siguiente página numérica, se rechaza como `invalid_fudo_page` **antes de guardar staging o cursor**. El cliente sigue leyendo únicamente la URL fija del recurso solicitado; jamás sigue el enlace externo. La comprobación se aplica a conexión, preflight y sincronización. Soporta rutas `/v1alpha1/<recurso>` o `/<recurso>` (y continuaciones relativas `?page[number]=N`). Otros formatos deben evaluarse con una cuenta real y un cambio de adaptador explícito, sin desactivar el modo fail-closed.
+
+Estado a 04/11/2026: [PR #192](https://github.com/devdamig-dev/thesistema/pull/192) fusionado a main (`93bb5269`) y [Quality #41816442684](https://github.com/devdamig-dev/thesistema/actions/runs/41816442684) `completed/success`. El intento directo de publicar #192 fue bloqueado temporalmente por la cuota gratuita de Vercel (HTTP 402), **pero la versión final que incorpora el cambio ya se encuentra en producción**: [PR #193](https://github.com/devdamig-dev/thesistema/pull/193) integrado (`29f6dded`), [Quality #41825488817](https://github.com/devdamig-dev/thesistema/actions/runs/41825488817) verde (verify con Playwright, PostgreSQL 17 y PostgREST) y [Vercel Production](https://vercel.com/damians-projects-a45d01bf/thesistema/D7L1RqtXkEBPX8FfoR92ENm47FQ8) `READY` con alias `gastropilot.nexodg.com` confirmado. #193 estabilizó además el test AES-GCM modificando un byte real del tag, en lugar de caracteres finales de base64url que podrían no modificar los bytes. No se cambiaron las funciones criptográficas, esquema, secretos ni datos operativos. **VALIDADO CON FUDO REAL: NO**: aún faltan sesión autenticada, cuenta autorizada, sincronización de cinco recursos, conciliación y aislamiento multiempresa E2E.
+
 
 
 ## O1 — Diagnóstico de permisos previo al piloto (03/11/2026)
@@ -87,3 +158,27 @@ La tabla de staging conserva IDs vistos en importaciones anteriores. Un nuevo es
 - Rollback: revert de la app; conservar columna nullable e índice hasta una migración de rollback separada y revisada. No efectuar cambios sobre datos de cliente durante el rollback.
 
 Estado: **IMPLEMENTADO / PROBADO EN CI / DESPLEGADO EN PRODUCCIÓN / FUDO REAL NO VALIDADO**. PR [#181](https://github.com/devdamig-dev/thesistema/pull/181); [Quality](https://github.com/devdamig-dev/thesistema/actions/runs/41758111534) y [Vercel READY](https://vercel.com/damians-projects-a45d01bf/thesistema/DgsjpVyP9amJ2FZtiZa4XRuJa7BA). Ver issue O1 [#180](https://github.com/devdamig-dev/thesistema/issues/180).
+
+## O1 — Protección del reporte ante rotación concurrente (publicada; 04/11/2026)
+
+Un segundo owner/admin puede rotar o desconectar Fudo mientras se consultan el historial y los conteos de staging. Una lectura inicial de `connection_generation` no basta para garantizar que el resumen mostrado corresponde a la conexión todavía vigente.
+
+El resumen revalida `business_id + connection_generation` al terminar las consultas de agregados. Si cambió la generación, desapareció la conexión o falló la revalidación, devuelve un estado no verificable en lugar de presentar historial de credenciales anteriores como actual. No consulta ciphertext en la revalidación, no altera datos, no invoca Fudo y conserva el alcance owner/admin.
+
+Pruebas sintéticas agregadas: rotación y desconexión durante la lectura de cursores, además de los casos existentes de datos del tenant y generación actual. Estado: **IMPLEMENTADO / PROBADO EN CI / DESPLEGADO / NO VALIDADO CON FUDO REAL**. [PR #184](https://github.com/devdamig-dev/thesistema/pull/184) integrado a main `04d212edaeb6118d511870248e01d90b65d1265a`; [Quality](https://github.com/devdamig-dev/thesistema/actions/runs/41771404982) completo en verde (verify, PostgreSQL 17 y PostgREST), [Vercel Production](https://vercel.com/damians-projects-a45d01bf/thesistema/6uzLDUNh4vgwf3Hsh47hCQCpLTGc) READY con alias `gastropilot.nexodg.com`. Sin migración, sin escrituras hacia Fudo. Sigue pendiente la cuenta autorizada y la conciliación E2E.
+
+
+## O1 — Estado consistente durante retest y sincronización simultáneos (en revisión, 04/11/2026)
+
+`connection_generation` cambia al rotar/desconectar credenciales, pero **no** necesariamente cuando otro administrador vuelve a probar la misma conexión o una importación actualiza su estado. Por eso, un resumen iniciado antes de esas operaciones podría mostrar una conexión validada o una tanda completada que ya no corresponde al estado actual.
+
+El servidor toma una instantánea de metadatos (generación, estado, último test, último sync, estado y código de error) y los vuelve a consultar al terminar los agregados. **Si hay diferencias, devuelve resumen no verificable**, sin exponer secretos ni consultar ciphertext nuevamente. La UI deberá refrescar el estado; nunca deducir aprobación de piloto de un resultado obsoleto. Regresiones con fixtures de retest, conexión en error y fallo de sync, todos dentro de la misma generación. Sin cambios SQL, payloads ni escrituras hacia Fudo. Validación real con dos sesiones autenticadas aún pendiente.
+
+
+## O1 — Release de guardias transaccionales Fudo (06/11/2026)
+
+[PR #246](https://github.com/devdamig-dev/thesistema/pull/246) aplica controles del negocio/actor dentro de las RPC de alta/rotación, desconexión e inicio de lectura. El actor se deriva de la sesión del backend (no de un campo enviado por el navegador) y la función SQL vuelve a comprobar membresía owner/admin y perfil activo con locks hasta el commit. El resultado de autorización negada es `forbidden`, sin secretos. La firma antigua de desconexión (solo `business_id`) se retiró para no permitir bypass desde código privilegiado obsoleto.
+
+**Rollout comprobado:** Quality [#42286247994](https://github.com/devdamig-dev/thesistema/actions/runs/42286247994) verde (verify, PostgreSQL 17, PostgREST); migración `fudo_lifecycle_membership_guard` aplicada en Supabase de GastroPilot antes de fusionar. La inspección SQL de lectura posterior comprobó firma nueva, denegación de `anon`/`authenticated`, permiso exclusivo `service_role` y 0 conexiones/run/staging/cursores. [Vercel Production READY](https://vercel.com/damians-projects-a45d01bf/thesistema/7ynT4KkGeCnk4JZuwJMDBEeDZqfp) para `0ad0f578a6c2bd2a8bacc0e3ac1d1213e21160fd`, con alias del dominio productivo. La publicación puede provocar incompatibilidad transitoria de desconexión en servidores previos al release, pero no había conexiones Fudo al aplicar la migración; no se efectuó ninguna operación sobre datos comerciales.
+
+**Límites del piloto:** no existe prueba end-to-end con sesión de negocio, credenciales Fudo reales ni conciliación. El lock cubre las tres RPC de lifecycle; aún deben revisarse el retest y la persistencia de staging/cursores por `service_role` mientras un run está activo ante revocación de rol. Requerir QA autenticado entre empresas A/B y una cuenta Plan Pro/API habilitada antes de pasar de NO-GO a GO. Rollback: volver al frontend anterior no revierte el contrato de desconexión; restaurarlo requiere migración de compatibilidad revisada, sin reabrir una función insegura de un solo argumento.

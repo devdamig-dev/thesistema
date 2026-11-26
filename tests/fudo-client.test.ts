@@ -40,6 +40,134 @@ test("Fudo client authenticates with apiKey/apiSecret and sends bearer token onl
   assert.doesNotMatch(JSON.stringify(calls[1]), /secret-value|key-value/);
 });
 
+test("Fudo test and five-resource diagnostics reject a bare array HTTP 200", async () => {
+  let requests = 0;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return jsonResponse({ token: "synthetic-bearer", exp: 2_000_000_000 });
+    }
+    assert.equal(init?.method, "GET");
+    requests++;
+    return jsonResponse([{ id: "private-product" }]);
+  };
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    { fetchImpl: fakeFetch, now: () => 1_800_000_000_000 },
+  );
+  await assert.rejects(() => client.testConnection(), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.equal(error.message, "invalid_fudo_page");
+    assert.doesNotMatch(error.message, /private-product|synthetic-/);
+    return true;
+  });
+  assert.deepEqual(await client.probeReadAccess(["products"]), [
+    { resource: "products", code: "invalid_response" },
+  ]);
+  assert.equal(requests, 2);
+});
+
+test("Fudo missing exp reuses one short-lived bearer for all five read-only probes", async () => {
+  let now = 1_800_000_000_000;
+  let authCalls = 0;
+  let reads = 0;
+  const methods: string[] = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      authCalls++;
+      assert.equal(init?.method, "POST");
+      return jsonResponse({ token: `short-lease-${authCalls}` }); // No exp supplied.
+    }
+    methods.push(String(init?.method));
+    assert.equal(new Headers(init?.headers).get("authorization"), `Bearer short-lease-${authCalls}`);
+    reads++;
+    return jsonResponse({ data: [], links: { next: null } });
+  };
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+  const resources = ["products", "ingredients", "providers", "orders", "sales"] as const;
+  const results = await client.probeReadAccess(resources);
+  assert.deepEqual(results, resources.map((resource) => ({ resource, code: "available" })));
+  assert.equal(authCalls, 1, "missing exp must not cause per-resource reauthentication");
+  await client.testConnection();
+  assert.equal(authCalls, 1, "sequential reads must share the bounded token lease");
+  assert.equal(reads, 6);
+  // With five-minute skew, the conservative ten-minute lease forces refresh
+  // after six minutes, never treating an unknown expiry as indefinite.
+  now += 6 * 60 * 1000;
+  await client.testConnection();
+  assert.equal(authCalls, 2);
+  assert.equal(reads, 7);
+  assert.ok(methods.every((method) => method === "GET"));
+  assert.doesNotMatch(JSON.stringify(results), /synthetic-|short-lease-/);
+});
+
+test("Fudo rejects malformed or expired explicit auth expiry without any resource GET", async () => {
+  const now = 1_800_000_000_000;
+  for (const exp of [
+    null, false, "", "not-a-timestamp", 0, -1, Math.floor((now - 1000) / 1000),
+    // Before this guard, Number(veryLongString) became Infinity and Math.min
+    // silently granted a 24h bearer lease despite malformed explicit expiry.
+    "9".repeat(400), "9007199254740993", Number.MAX_SAFE_INTEGER + 1,
+    1.25, 9_000_000_000_000_000, 
+  ]) {
+    let authCalls = 0;
+    let reads = 0;
+    const fakeFetch: typeof fetch = async (input) => {
+      if (String(input) === "https://auth.fu.do/api") {
+        authCalls++;
+        return jsonResponse({ token: "synthetic-expiry-bearer", exp });
+      }
+      reads++;
+      return jsonResponse({ data: [] });
+    };
+    const client = new FudoClient(
+      { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+      { fetchImpl: fakeFetch, now: () => now },
+    );
+    await assert.rejects(() => client.testConnection(), (error: unknown) => {
+      assert.ok(error instanceof FudoApiError);
+      assert.equal(error.code, "invalid_response");
+      assert.equal(error.retryable, false);
+      assert.doesNotMatch(error.message, /synthetic-|bearer|not-a-timestamp/i);
+      return true;
+    });
+    assert.equal(authCalls, 1);
+    assert.equal(reads, 0, "a stale or malformed explicit expiry cannot authorize GET");
+  }
+});
+
+test("Fudo accepts exact string expirations in seconds or milliseconds", async () => {
+  const now = 1_800_000_000_000;
+  for (const exp of [
+    String(Math.floor((now + 86_400_000) / 1000)),
+    String(now + 86_400_000),
+  ]) {
+    let authCalls = 0;
+    let reads = 0;
+    const fakeFetch: typeof fetch = async (input, init) => {
+      if (String(input) === "https://auth.fu.do/api") {
+        authCalls++;
+        return jsonResponse({ token: "synthetic-valid-bearer", exp });
+      }
+      assert.equal(init?.method, "GET");
+      assert.equal(new Headers(init?.headers).get("authorization"), "Bearer synthetic-valid-bearer");
+      reads++;
+      return jsonResponse({ data: [] });
+    };
+    const client = new FudoClient(
+      { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+      { fetchImpl: fakeFetch, now: () => now },
+    );
+    await client.products();
+    await client.products();
+    assert.equal(authCalls, 1, "valid explicit expiry should cache the bearer");
+    assert.equal(reads, 2);
+  }
+});
+
 test("Fudo client refreshes once after a 401 and retries the same read", async () => {
   let authCount = 0;
   let apiCount = 0;
@@ -94,6 +222,71 @@ test("Fudo errors remain sanitized and distinguish permission failures", async (
       return true;
     },
   );
+});
+
+test("Fudo auth rejects JSON null, arrays and primitives as sanitized invalid responses", async () => {
+  const invalidPayloads = [null, [], "not-an-object", false, 42, { token: null }];
+  for (const payload of invalidPayloads) {
+    let authRequests = 0;
+    let apiReads = 0;
+    const fakeFetch: typeof fetch = async (input, init) => {
+      assert.equal(init?.redirect, "error");
+      if (String(input) === "https://auth.fu.do/api") {
+        authRequests++;
+        return jsonResponse(payload);
+      }
+      apiReads++;
+      return jsonResponse({ data: [{ id: "never-read" }] });
+    };
+    const client = new FudoClient(
+      { apiKey: "private-key", apiSecret: "private-secret" },
+      { fetchImpl: fakeFetch },
+    );
+    await assert.rejects(() => client.testConnection(), (error: unknown) => {
+      assert.ok(error instanceof FudoApiError);
+      assert.equal(error.code, "invalid_response");
+      assert.equal(error.retryable, false);
+      assert.doesNotMatch(error.message, /private-key|private-secret|not-an-object/);
+      return true;
+    }, JSON.stringify(payload));
+    assert.equal(authRequests, 1);
+    assert.equal(apiReads, 0, "invalid auth must never trigger a resource GET");
+  }
+});
+
+test("Fudo rejects malformed bearer strings before sending any resource GET", async () => {
+  const malformedTokens = [
+    " ", "\r\ninjected", "token\nunsafe", "token\tbad",
+    // Provider Unicode cannot be represented in an Authorization header;
+    // Latin-1 outside the bearer syntax must fail before any GET too.
+    "token-é", "token-😀", "token-\u2028unsafe", "a".repeat(8193),
+  ];
+  for (const token of malformedTokens) {
+    let authRequests = 0;
+    let apiReads = 0;
+    const fakeFetch: typeof fetch = async (input, init) => {
+      assert.equal(init?.redirect, "error");
+      if (String(input) === "https://auth.fu.do/api") {
+        authRequests++;
+        return jsonResponse({ token, exp: 2_000_000_000 });
+      }
+      apiReads++;
+      return jsonResponse({ data: [] });
+    };
+    const client = new FudoClient(
+      { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+      { fetchImpl: fakeFetch },
+    );
+    await assert.rejects(() => client.testConnection(), (error: unknown) => {
+      assert.ok(error instanceof FudoApiError);
+      assert.equal(error.code, "invalid_response");
+      assert.equal(error.retryable, false);
+      assert.doesNotMatch(error.message, /injected|unsafe|synthetic-/);
+      return true;
+    });
+    assert.equal(authRequests, 1);
+    assert.equal(apiReads, 0, "invalid bearer must never be forwarded to a GET");
+  }
 });
 
 test("Fudo foundation exposes only GET/list helpers and no mutation methods", () => {
@@ -219,7 +412,7 @@ test("Fudo connection probe accepts compatible empty and one-record JSON:API pag
 });
 
 
-test("Fudo five concurrent probes share one refresh after an expired bearer", async () => {
+test("Fudo bounded probes share one refresh after an expired bearer", async () => {
   const now = 1_800_000_000_000;
   const resources = ["products", "ingredients", "providers", "orders", "sales"] as const;
   let authCount = 0;
@@ -241,8 +434,8 @@ test("Fudo five concurrent probes share one refresh after an expired bearer", as
     const bearer = new Headers(init?.headers).get("authorization");
     if (bearer === "Bearer bearer-1") {
       oldBearerReads++;
-      if (oldBearerReads === resources.length) releaseOldReads();
-      // All first requests reach Fudo before the revoked token is rejected.
+      if (oldBearerReads === 3) releaseOldReads();
+      // All three first-wave requests reach Fudo before the revoked token is rejected.
       await allOldReads;
       return jsonResponse({ error: "revoked (must not leak)" }, 401);
     }
@@ -258,9 +451,107 @@ test("Fudo five concurrent probes share one refresh after an expired bearer", as
   const checks = await client.probeReadAccess(resources);
   assert.deepEqual(checks, resources.map((resource) => ({ resource, code: "available" })));
   assert.equal(authCount, 2, "initial authentication plus ONE coalesced refresh");
-  assert.equal(oldBearerReads, 5);
-  assert.equal(newBearerReads, 5);
+  assert.equal(oldBearerReads, 3, "only the first bounded wave uses the expired token");
+  assert.equal(newBearerReads, 5, "each resource is retried/read with the refreshed token");
   assert.doesNotMatch(JSON.stringify(checks), /private-test|bearer|revoked/i);
+});
+
+test("Fudo never sends Bearer null when a concurrent 401 clears the cached token after its auth check", async () => {
+  const now = 1_800_000_000_000;
+  const headers: string[] = [];
+  let authCalls = 0;
+  let invalidateDuringNextCheck = false;
+  let client: FudoClient;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      authCalls++;
+      return jsonResponse({ token: `bearer-${authCalls}`, exp: Math.floor((now + 86_400_000) / 1000) });
+    }
+    assert.equal(init?.method, "GET");
+    const authorization = new Headers(init?.headers).get("authorization") ?? "";
+    headers.push(authorization);
+    assert.match(authorization, /^Bearer bearer-\d+$/, "no GET may use an invalidated cache entry");
+    return jsonResponse({ data: [] });
+  };
+  client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    {
+      fetchImpl: fakeFetch,
+      now: () => {
+        if (invalidateDuringNextCheck) {
+          invalidateDuringNextCheck = false;
+          // Simulate the cache mutation performed when another in-flight GET
+          // receives HTTP 401. The queued microtask runs after the synchronous
+          // auth check but before getJson resumes from its await.
+          queueMicrotask(() => {
+            const shared = client as unknown as { token: string | null; tokenExpiresAt: number };
+            shared.token = null;
+            shared.tokenExpiresAt = 0;
+          });
+        }
+        return now;
+      },
+    },
+  );
+
+  await client.products();
+  invalidateDuringNextCheck = true;
+  await client.products();
+  // This GET was authorized against bearer-1 before cache invalidation.
+  // It must not send "Bearer null" simply because a concurrent GET got 401.
+  assert.deepEqual(headers, ["Bearer bearer-1", "Bearer bearer-1"]);
+  await client.products();
+  assert.deepEqual(headers, ["Bearer bearer-1", "Bearer bearer-1", "Bearer bearer-2"]);
+  assert.equal(authCalls, 2, "a later request renews the invalidated cache");
+});
+
+test("Fudo read-permission diagnostics cap concurrent GETs at three and retain every resource outcome", async () => {
+  const resources = ["products", "ingredients", "providers", "orders", "sales"] as const;
+  const now = 1_800_000_000_000;
+  let active = 0;
+  let peak = 0;
+  let issued = 0;
+  let authCount = 0;
+  let releaseFirstWave: () => void = () => {};
+  let firstWaveStarted: () => void = () => {};
+  const holdFirstWave = new Promise<void>((resolve) => { releaseFirstWave = resolve; });
+  const firstWave = new Promise<void>((resolve) => { firstWaveStarted = resolve; });
+
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      authCount++;
+      return jsonResponse({ token: "private-probe-bearer", exp: Math.floor((now + 86400000) / 1000) });
+    }
+    assert.equal(init?.method, "GET", "permission check must remain read-only");
+    active++;
+    peak = Math.max(active, peak);
+    issued++;
+    if (issued === 3) firstWaveStarted();
+    if (issued <= 3) await holdFirstWave;
+    active--;
+    const resource = new URL(String(input)).pathname.split("/").at(-1);
+    return resource === "providers"
+      ? jsonResponse({ provider: "sensitive" }, 403)
+      : jsonResponse({ data: [], links: { next: null } });
+  };
+
+  const client = new FudoClient(
+    { apiKey: "private-probe-key", apiSecret: "private-probe-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+  const pending = client.probeReadAccess(resources);
+  await firstWave;
+  assert.equal(issued, 3, "remaining two resource GETs must not start while the first three are blocked");
+  assert.equal(peak, 3);
+  releaseFirstWave();
+  const results = await pending;
+  assert.equal(authCount, 1);
+  assert.equal(issued, 5, "a denied resource must not suppress the remaining diagnostic checks");
+  assert.equal(peak, 3);
+  assert.deepEqual(results, resources.map((resource) => ({
+    resource, code: resource === "providers" ? "forbidden" : "available",
+  })));
+  assert.doesNotMatch(JSON.stringify(results), /private|sensitive|bearer|secret/i);
 });
 
 test("Fudo failed auth single-flight is cleared so a later read can retry", async () => {
@@ -287,4 +578,759 @@ test("Fudo failed auth single-flight is cleared so a later read can retry", asyn
   });
   assert.deepEqual(await client.products(), { data: [] });
   assert.equal(authCount, 2);
+});
+
+test("Fudo connection and readiness probes reject malformed first-page pagination", async () => {
+  const methods: string[] = [];
+  let authCalls = 0;
+  const now = 1_800_000_000_000;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url === "https://auth.fu.do/api") {
+      authCalls++;
+      return jsonResponse({ token: "private-bearer", exp: Math.floor((now + 86400000) / 1000) });
+    }
+    methods.push(String(init?.method));
+    if (new URL(url).pathname.endsWith("/products")) {
+      // Valid record body, invalid JSON:API links. A green connection or
+      // preflight would be misleading because the full import must fail.
+      return jsonResponse({ data: [{ id: "sensitive-product" }], links: { next: true } });
+    }
+    return jsonResponse({ data: [], links: { next: null } });
+  };
+  const client = new FudoClient(
+    { apiKey: "private-key", apiSecret: "private-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+
+  await assert.rejects(() => client.testConnection(), /invalid_fudo_page/);
+  const checks = await client.probeReadAccess(["products", "ingredients"]);
+  assert.deepEqual(checks, [
+    { resource: "products", code: "invalid_response" },
+    { resource: "ingredients", code: "available" },
+  ]);
+  assert.equal(authCalls, 1);
+  assert.deepEqual(methods, ["GET", "GET", "GET"]);
+  assert.doesNotMatch(JSON.stringify(checks), /private|sensitive-product|bearer/);
+});
+
+test("Fudo preflight rejects a same-origin next link for another resource", async () => {
+  const methods: string[] = [];
+  const now = 1_800_000_000_000;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      return jsonResponse({ token: "synthetic-bearer", exp: Math.floor((now + 86400000) / 1000) });
+    }
+    methods.push(String(init?.method));
+    const resource = new URL(String(input)).pathname.split("/").at(-1);
+    if (resource === "products") {
+      return jsonResponse({ data: [{ id: "private-product" }],
+        links: { next: "/v1alpha1/orders?page[number]=2" } });
+    }
+    return jsonResponse({ data: [{ id: "private-ingredient" }],
+      links: { next: "/v1alpha1/ingredients?page[number]=2" } });
+  };
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+  await assert.rejects(() => client.testConnection(), /invalid_fudo_page/);
+  const checks = await client.probeReadAccess(["products", "ingredients"]);
+  assert.deepEqual(checks, [
+    { resource: "products", code: "invalid_response" },
+    { resource: "ingredients", code: "available" },
+  ]);
+  assert.deepEqual(methods, ["GET", "GET", "GET"]);
+  assert.doesNotMatch(JSON.stringify(checks), /private-|synthetic-|bearer|secret/);
+});
+
+test("Fudo connection and permission probes reject overfilled HTTP 200 pages without exposing provider records", async () => {
+  const methods: string[] = [];
+  const now = 1_800_000_000_000;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      return jsonResponse({ token: "private-probe-token", exp: Math.floor((now + 86_400_000) / 1000) });
+    }
+    methods.push(String(init?.method));
+    assert.equal(new URL(String(input)).searchParams.get("page[size]"), "1");
+    // The response is syntactically JSON:API, but ignores the requested page size.
+    return jsonResponse({ data: [
+      { id: "private-A", attributes: { name: "do-not-leak-A" } },
+      { id: "private-B", attributes: { name: "do-not-leak-B" } },
+    ], links: { next: null } });
+  };
+  const client = new FudoClient(
+    { apiKey: "synthetic-probe-key", apiSecret: "synthetic-probe-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+  await assert.rejects(() => client.testConnection(), /invalid_fudo_page/);
+  const checks = await client.probeReadAccess(["products", "sales"]);
+  assert.deepEqual(checks, [
+    { resource: "products", code: "invalid_response" },
+    { resource: "sales", code: "invalid_response" },
+  ]);
+  assert.deepEqual(methods, ["GET", "GET", "GET"]);
+  assert.doesNotMatch(JSON.stringify(checks), /private-|synthetic-|do-not-leak|token|secret/);
+});
+
+
+test("Fudo rejects an oversized authentication JSON response before any provider read", async () => {
+  let authCalls = 0;
+  let readCalls = 0;
+  let authBodyCancelled = false;
+  const fakeFetch: typeof fetch = async (input) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      authCalls++;
+      // A malicious/misconfigured upstream can advertise a huge body.
+      // The body must be cancelled, not just left unread until fetch timeout.
+      const untrustedBody = new ReadableStream<Uint8Array>({
+        cancel() { authBodyCancelled = true; },
+      });
+      return new Response(untrustedBody, {
+        headers: { "content-length": String(64 * 1024 + 1) },
+      });
+    }
+    readCalls++;
+    return jsonResponse({ data: [] });
+  };
+  const client = new FudoClient(
+    { apiKey: "private-test-key", apiSecret: "private-test-secret" },
+    { fetchImpl: fakeFetch },
+  );
+  await assert.rejects(() => client.testConnection(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "invalid_response");
+    assert.doesNotMatch(error.message, /private-test|not-forwarded|content-length/i);
+    return true;
+  });
+  assert.equal(authCalls, 1);
+  assert.equal(authBodyCancelled, true, "oversized header must cancel the response body");
+  assert.equal(readCalls, 0);
+});
+
+test("Fudo aborts a streamed 100-record GET larger than its safe JSON bound even with a false short content-length", async () => {
+  const chunk = new Uint8Array(1024 * 1024).fill(65);
+  let readCalls = 0;
+  let emitted = 0;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      return jsonResponse({ token: "synthetic-only", exp: 2_000_000_000 });
+    }
+    readCalls++;
+    assert.equal(init?.method, "GET");
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(chunk);
+        emitted++;
+        if (emitted >= 17) controller.close();
+      },
+    });
+    return new Response(stream, { headers: { "content-length": "1" } });
+  };
+  const client = new FudoClient(
+    { apiKey: "private-test-key", apiSecret: "private-test-secret" },
+    { fetchImpl: fakeFetch, now: () => 1_800_000_000_000 },
+  );
+  await assert.rejects(() => client.products({ "page[size]": 100 }), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "invalid_response");
+    assert.doesNotMatch(error.message, /private-test|synthetic-only|AAAAAA/i);
+    return true;
+  });
+  assert.equal(readCalls, 1, "never follow additional resource pages after an oversized body");
+  assert.equal(emitted, 17, "stop immediately when the 16 MiB cap is exceeded");
+});
+
+
+test("Fudo one-record connection and permission probes reject oversized responses before buffering import-sized payloads", async () => {
+  const now = 1_800_000_000_000;
+  let apiReads = 0;
+  let headerCanceled = false;
+  let streamCanceled = false;
+  let chunksEmitted = 0;
+  const chunk = new Uint8Array(512 * 1024).fill(65);
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return jsonResponse({ token: "synthetic-probe-bearer", exp: 2_000_000_000 });
+    }
+    apiReads++;
+    assert.equal(init?.method, "GET");
+    assert.equal(new URL(String(input)).searchParams.get("page[size]"), "1");
+    if (apiReads === 1) {
+      // Rejected without reading an oversized advertised body.
+      return new Response(new ReadableStream<Uint8Array>({
+        cancel() { headerCanceled = true; },
+      }), { headers: { "content-length": String(1024 * 1024 + 1) } });
+    }
+    // A lying Content-Length must not bypass the streaming budget either.
+    return new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(chunk);
+        chunksEmitted++;
+        if (chunksEmitted === 5) controller.close();
+      },
+      cancel() { streamCanceled = true; },
+    }), { headers: { "content-length": "1" } });
+  };
+  const client = new FudoClient(
+    { apiKey: "synthetic-probe-key", apiSecret: "synthetic-probe-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+  await assert.rejects(() => client.testConnection(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "invalid_response");
+    assert.doesNotMatch(error.message, /synthetic-|probe-bearer|AAAAA/i);
+    return true;
+  });
+  assert.equal(headerCanceled, true, "oversized probe must cancel the header-rejected body");
+  const checks = await client.probeReadAccess(["products"]);
+  assert.deepEqual(checks, [{ resource: "products", code: "invalid_response" }]);
+  assert.equal(streamCanceled, true, "oversized stream must be canceled");
+  assert.ok(chunksEmitted < 5, "one-item probes must stop far below the 16 MiB import budget");
+  assert.equal(apiReads, 2);
+  assert.doesNotMatch(JSON.stringify(checks), /synthetic-|probe-bearer/i);
+});
+
+
+test("Fudo cancels unread error bodies for rejected auth and forbidden resource reads", async () => {
+  const now = 1_800_000_000_000;
+  for (const scenario of ["auth-401", "read-403"] as const) {
+    let canceled = false;
+    let authCalls = 0;
+    let readCalls = 0;
+    const rejectedResponse = (status: number) => new Response(
+      new ReadableStream<Uint8Array>({
+        // Deliberately never close: an error page must not be left streaming.
+        cancel() { canceled = true; },
+      }),
+      { status },
+    );
+    const fakeFetch: typeof fetch = async (input, init) => {
+      if (String(input) === "https://auth.fu.do/api") {
+        authCalls++;
+        assert.equal(init?.method, "POST");
+        return scenario === "auth-401"
+          ? rejectedResponse(401)
+          : jsonResponse({ token: "synthetic-lease", exp: 2_000_000_000 });
+      }
+      readCalls++;
+      assert.equal(init?.method, "GET");
+      return rejectedResponse(403);
+    };
+    const client = new FudoClient(
+      { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+      { fetchImpl: fakeFetch, now: () => now },
+    );
+    await assert.rejects(() => client.products(), (error: unknown) => {
+      assert.ok(error instanceof FudoApiError);
+      assert.equal(error.code, scenario === "auth-401" ? "invalid_credentials" : "forbidden");
+      assert.doesNotMatch(error.message, /synthetic-|lease|secret/i);
+      return true;
+    });
+    assert.equal(canceled, true, `${scenario} must cancel its unread response body`);
+    assert.equal(authCalls, 1);
+    assert.equal(readCalls, scenario === "auth-401" ? 0 : 1);
+  }
+});
+
+test("Fudo cancels a rejected 401 read body before refreshing and retrying", async () => {
+  const now = 1_800_000_000_000;
+  let canceled = false;
+  let authCalls = 0;
+  let apiCalls = 0;
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      authCalls++;
+      if (authCalls === 2) assert.equal(canceled, true, "release first HTTP 401 before reauthentication");
+      return jsonResponse({ token: `synthetic-bearer-${authCalls}`, exp: 2_000_000_000 });
+    }
+    apiCalls++;
+    assert.equal(init?.method, "GET");
+    assert.equal(new Headers(init?.headers).get("authorization"), `Bearer synthetic-bearer-${authCalls}`);
+    if (apiCalls === 1) {
+      return new Response(new ReadableStream<Uint8Array>({
+        cancel() { canceled = true; },
+      }), { status: 401 });
+    }
+    return jsonResponse({ data: [] });
+  };
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+  assert.deepEqual(await client.products(), { data: [] });
+  assert.equal(canceled, true);
+  assert.equal(authCalls, 2);
+  assert.equal(apiCalls, 2);
+});
+
+test("Fudo treats an interrupted auth JSON stream as a retryable transport failure without leaking upstream errors", async () => {
+  let apiReads = 0;
+  const interrupted = () => new Response(new ReadableStream<Uint8Array>({
+    pull(controller) { controller.error(new Error("synthetic-private-auth-stream")); },
+  }), { status: 200 });
+  const fakeFetch: typeof fetch = async (input) => {
+    if (String(input) === "https://auth.fu.do/api") return interrupted();
+    apiReads++;
+    return jsonResponse({ data: [] });
+  };
+  const client = new FudoClient({ apiKey: "synthetic-key", apiSecret: "synthetic-secret" }, { fetchImpl: fakeFetch });
+  await assert.rejects(client.products(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "provider_unavailable");
+    assert.equal(error.retryable, true);
+    assert.doesNotMatch(error.message, /synthetic-private-auth-stream|synthetic-secret/i);
+    return true;
+  });
+  assert.equal(apiReads, 0, "a failed auth body must never authorize a resource GET");
+});
+
+test("Fudo treats a broken HTTP 200 resource body as retryable, but retains invalid JSON as a contract error", async () => {
+  let resourceReads = 0;
+  const fakeFetch: typeof fetch = async (input) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      return jsonResponse({ token: "synthetic-bearer", exp: 2_000_000_000 });
+    }
+    resourceReads++;
+    if (resourceReads === 1) {
+      return new Response(new ReadableStream<Uint8Array>({
+        pull(controller) { controller.error(new Error("synthetic-private-resource-stream")); },
+      }), { status: 200 });
+    }
+    return new Response("{not-json", { status: 200 });
+  };
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    { fetchImpl: fakeFetch, now: () => 1_800_000_000_000 },
+  );
+  await assert.rejects(client.products(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "provider_unavailable");
+    assert.equal(error.retryable, true);
+    assert.doesNotMatch(error.message, /synthetic-private-resource-stream|synthetic-bearer/i);
+    return true;
+  });
+  await assert.rejects(client.products(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "invalid_response");
+    assert.equal(error.retryable, false);
+    return true;
+  });
+  assert.equal(resourceReads, 2);
+});
+
+
+test("Fudo connect and permission probe reject explicit wrong-resource records", async () => {
+  const verbs: string[] = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return jsonResponse({ token: "synthetic-bearer", exp: 2_000_000_000 });
+    }
+    verbs.push(String(init?.method));
+    return jsonResponse({ data: [{ id: "cross-resource", type: "Sale" }], links: { next: null } });
+  };
+  const client = new FudoClient({ apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    { fetchImpl: fakeFetch, now: () => 1_800_000_000_000 });
+  await assert.rejects(() => client.testConnection(), /invalid_fudo_record/);
+  const checks = await client.probeReadAccess(["products"]);
+  assert.deepEqual(checks, [{ resource: "products", code: "invalid_response" }]);
+  assert.deepEqual(verbs, ["GET", "GET"], "only provider reads; no write or redirect");
+  assert.doesNotMatch(JSON.stringify(checks), /synthetic-|cross-resource/);
+});
+
+
+test("Fudo HTTP 200 mixed JSON:API data/errors cannot pass connection or five-resource preflight", async () => {
+  const now = 1_800_000_000_000;
+  const methods: string[] = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      return jsonResponse({ token: "private-bearer", exp: Math.floor((now + 86_400_000) / 1000) });
+    }
+    methods.push(String(init?.method));
+    const resource = new URL(String(input)).pathname.split("/").at(-1);
+    if (resource === "products") return jsonResponse({
+      data: [{ id: "private-product", type: "Product" }],
+      errors: [{ detail: "secret-provider-error" }],
+      links: { next: null },
+    });
+    return jsonResponse({ data: [], links: { next: null } });
+  };
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    { fetchImpl: fakeFetch, now: () => now },
+  );
+  await assert.rejects(() => client.testConnection(), /invalid_fudo_page/);
+  const checks = await client.probeReadAccess(["products", "ingredients", "providers", "orders", "sales"]);
+  assert.deepEqual(checks, [
+    { resource: "products", code: "invalid_response" },
+    { resource: "ingredients", code: "available" },
+    { resource: "providers", code: "available" },
+    { resource: "orders", code: "available" },
+    { resource: "sales", code: "available" },
+  ]);
+  assert.equal(methods.length, 6);
+  assert.ok(methods.every((method) => method === "GET"));
+  assert.doesNotMatch(JSON.stringify(checks), /private-|synthetic-|secret-provider-error|bearer/i);
+});
+
+test("Fudo connection and five-resource preflight fail closed on malformed JSON:API attributes", async () => {
+  const methods: string[] = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    if (String(input) === "https://auth.fu.do/api") {
+      assert.equal(init?.method, "POST");
+      return jsonResponse({ token: "fixture-bearer", exp: Math.floor(Date.now() / 1000) + 86400 });
+    }
+    methods.push(String(init?.method));
+    const resource = new URL(String(input)).pathname.split("/").at(-1);
+    return jsonResponse({ data: [{
+      id: "fixture-1", type: resource === "products" ? "Product" : undefined,
+      attributes: resource === "products" ? [] : { name: "safe-fixture" },
+    }], links: { next: null } });
+  };
+  const client = new FudoClient(
+    { apiKey: "fixture-key", apiSecret: "fixture-secret" }, { fetchImpl: fakeFetch },
+  );
+  await assert.rejects(() => client.testConnection(), /invalid_fudo_record/);
+  const checks = await client.probeReadAccess(["products", "ingredients", "providers", "orders", "sales"]);
+  assert.equal(checks.find((check) => check.resource === "products")?.code, "invalid_response");
+  assert.ok(checks.filter((check) => check.code === "available").length === 4);
+  assert.ok(methods.length === 6 && methods.every((method) => method === "GET"));
+  assert.doesNotMatch(JSON.stringify(checks), /fixture-key|fixture-secret|fixture-bearer|safe-fixture/);
+});
+
+test("Fudo GET refuses duplicate JSON object keys without leaking amounts or parsing a lossy record", async () => {
+  const raw = '{"data":[{"id":"fixture","attributes":{"amount":10,"amount":20}}]}';
+  let reads = 0;
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    {
+      now: () => 1_700_000_000_000,
+      fetchImpl: async (input, init) => {
+        if (String(input) === "https://auth.fu.do/api") {
+          assert.equal(init?.method, "POST");
+          return jsonResponse({ token: "synthetic-bearer", exp: 2_000_000_000 });
+        }
+        assert.equal(init?.method, "GET");
+        reads++;
+        return new Response(raw, { status: 200 });
+      },
+    },
+  );
+  await assert.rejects(() => client.products(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "invalid_response");
+    assert.equal(error.retryable, false);
+    assert.doesNotMatch(error.message, /fixture|amount|synthetic-key|synthetic-secret/);
+    return true;
+  });
+  assert.equal(reads, 1);
+});
+
+test("Fudo auth rejects ambiguous duplicate token keys before sending any GET", async () => {
+  let reads = 0;
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    {
+      now: () => 1_700_000_000_000,
+      fetchImpl: async (input, init) => {
+        if (String(input) === "https://auth.fu.do/api") {
+          assert.equal(init?.method, "POST");
+          return new Response('{"token":"synthetic-a","token":"synthetic-b","exp":2000000000}', { status: 200 });
+        }
+        reads++;
+        return jsonResponse({ data: [] });
+      },
+    },
+  );
+  await assert.rejects(() => client.testConnection(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "invalid_response");
+    assert.doesNotMatch(error.message, /synthetic-a|synthetic-b|synthetic-secret/);
+    return true;
+  });
+  assert.equal(reads, 0, "ambiguous auth JSON must never authorize provider GET");
+});
+
+
+test("Fudo O1 never accepts partial or unexpected HTTP 2xx GETs as a successful read", async () => {
+  const now = 1_800_000_000_000;
+  // Fudo's JSON:API GET contract is 200; a 206 can contain valid-looking
+  // JSON while still omitting data. A green probe or cursor would be false.
+  for (const status of [201, 202, 206, 207]) {
+    let reads = 0;
+    let cancelled = 0;
+    let authentications = 0;
+    const fakeFetch: typeof fetch = async (input, init) => {
+      if (String(input) === "https://auth.fu.do/api") {
+        authentications++;
+        return jsonResponse({
+          token: "synthetic-bearer",
+          exp: Math.floor((now + 86_400_000) / 1000),
+        });
+      }
+      assert.equal(init?.method, "GET");
+      reads++;
+      // The provider may stream an arbitrary response. Rejection must cancel
+      // it rather than read/log/stage even a valid-looking JSON page.
+      return new Response(new ReadableStream<Uint8Array>({
+        cancel() { cancelled++; },
+      }), { status, headers: { "content-type": "application/json" } });
+    };
+    const client = new FudoClient(
+      { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+      { fetchImpl: fakeFetch, now: () => now },
+    );
+    await assert.rejects(() => client.testConnection(), (error: unknown) => {
+      assert.ok(error instanceof FudoApiError);
+      assert.equal(error.code, "invalid_response");
+      assert.equal(error.status, status);
+      assert.equal(error.retryable, false);
+      assert.doesNotMatch(error.message, /synthetic-|bearer/);
+      return true;
+    });
+    assert.deepEqual(await client.probeReadAccess(["products"]), [
+      { resource: "products", code: "invalid_response" },
+    ]);
+    await assert.rejects(() => client.products({ "page[size]": 100 }),
+      (error: unknown) => {
+        assert.ok(error instanceof FudoApiError);
+        assert.equal(error.code, "invalid_response");
+        return true;
+      });
+    assert.equal(authentications, 1);
+    assert.equal(reads, 3);
+    assert.equal(cancelled, 3, "every unexpected 2xx body must be cancelled");
+  }
+});
+
+
+test("Fudo O1 rejects partial and unexpected successful auth responses before any bearer GET", async () => {
+  const now = 1_800_000_000_000;
+  // A partial authentication response can still contain a valid token and
+  // expiry. It must not authorize a connection, preflight or import.
+  for (const status of [201, 202, 206, 207]) {
+    let authCalls = 0;
+    let reads = 0;
+    const client = new FudoClient(
+      { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+      {
+        now: () => now,
+        fetchImpl: async (input, init) => {
+          if (String(input) === "https://auth.fu.do/api") {
+            assert.equal(init?.method, "POST");
+            authCalls++;
+            return jsonResponse({
+              token: "synthetic-valid-looking-bearer",
+              exp: Math.floor((now + 86_400_000) / 1000),
+            }, status);
+          }
+          reads++;
+          return jsonResponse({ data: [] });
+        },
+      },
+    );
+    await assert.rejects(() => client.testConnection(), (error: unknown) => {
+      assert.ok(error instanceof FudoApiError);
+      assert.equal(error.code, "invalid_response");
+      assert.equal(error.status, status);
+      assert.equal(error.retryable, false);
+      assert.doesNotMatch(error.message, /synthetic-|bearer|token|secret/i);
+      return true;
+    });
+    assert.equal(authCalls, 1);
+    assert.equal(reads, 0, "unexpected auth status must never install a bearer");
+  }
+});
+
+test("Fudo O1 cancels unread authentication streams for HTTP 206", async () => {
+  let cancelled = 0;
+  let reads = 0;
+  const client = new FudoClient(
+    { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+    {
+      fetchImpl: async (input) => {
+        if (String(input) === "https://auth.fu.do/api") {
+          // An unbounded upstream stream must be cancelled immediately, not
+          // buffered until a JSON body arrives or a serverless timeout fires.
+          return new Response(new ReadableStream<Uint8Array>({
+            cancel() { cancelled++; },
+          }), { status: 206 });
+        }
+        reads++;
+        return jsonResponse({ data: [] });
+      },
+    },
+  );
+  await assert.rejects(() => client.products(), (error: unknown) => {
+    assert.ok(error instanceof FudoApiError);
+    assert.equal(error.code, "invalid_response");
+    assert.equal(error.status, 206);
+    return true;
+  });
+  assert.equal(cancelled, 1);
+  assert.equal(reads, 0);
+});
+
+test("Fudo HTTP 400/422 is a non-retryable contract error on GET and invalid credentials on auth", async () => {
+  const now = 1_800_000_000_000;
+  for (const phase of ["auth", "read"] as const) {
+    for (const status of [400, 422]) {
+      let authCalls = 0;
+      let readCalls = 0;
+      const fakeFetch: typeof fetch = async (input, init) => {
+        if (String(input) === "https://auth.fu.do/api") {
+          authCalls++;
+          assert.equal(init?.method, "POST");
+          return phase === "auth"
+            ? new Response("synthetic-private-auth-error", { status })
+            : jsonResponse({ token: "synthetic-bearer", exp: Math.floor((now + 86_400_000) / 1000) });
+        }
+        readCalls++;
+        assert.equal(init?.method, "GET");
+        return new Response("synthetic-private-read-error", { status });
+      };
+      const client = new FudoClient(
+        { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+        { fetchImpl: fakeFetch, now: () => now },
+      );
+      await assert.rejects(client.testConnection(), (error: unknown) => {
+        assert.ok(error instanceof FudoApiError);
+        assert.equal(error.code, phase === "auth" ? "invalid_credentials" : "invalid_response");
+        assert.equal(error.status, status);
+        assert.equal(error.retryable, false);
+        assert.doesNotMatch(error.message, /synthetic-private/i);
+        return true;
+      });
+      assert.equal(authCalls, 1, "never retry a rejected auth or GET request");
+      assert.equal(readCalls, phase === "auth" ? 0 : 1, "auth rejection must not issue a provider GET");
+    }
+  }
+});
+
+test("Fudo O1 distinguishes remaining provider 4xx contract rejections from transient timeouts", async () => {
+  const now = 1_800_000_000_000;
+  const statuses = [405, 406, 409, 410, 415, 408, 425] as const;
+  for (const phase of ["auth", "read"] as const) {
+    for (const status of statuses) {
+      const calls: string[] = [];
+      const fakeFetch: typeof fetch = async (input, init) => {
+        const url = String(input);
+        calls.push(String(init?.method));
+        if (url === "https://auth.fu.do/api") {
+          return phase === "auth"
+            ? new Response("synthetic-private-auth-error", { status })
+            : jsonResponse({ token: "synthetic-bearer", exp: Math.floor((now + 86_400_000) / 1000) });
+        }
+        return new Response("synthetic-private-read-error", { status });
+      };
+      const client = new FudoClient(
+        { apiKey: "synthetic-key", apiSecret: "synthetic-secret" },
+        { fetchImpl: fakeFetch, now: () => now },
+      );
+      const transient = status === 408 || status === 425;
+      await assert.rejects(client.testConnection(), (error: unknown) => {
+        assert.ok(error instanceof FudoApiError);
+        assert.equal(error.code, transient ? "provider_unavailable" : "invalid_response");
+        assert.equal(error.status, status);
+        assert.equal(error.retryable, transient);
+        assert.doesNotMatch(error.message, /synthetic-|private-|bearer/i);
+        return true;
+      });
+      assert.deepEqual(calls, phase === "auth" ? ["POST"] : ["POST", "GET"],
+        "never replay provider rejections automatically or send GET after failed authentication");
+    }
+  }
+});
+
+test("Fudo O1 rejects untrusted resource paths before auth and never exposes their values", async () => {
+  const calls: Array<{ url: string; method: string | undefined }> = [];
+  const now = 1_800_000_000_000;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    calls.push({ url: String(input), method: init?.method });
+    if (String(input) === "https://auth.fu.do/api") {
+      return jsonResponse({ token: "private-fixture-bearer", exp: Math.floor((now + 86_400_000) / 1000) });
+    }
+    return jsonResponse({ data: [], links: { next: null } });
+  };
+  const client = new FudoClient(
+    { apiKey: "private-fixture-key", apiSecret: "private-fixture-secret" },
+    { fetchImpl, now: () => now },
+  );
+
+  // An untyped future action, JS consumer or forged value must not bypass the
+  // FudoResource TypeScript union and make an arbitrary API GET.
+  for (const path of ["../users", "products/123", "products?include=payments",
+    "https://example.invalid/", "/products", "", "__proto__", null]) {
+    await assert.rejects(() => client.list(path as never), (error: unknown) => {
+      assert.ok(error instanceof FudoApiError);
+      assert.equal(error.code, "invalid_response");
+      assert.equal(error.status, null);
+      assert.equal(error.retryable, false);
+      assert.doesNotMatch(error.message, /private-|example|products|payments|__proto__/);
+      return true;
+    });
+  }
+  assert.equal(calls.length, 0, "even authentication must not begin for invalid resources");
+
+  // Existing O1 resources are still routed as GET to the fixed Fudo API host.
+  for (const resource of ["products", "ingredients", "providers", "orders", "sales"] as const) {
+    await client.list(resource, { "page[number]": 1, "page[size]": 1 });
+  }
+  assert.equal(calls.filter((call) => call.method === "POST").length, 1);
+  assert.deepEqual(
+    calls.filter((call) => call.method === "GET").map((call) => new URL(call.url).pathname),
+    ["products", "ingredients", "providers", "orders", "sales"].map((resource) => `/v1alpha1/${resource}`),
+  );
+  assert.ok(calls.filter((call) => call.method === "GET").every((call) =>
+    new URL(call.url).origin === "https://api.fu.do"));
+  assert.doesNotMatch(JSON.stringify(calls.filter((call) => call.method === "GET")), /private-fixture/);
+});
+
+test("Fudo O1 preflight rejects an invalid resource batch before auth or any GET", async () => {
+  const calls: Array<{ url: string; method: string | undefined }> = [];
+  const now = 1_800_000_000_000;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    calls.push({ url: String(input), method: init?.method });
+    if (String(input) === "https://auth.fu.do/api") {
+      return jsonResponse({ token: "private-bearer", exp: Math.floor((now + 86_400_000) / 1000) });
+    }
+    return jsonResponse({ data: [], links: { next: null } });
+  };
+  const client = new FudoClient(
+    { apiKey: "private-key", apiSecret: "private-secret" },
+    { fetchImpl, now: () => now },
+  );
+
+  // list() already validates paths before auth, but probeReadAccess() used to
+  // authenticate first and only then check individual paths. An entire batch
+  // containing an unsafe resource must have ZERO provider requests.
+  for (const resources of [
+    ["products", "../sales"],
+    ["products?include=payments"],
+    ["products", null],
+    "products",
+  ]) {
+    await assert.rejects(
+      () => client.probeReadAccess(resources as never),
+      (error: unknown) => {
+        assert.ok(error instanceof FudoApiError);
+        assert.equal(error.code, "invalid_response");
+        assert.equal(error.status, null);
+        assert.equal(error.retryable, false);
+        assert.doesNotMatch(error.message, /private|payments|\.\.\/sales/);
+        return true;
+      },
+    );
+    assert.equal(calls.length, 0, "invalid preflight cannot authenticate or issue GETs");
+  }
+
+  assert.deepEqual(await client.probeReadAccess(["products"]), [
+    { resource: "products", code: "available" },
+  ]);
+  assert.deepEqual(calls.map(({ method }) => method), ["POST", "GET"]);
+  assert.equal(calls[1].url,
+    "https://api.fu.do/v1alpha1/products?page%5Bnumber%5D=1&page%5Bsize%5D=1");
+  assert.doesNotMatch(JSON.stringify(calls), /private-key|private-secret|private-bearer/);
 });

@@ -12,8 +12,8 @@
 - Tablas de staging privadas: **NO** crean ventas, pedidos, movimientos de caja ni stock en los módulos nativos.
 
 ## Requisitos de infraestructura antes de piloto real
-1. Aplicar `supabase/migrations/20261103090000_fudo_pilot_read_only.sql` al proyecto Supabase correcto tras QA y respaldo/verificación de migraciones.
-2. Crear secreto de 32 bytes en Base64 estándar (por ejemplo `openssl rand -base64 32`) y guardarlo en **Vercel Production / Preview** como `FUDO_CREDENTIALS_ENCRYPTION_KEY`, nunca en `NEXT_PUBLIC_*`, issues, chats ni commits.
+1. **Verificar, no reaplicar, en `thesistema`:** la versión `20261103124206` de `supabase/migrations/20261103124206_fudo_pilot_read_only_20261103.sql` y las otras 11 migraciones Fudo ya figuran aplicadas en el historial de Supabase. Confirmar por consulta SQL de **solo lectura** el historial, esquema y RPCs antes del piloto. **No volver a ejecutar estos scripts ni `supabase db push` global**: el resto del historial Git/Supabase sigue desalineado y podría reaplicar migraciones históricas. Para instalar desde cero en otro proyecto, exigir plan de orden, revisión, respaldo y rollback específico; no copiar mecánicamente la ejecución productiva.
+2. Crear secreto de 32 bytes en Base64 estándar (por ejemplo `openssl rand -base64 32`) y guardarlo como `FUDO_CREDENTIALS_ENCRYPTION_KEY` **en cada entorno autorizado que vaya a usarse**, nunca en `NEXT_PUBLIC_*`, issues, chats ni commits. **Verificación 16/11/2026:** en Vercel la variable figura para **Production**, no para Preview (inspección de nombres/destinos, sin desencriptar el valor). No asumir paridad ni promover una Preview a producción sin revisar entorno, permisos y secretos. No copiar credenciales de clientes a Preview.
 3. Si el valor se cambia, los registros cifrados previamente no podrán recuperarse con la clave nueva. Para una futura rotación de la clave maestra se requiere proceso de recifrado versionado.
 4. Confirmar que `NEXT_PUBLIC_APP_MODE=database`, Supabase Auth y `SUPABASE_SERVICE_ROLE_KEY` están activos en ese deployment.
 5. Cliente: Plan Pro de Fudo, API Pública General habilitada y cuenta de servicio con permisos mínimos de lectura. Obtener `API Key` y `API Secret` **solo vía formulario HTTPS** de la UI.
@@ -40,15 +40,21 @@
 https://soporte.fu.do/es/articles/11939789-api-publica-de-proposito-general
 
 
-## O1 QA adicional — paginación y auditoría de piloto (03/11/2026)
+## O1 QA adicional — paginación y auditoría de piloto (03/11/2026; contrato actualizado 15/11/2026)
 
-- El integrador usa ahora `links.next` cuando Fudo incluye metadatos JSON:API. Esto evita cerrar un recurso prematuramente si el proveedor limita cada página a menos de 100 registros, aunque se pidan 100.
-- Nunca se siguen URLs devueltas por el proveedor: el sistema incrementa exclusivamente el parámetro de página del endpoint Fudo allowlisted.
-- Si no hay `links.next`, se conserva la inferencia histórica por longitud de página; esa modalidad **no acredita cobertura completa** sin conciliación real.
+- **Contrato vigente (15/11/2026):** `links.next` solo permite continuar cuando identifica la página numérica inmediatamente siguiente del **mismo recurso**, sin parámetros no reproducibles ni cambios de `page[size]`. Nunca se sigue la URL devuelta por Fudo: GastroPilot reconstruye el GET al endpoint permitido.
+- **Paridad del parámetro de página (16/11/2026):** la importación emite únicamente `page[number]=N`. Un enlace `links.next` que usa `page=N` no demuestra que su offset sea equivalente a `page[number]=N`: se rechaza antes de staging o cursor, incluso si la página trae 100 registros. Para soportar otro esquema de Fudo se requiere confirmar el contrato real y persistir explícitamente el modo de paginación del recurso; no reinterpretar la pista en silencio.
+- **Límite efectivo del proveedor:** si Fudo devuelve menos registros que los `100` solicitados y simultáneamente indica `links.next`, la página se rechaza con error sanitizado **antes de staging o avance de cursor**. Continuar con `page[number]+1` y tamaño 100 podría omitir registros si Fudo hubiera paginado con otro tamaño efectivo. No marcar el recurso como completo ni insistir cambiando tamaños manualmente: requiere verificar el contrato real y diseñar un tamaño estable por recurso/ciclo.
+- **Sin `links.next` (contrato publicado Fudo):** la descripción OpenAPI de Fudo establece que una página con menos registros que `page[size]` indica fin, con paginación `page[number]`/`page[size]` (máximo 500). Para evitar un cierre falso ante un tamaño efectivo inferior al solicitado, GastroPilot hace un **GET adicional a `page[number]+1` con el mismo tamaño 100** antes de persistir la última página corta. Sólo si esa página sucesora es **vacía y no indica continuación** se acepta el final; si trae datos o una continuación, falla sin staging/cursor. El enlace explícito `links.next` sigue sujeto a validación estricta. El GET de prueba es lectura pura, usa las mismas verificaciones de tenant/rol/generación y no se guarda como página importada. Los sondeos `page[size]=1` no acreditan cobertura completa. Fuentes: [OpenAPI publicado por Fudo](https://api.fu.do/v1alpha1/openapi.yml) y [espejo del contrato de paginación v1alpha1](https://apis.io/apis/fudo/fudo-providers-api/).
+- Para aprobar el piloto, aun con cinco cursores terminados, contrastar contra Fudo real **conteos, IDs y períodos** de cada recurso; repetir el ciclo para validar idempotencia y ejecutar aislamiento autenticado A/B.
 - La UI del owner/admin muestra registros **únicos almacenados** por recurso en la generación actual de conexión y un resumen de las cinco últimas corridas, con estado, conteos de cada tanda y códigos de error sanitizados; jamás credenciales ni payloads.
 - Los totales de staging **no equivalen a los totales definitivos de Fudo**. Al habilitar piloto real hay que comparar contra cada recurso/rango y registrar discrepancias. Las generaciones anteriores se conservan privadas pero no se agregan a la conexión vigente.
-- Regresiones automáticas: página corta con `links.next`, página llena con `links.next=null`, ausencia/metadatos inválidos, control de rol y separación entre tenants/generaciones en reporte. Pruebas de API real siguen pendientes.
+- Regresiones automáticas: **rechazo** de página corta con `links.next`, aceptación de página llena con `links.next=null` **sólo tras comprobar N+1 vacía** (#398), rechazo de metadatos inválidos, control de rol y separación entre tenants/generaciones en reporte. Pruebas de API real siguen pendientes.
 - No se habilitan escrituras, cron, movimientos de caja ni de stock.
+
+## O1 — Corregir cierre con `links.next: null` (17/11/2026)
+
+El detector previo de páginas cortas sólo hacía el GET de confirmación cuando `links.next` faltaba. Un JSON:API `links: { next: null }` permitía cerrar inmediatamente una página corta de 100 solicitados, incluso si la API hubiese aplicado un límite efectivo inferior. Desde la corrección O1, **ambos casos exigen un GET de la página N+1 con el mismo tamaño 100**, sin seguir URLs provistas por Fudo. Si N+1 no está vacía o tiene continuación, el recurso falla y no persiste staging ni cursor de la página original. Un sondeo con `page[size]=1` y un recurso sin resultados no necesita ese GET adicional. La regresión es sintética: todavía hay que contrastar con la API autorizada del negocio piloto. Sólo métodos GET para recursos, sin escrituras a Fudo ni a ventas/stock nativos.
 
 ## O1 — Validación semántica del test de conexión (03/11/2026)
 
@@ -57,3 +63,7 @@ https://soporte.fu.do/es/articles/11939789-api-publica-de-proposito-general
 - Una respuesta 200 incompatible se informa como `invalid_response`; no autoriza persistir nuevas credenciales ni confirma acceso funcional.
 - Cobertura añadida: un falso 200 con payload privado no produce persistencia ni exposición de secretos, mientras que páginas válidas vacías/con un producto siguen habilitando la conexión.
 - Esta prueba sigue siendo **un sondeo de una sola página de productos**, no una conciliación de los cinco recursos ni una prueba de cuenta real. El diagnóstico por recurso y el piloto E2E continúan siendo necesarios.
+
+## O1 — Cierre seguro de página exactamente llena con `links.next:null` (17/11/2026)
+
+Incluso si Fudo devuelve exactamente 100 registros para `page[size]=100`, `links.next:null` por sí solo no demuestra que no exista la página N+1. Para una página importable **no vacía** con ese indicador, el adaptador consulta N+1 con el mismo tamaño; solo un JSON:API válido, vacío y sin continuación permite cerrar el cursor y persistir N. Una página sucesora con datos o continuación provoca fallo saneado sin staging/cursor de la página original. Las páginas llenas **sin** indicador de continuación siguen avanzando naturalmente a N+1; los sondeos `page[size]=1` no se consideran conciliación. Se agregaron pruebas sintéticas de aceptación y rechazo para 100 registros, sin solicitudes de escritura a Fudo. Se requiere confirmar contrato real con la cuenta autorizada antes de declarar O1 GO.

@@ -23,14 +23,17 @@ export async function runFudoReadBatch<T, R>(
   await Promise.all(Array.from(
     { length: Math.min(MAX_PARALLEL_FUDO_READS, resources.length) },
     async () => {
-      while (nextIndex < resources.length) {
+      // Once a resource fails, do not initiate reads for resources that have
+      // not started. Already-launched reads and page commits must still settle
+      // before the failed run is finalized; their durable cursors permit retry.
+      while (nextIndex < resources.length && failures.length === 0) {
         const index = nextIndex++;
         try {
           results[index] = await readResource(resources[index]);
         } catch (error) {
           failures.push(error);
-          // Other resources may still be importable and their cursors must be
-          // settled before the server finalizes the failed run.
+          // Stop scheduling fresh provider reads, but drain existing workers
+          // before the server finalizes the failed run.
         }
       }
     },

@@ -24,7 +24,14 @@ test("Fudo encryption fails closed on missing or malformed server key", () => {
   assert.throws(() => encryptFudoCredentials(businessA, credentials, ""), /fudo_encryption_unavailable/);
   assert.throws(() => encryptFudoCredentials(businessA, credentials, "wrong"), /fudo_encryption_unavailable/);
   const encrypted = encryptFudoCredentials(businessA, credentials, key);
-  const tampered = encrypted.slice(0, -2) + (encrypted.endsWith("aa") ? "bb" : "aa");
+  // Mutate an actual authentication-tag byte; changing the last base64url characters
+  // can alter only unused padding bits and leave the decoded ciphertext unchanged.
+  const parts = encrypted.split(".");
+  const tag = Buffer.from(parts[2], "base64url");
+  assert.equal(tag.length, 16);
+  tag[0] ^= 0x01;
+  parts[2] = tag.toString("base64url");
+  const tampered = parts.join(".");
   assert.throws(() => decryptFudoCredentials(businessA, tampered, key), /fudo_ciphertext_invalid/);
 });
 
@@ -52,25 +59,63 @@ test("Fudo staging rejects ambiguous records and oversized provider pages", () =
 });
 
 
-test("Fudo keeps paging a short provider-capped page when JSON:API links.next exists", () => {
+test("Fudo enforces the per-record size limit in actual UTF-8 bytes", () => {
+  const small = { id: "multibyte-ok", type: "Product", attributes: { description: "ñ".repeat(60_000) } };
+  const oversized = { id: "multibyte-reject", type: "Product", attributes: { description: "ñ".repeat(70_000) } };
+  assert.ok(Buffer.byteLength(JSON.stringify(small), "utf8") < 131072);
+  assert.ok(JSON.stringify(oversized).length < 131072,
+    "a UTF-16 character-count would mistakenly accept this record");
+  assert.ok(Buffer.byteLength(JSON.stringify(oversized), "utf8") > 131072);
+  assert.equal(parseFudoPage({ data: [small] }, "products")[0].externalId, "multibyte-ok");
+  assert.throws(() => parseFudoPage({ data: [oversized] }, "products"), /fudo_record_too_large/);
+});
+
+test("Fudo preserves numeric safe IDs but refuses rounded or fractional external IDs", () => {
+  assert.equal(parseFudoPage({ data: [{ id: Number.MAX_SAFE_INTEGER }] })[0].externalId,
+    String(Number.MAX_SAFE_INTEGER));
+  // A 64-bit provider ID is safe when transmitted as text, never as a JSON number.
+  assert.equal(parseFudoPage({ data: [{ id: "9007199254740993" }] })[0].externalId,
+    "9007199254740993");
+  assert.throws(() => parseFudoPage({ data: [{ id: Number.MAX_SAFE_INTEGER + 1 }] }),
+    /invalid_fudo_record/);
+  assert.throws(() => parseFudoPage({ data: [{ id: 42.5 }] }), /invalid_fudo_record/);
+  assert.throws(() => parseFudoPage({ data: [{ id: -Infinity }] }), /invalid_fudo_record/);
+  assert.throws(() => parseFudoPage({ data: [{ id: " " }] }), /invalid_fudo_record/);
+  // Two provider IDs can differ only in padding. Never trim into the same
+  // external_id (including across separately imported pages).
+  for (const padded of [" item-1", "item-1 ", "\titem-1", "item-1\n"]) {
+    assert.throws(() => parseFudoPage({ data: [{ id: padded }] }),
+      /invalid_fudo_record/, JSON.stringify(padded));
+  }
+  assert.equal(parseFudoPage({ data: [{ id: "item 1" }] })[0].externalId, "item 1",
+    "valid opaque IDs are stored byte-for-byte, not canonicalized");
+});
+
+test("Fudo rejects short linked import pages but accepts compatible full-page continuation", () => {
   const shortPage = { data: [{ id: "x1" }, { id: "x2" }],
     links: { next: "https://api.fu.do/v1alpha1/products?page%5Bnumber%5D=2" } };
   const rows = parseFudoPage(shortPage);
   assert.equal(rows.length, 2);
-  assert.equal(nextFudoPage(shortPage, 1, rows.length), 2);
-  // A supplied URL is a signal only. The adapter still uses its fixed,
-  // allowlisted GET endpoint with numeric page parameters.
-  const offOrigin = { ...shortPage, links: { next: "https://malicious.invalid/exfiltrate" } };
-  assert.equal(nextFudoPage(offOrigin, 1, rows.length), 2);
+  assert.throws(() => nextFudoPage(shortPage, 1, rows.length), /invalid_fudo_page/,
+    "an unverified effective page size could make the next 100-row GET skip records");
+  const fullPage = { ...shortPage,
+    data: Array.from({ length: FUDO_SYNC_PAGE_SIZE }, (_, index) => ({ id: `x${index + 1}` })) };
+  assert.equal(nextFudoPage(fullPage, 1, parseFudoPage(fullPage).length), 2);
+  // Reject a foreign continuation even after a full requested page.
+  // We never fetch links supplied in provider response bodies.
+  const offOrigin = { ...fullPage, links: { next: "https://malicious.invalid/exfiltrate" } };
+  assert.throws(() => nextFudoPage(offOrigin, 1, FUDO_SYNC_PAGE_SIZE), /invalid_fudo_page/);
 });
 
-test("Fudo pagination honors explicit end, even on a full page", () => {
+test("Fudo pagination requires an empty-successor proof for an explicit full-page end", () => {
   const full = { data: Array.from({ length: FUDO_SYNC_PAGE_SIZE }, (_, i) => ({ id: String(i) })),
     links: { next: null } };
-  assert.equal(nextFudoPage(full, 1, parseFudoPage(full).length), 0);
+  assert.throws(() => nextFudoPage(full, 1, parseFudoPage(full).length),
+    /invalid_fudo_page/, "a full page with next:null alone cannot prove terminality");
+  assert.equal(nextFudoPage(full, 1, parseFudoPage(full).length, undefined, FUDO_SYNC_PAGE_SIZE, true), 0);
   assert.equal(nextFudoPage({ data: [] }, 2, 0), 0);
   assert.equal(nextFudoPage({ data: full.data }, 2, FUDO_SYNC_PAGE_SIZE), 3);
-  assert.equal(nextFudoPage({ data: full.data, links: { next: { href: "/products?page=3" } } }, 2, FUDO_SYNC_PAGE_SIZE), 3);
+  assert.equal(nextFudoPage({ data: full.data, links: { next: { href: "/products?page[number]=3" } } }, 2, FUDO_SYNC_PAGE_SIZE), 3);
 });
 
 test("Fudo rejects malformed or inconsistent pagination metadata", () => {
@@ -80,4 +125,94 @@ test("Fudo rejects malformed or inconsistent pagination metadata", () => {
   assert.throws(() => nextFudoPage({ links: null }, 1, 2), /invalid_fudo_page/);
   assert.throws(() => nextFudoPage({ links: { next: "/products?page=100001" } }, 100000, 2), /invalid_fudo_page/);
   assert.throws(() => nextFudoPage({ data: [] }, 0, 0), /invalid_fudo_page/);
+});
+
+
+test("Fudo JSON:API type metadata must match the requested O1 resource", () => {
+  const expected = [
+    ["products", "Product"], ["ingredients", "Ingredient"],
+    ["providers", "Provider"], ["orders", "Order"], ["sales", "Sale"],
+  ] as const;
+  for (const [resource, type] of expected) {
+    assert.equal(parseFudoPage({ data: [{ id: "1", type }] }, resource).length, 1);
+    assert.equal(parseFudoPage({ data: [{ id: "1", type: resource }] }, resource).length, 1,
+      "JSON:API plural resource name is also supported");
+    assert.throws(() => parseFudoPage({ data: [{ id: "1", type: "OtherResource" }] }, resource),
+      /invalid_fudo_record/, resource);
+    assert.throws(() => parseFudoPage({ data: [{ id: "1", type: null }] }, resource),
+      /invalid_fudo_record/, resource);
+  }
+  // Preserve compatibility with historical test fixtures lacking type: the
+  // new guard only rejects explicitly contradictory metadata.
+  assert.equal(parseFudoPage({ data: [{ id: "1" }] }, "products").length, 1);
+});
+
+
+test("Fudo JSON:API rejects a top-level errors member even alongside valid records", () => {
+  const product = { id: "fixture-product", type: "Product", attributes: { name: "private-fixture" } };
+  assert.equal(parseFudoPage({ data: [product] }, "products").length, 1);
+  for (const errors of [[], [{ status: "403", detail: "private-provider-error" }], null]) {
+    assert.throws(() => parseFudoPage({ data: [product], errors }, "products"), /invalid_fudo_page/);
+    assert.throws(() => parseFudoPage({ data: [], errors }, "products"), /invalid_fudo_page/);
+  }
+  assert.throws(() => parseFudoPage({ errors: [{ detail: "private-provider-error" }] }, "products"),
+    /invalid_fudo_page/);
+});
+
+test("Fudo O1 rejects malformed JSON:API attributes rather than silently staging empty metadata", () => {
+  assert.equal(parseFudoPage({ data: [{ id: "valid-omitted", type: "Product" }] }, "products").length, 1);
+  assert.equal(parseFudoPage({ data: [{ id: "valid-object", type: "Product", attributes: {} }] }, "products").length, 1);
+  for (const attributes of [null, [], ["fake-product"], "private-content", 17, false]) {
+    assert.throws(
+      () => parseFudoPage({ data: [{ id: "invalid", type: "Product", attributes }] }, "products"),
+      (error: unknown) => error instanceof Error && error.message === "invalid_fudo_record",
+      "an explicitly provided attributes member must be a JSON:API object",
+    );
+  }
+});
+
+
+test("Fudo O1 rejects provider NUL bytes before JSONB staging while preserving valid text", () => {
+  const good = { id: "product-1", type: "Product", attributes: { description: "Línea uno\nLínea dos" } };
+  assert.equal(parseFudoPage({ data: [good] }, "products").length, 1);
+  for (const id of ["sku\u0000hidden", "sku\nsecond-line", "sku\rreturn", "sku\tpart", "sku\u007fdel"]) {
+    assert.throws(() => parseFudoPage({ data: [{ ...good, id }] }, "products"),
+      /invalid_fudo_record/, "control characters cannot become external IDs");
+  }
+  const nulCases = [
+    { ...good, attributes: { description: "normal", nested: { notes: "bad\u0000value" } } },
+    { ...good, attributes: { variants: [{ sku: "ok" }, { sku: "bad\u0000value" }] } },
+    { ...good, attributes: { ["bad\u0000key"]: "value" } },
+  ];
+  for (const record of nulCases) {
+    assert.throws(() => parseFudoPage({ data: [good, { ...record, id: "product-2" }] }, "products"),
+      /invalid_fudo_record/, "reject the page before an atomic SQL write");
+  }
+});
+
+
+test("Fudo O1 rejects unpaired Unicode surrogates before atomic JSONB staging", () => {
+  const good = {
+    id: "sku-🧉", type: "Product",
+    attributes: { ["descripción🧉"]: { notes: ["Texto válido 😄", "Otra línea\ncorrecta"] } },
+  };
+  assert.equal(parseFudoPage(JSON.parse(JSON.stringify({ data: [good] })), "products").length, 1,
+    "valid paired surrogates and line breaks remain importable");
+
+  // A legal JSON document can contain escaped lone surrogates. JSON.parse
+  // accepts them, but PostgreSQL jsonb refuses to store those JSON strings.
+  const badCases = [
+    { ...good, id: "sku-\ud800" },
+    { ...good, id: "sku-\udc00" },
+    { ...good, id: "sku-\ud800X" },
+    { ...good, id: "sku-\ud800\ud800\udc00" },
+    { ...good, id: "other", attributes: { notes: ["safe", { text: "bad\ud800value" }] } },
+    { ...good, id: "other", attributes: { ["bad\udc00key"]: "value" } },
+  ];
+  for (const bad of badCases) {
+    const parsedProviderJson = JSON.parse(JSON.stringify({ data: [good, bad] }));
+    assert.throws(() => parseFudoPage(parsedProviderJson, "products"),
+      (error: unknown) => error instanceof Error && error.message === "invalid_fudo_record",
+      "reject the full page with a fixed code, without leaking the offending ID or payload");
+  }
 });

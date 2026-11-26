@@ -1,8 +1,80 @@
 import { createHash } from "node:crypto";
+import { parseStrictFudoTimestamp } from "./timestamp";
 
 export const FUDO_SYNC_RESOURCES = ["products", "ingredients", "providers", "orders", "sales"] as const;
 export type FudoSyncResource = typeof FUDO_SYNC_RESOURCES[number];
 export const FUDO_SYNC_PAGE_SIZE = 100;
+
+// JSON:API resource types may be singular (as in Fudo examples) or plural,
+// depending on the provider schema version. Only compare recognized resource
+// identities and retain missing-type compatibility until real pilot QA.
+const FUDO_JSON_API_TYPES: Record<FudoSyncResource, readonly string[]> = {
+  products: ["product", "products"], ingredients: ["ingredient", "ingredients"],
+  providers: ["provider", "providers"], orders: ["order", "orders"],
+  sales: ["sale", "sales"],
+};
+
+/**
+ * PostgreSQL jsonb rejects U+0000 and unpaired UTF-16 surrogates in JSON
+ * values AND object keys. JSON.parse can also round unsafe JSON integers and
+ * turn oversized numeric literals into Infinity, which JSON.stringify then
+ * silently stores as null. Reject those values before hashing/staging rather
+ * than importing altered financial or provenance data. Never expose payloads.
+ */
+function hasUnsafeStagingValue(root: unknown): boolean {
+  const invalidText = (text: string): boolean => {
+    if (text.includes("\u0000")) return true;
+    for (let i = 0; i < text.length; i++) {
+      const unit = text.charCodeAt(i);
+      if (unit >= 0xd800 && unit <= 0xdbff) {
+        const next = text.charCodeAt(i + 1);
+        if (next < 0xdc00 || next > 0xdfff || Number.isNaN(next)) return true;
+        i++; // A complete surrogate pair represents a valid Unicode scalar.
+      } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const pending: unknown[] = [root];
+  while (pending.length) {
+    const value = pending.pop();
+    if (typeof value === "string") {
+      if (invalidText(value)) return true;
+    } else if (typeof value === "number") {
+      // JSON.parse("1e999") -> Infinity -> JSON.stringify(...) -> null.
+      // JSON.parse("9007199254740993") silently rounds the integer.
+      if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value))) return true;
+    } else if (Array.isArray(value)) {
+      for (const child of value) pending.push(child);
+    } else if (value && typeof value === "object") {
+      for (const [key, child] of Object.entries(value)) {
+        if (invalidText(key)) return true;
+        pending.push(child);
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * JSONB and JSON:API both treat object member order as semantically irrelevant.
+ * A provider can reorder keys between reads without changing a product/sale.
+ * Hash a canonical object representation so a repeated scan does not report
+ * phantom source changes. Array order remains significant. The original
+ * provider object is still retained unchanged as the staging payload.
+ */
+function canonicalFudoJson(value: Record<string, unknown>): string {
+  return JSON.stringify(value, (_key, current: unknown) => {
+    if (current && typeof current === "object" && !Array.isArray(current)) {
+      return Object.fromEntries(
+        Object.entries(current).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0),
+      );
+    }
+    return current;
+  });
+}
 
 export type FudoSnapshot = {
   externalId: string;
@@ -11,33 +83,72 @@ export type FudoSnapshot = {
   sourceUpdatedAt: string | null;
 };
 
-export function parseFudoPage(value: unknown): FudoSnapshot[] {
-  const raw = Array.isArray(value)
-    ? value
-    : value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>).data
-      : null;
+export function parseFudoPage(value: unknown, expectedResource?: string): FudoSnapshot[] {
+  // JSON:API forbids top-level data and errors together. An upstream can
+  // return HTTP 200 with seemingly importable records AND an error document;
+  // never mark that page as imported or advance its cursor. Treat even an
+  // empty errors member as an ambiguous provider contract, without exposing
+  // its contents to logs or the UI.
+  if (value && typeof value === "object" && !Array.isArray(value)
+    && Object.prototype.hasOwnProperty.call(value, "errors")) {
+    throw new Error("invalid_fudo_page");
+  }
+  const expectedTypes = expectedResource ? (FUDO_JSON_API_TYPES as Record<string, readonly string[]>)[expectedResource] : undefined;
+  // A bare array is not a JSON:API response. Accepting one would make an
+  // HTTP 200 look like a working products connection, despite an incompatible
+  // provider envelope; do not persist credentials on that false positive.
+  const raw = value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>).data
+    : null;
   if (!Array.isArray(raw) || raw.length > FUDO_SYNC_PAGE_SIZE) throw new Error("invalid_fudo_page");
 
   const seen = new Set<string>();
   return raw.map((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("invalid_fudo_record");
     const body = item as Record<string, unknown>;
-    const id = typeof body.id === "string" || typeof body.id === "number" ? String(body.id).trim() : "";
-    if (!id || id.length > 256 || seen.has(id)) throw new Error("invalid_fudo_record");
+    // A 200 from /products containing a Sale object is not a valid products
+    // import. Do not upsert a wrong provider type or mark its cursor complete.
+    if (expectedTypes && Object.prototype.hasOwnProperty.call(body, "type")
+      && (typeof body.type !== "string" || !expectedTypes.includes(body.type.toLowerCase()))) {
+      throw new Error("invalid_fudo_record");
+    }
+    // JavaScript JSON parsing rounds integers beyond MAX_SAFE_INTEGER. Never
+    // persist a rounded external_id: two distinct Fudo records could otherwise
+    // collide in the tenant's upsert key. Providers must send large IDs as strings.
+    const rawId = body.id;
+    // External IDs are opaque provider keys: trimming changes their identity
+    // and can silently collapse distinct records across pages into one upsert.
+    // Reject padded IDs rather than normalizing them or marking the cycle complete.
+    const id = typeof rawId === "string" ? rawId
+      : typeof rawId === "number" && Number.isSafeInteger(rawId) ? String(rawId) : "";
+    // Control characters in IDs corrupt provenance/export and can break SQL
+    // text storage (NUL is forbidden in PostgreSQL). Fail before staging.
+    if (!id || id !== id.trim() || id.length > 256
+      || /[\u0000-\u001f\u007f]/u.test(id) || seen.has(id)) throw new Error("invalid_fudo_record");
+    // Fail before the atomic RPC if JSONB would reject text or JavaScript
+    // would silently alter a provider number during serialization/hashing.
+    if (hasUnsafeStagingValue(body)) throw new Error("invalid_fudo_record");
     seen.add(id);
 
-    const attributes = body.attributes && typeof body.attributes === "object" && !Array.isArray(body.attributes)
-      ? body.attributes as Record<string, unknown> : {};
+    // JSON:API allows attributes to be omitted, but an explicitly supplied
+    // attributes member MUST be an object. Silently treating null, arrays or
+    // primitives as empty would mark malformed provider data as imported and
+    // could leave source_updated_at/provenance incomplete.
+    if (Object.prototype.hasOwnProperty.call(body, "attributes")
+      && (!body.attributes || typeof body.attributes !== "object" || Array.isArray(body.attributes))) {
+      throw new Error("invalid_fudo_record");
+    }
+    const attributes = (body.attributes ?? {}) as Record<string, unknown>;
     const rawDate = attributes.updatedAt ?? attributes.updated_at;
-    const sourceUpdatedAt = typeof rawDate === "string" && !Number.isNaN(Date.parse(rawDate))
-      ? new Date(rawDate).toISOString() : null;
+    const sourceUpdatedAt = parseStrictFudoTimestamp(rawDate);
     const serialized = JSON.stringify(body);
-    if (serialized.length > 131072) throw new Error("fudo_record_too_large");
+    // JSON.stringify().length counts UTF-16 code units, not UTF-8 bytes.
+    // A multibyte product description must not bypass the 128 KiB staging limit.
+    if (Buffer.byteLength(serialized, "utf8") > 131072) throw new Error("fudo_record_too_large");
     return {
       externalId: id,
       payload: body,
-      contentHash: createHash("sha256").update(serialized).digest("hex"),
+      contentHash: createHash("sha256").update(canonicalFudoJson(body)).digest("hex"),
       sourceUpdatedAt,
     };
   });
@@ -53,9 +164,17 @@ export function parseFudoPage(value: unknown): FudoSnapshot[] {
  * Instead, they are only a continuation signal for our allowlisted, fixed
  * Fudo endpoint and incremented numeric page parameter.
  */
-export function nextFudoPage(response: unknown, currentPage: number, recordCount: number): number {
+export function nextFudoPage(
+  response: unknown, currentPage: number, recordCount: number, expectedResource?: string,
+  requestedPageSize = FUDO_SYNC_PAGE_SIZE, verifiedEmptySuccessor = false,
+): number {
+  if (!Number.isSafeInteger(requestedPageSize) || requestedPageSize < 1 || requestedPageSize > FUDO_SYNC_PAGE_SIZE) {
+    throw new Error("invalid_fudo_page");
+  }
+  // A provider returning more rows than requested breaks numbered offsets.
+  // Reject the page during connect/preflight (page size 1) as well as sync.
   if (!Number.isSafeInteger(currentPage) || currentPage < 1 || currentPage > 100000
-    || !Number.isSafeInteger(recordCount) || recordCount < 0 || recordCount > FUDO_SYNC_PAGE_SIZE) {
+    || !Number.isSafeInteger(recordCount) || recordCount < 0 || recordCount > requestedPageSize) {
     throw new Error("invalid_fudo_page");
   }
   if (response && typeof response === "object" && !Array.isArray(response)) {
@@ -66,7 +185,18 @@ export function nextFudoPage(response: unknown, currentPage: number, recordCount
       }
       if (Object.prototype.hasOwnProperty.call(links, "next")) {
         const next = (links as Record<string, unknown>).next;
-        if (next === null) return 0;
+        if (next === null) {
+          // An explicit null is an end *claim*, not proof that a full
+          // 100-row page was terminal. When count equals page[size], an
+          // unreported page N+1 could still exist. For any nonempty import
+          // page with next:null, require an independent empty successor GET
+          // before staging/cursor completion (short AND exactly full pages).
+          if (requestedPageSize === FUDO_SYNC_PAGE_SIZE && recordCount > 0
+            && !verifiedEmptySuccessor) {
+            throw new Error("invalid_fudo_page");
+          }
+          return 0;
+        }
         const href = typeof next === "string" ? next
           : next && typeof next === "object" && !Array.isArray(next)
             ? (next as Record<string, unknown>).href
@@ -75,11 +205,84 @@ export function nextFudoPage(response: unknown, currentPage: number, recordCount
           || recordCount === 0 || currentPage === 100000) {
           throw new Error("invalid_fudo_page");
         }
+        // A non-terminal page shorter than the requested size might mean
+        // Fudo capped its effective page size (e.g. 20 rows for a 100-row
+        // request). Following page[number]=2 with the *requested* size would
+        // then skip records 21..100. The link alone cannot prove which
+        // offset Fudo used. Fail closed before staging/cursor updates until
+        // we support a verified, durable per-resource effective page size.
+        if (recordCount < requestedPageSize) {
+          throw new Error("invalid_fudo_page");
+        }
+
+        // Only numbered next-page links can be resumed by this adapter.
+        // A merely non-empty href could be a cursor, an old page, an
+        // unrelated host or malformed data: silently incrementing would
+        // import duplicate or missing records while reporting a full scan.
+        // Never fetch this URL or include it in a returned error/log.
+        let nextUrl: URL;
+        try {
+          const link = href.trim();
+          if (!/^(https?:\/\/|\/|\?)/i.test(link) || /\s/.test(link)) {
+            throw new Error("invalid_fudo_page");
+          }
+          nextUrl = new URL(link, `https://api.fu.do/v1alpha1/${expectedResource ?? "products"}`);
+        } catch {
+          throw new Error("invalid_fudo_page");
+        }
+        if (nextUrl.protocol !== "https:" || nextUrl.origin !== "https://api.fu.do"
+          || nextUrl.username || nextUrl.password) {
+          throw new Error("invalid_fudo_page");
+        }
+        // A same-origin link can still point to another Fudo resource. Since
+        // the adapter only follows its fixed allowlisted endpoint, accepting
+        // that metadata would silently scan the wrong page and misstate
+        // reconciliation. Bind the hint to the resource actually requested.
+        if (expectedResource) {
+          const path = nextUrl.pathname.replace(/\/$/, "");
+          if (path !== `/v1alpha1/${expectedResource}` && path !== `/${expectedResource}`) {
+            throw new Error("invalid_fudo_page");
+          }
+        }
+        // The importer always sends page[number]. A provider hint using
+        // page=2 might describe a different pagination mode; mapping that
+        // alias to page[number]=2 without proof could repeat or skip rows.
+        // Only accept pagination metadata matching our actual outgoing GET.
+        // Unknown filters, cursors and offsets must fail closed as well.
+        if (nextUrl.hash) throw new Error("invalid_fudo_page");
+        for (const key of nextUrl.searchParams.keys()) {
+          if (key !== "page[number]" && key !== "page[size]") {
+            throw new Error("invalid_fudo_page");
+          }
+        }
+        const sizes = nextUrl.searchParams.getAll("page[size]");
+        // The next GET repeats the caller's requested size, not the link's
+        // query string. A different size would change page offsets and could
+        // silently skip records, so fail closed until a durable per-resource
+        // effective-size cursor is implemented and verified with Fudo.
+        if (sizes.length > 1 || (sizes.length === 1 && sizes[0] !== String(requestedPageSize))) {
+          throw new Error("invalid_fudo_page");
+        }
+        const numbered = nextUrl.searchParams.getAll("page[number]");
+        if (numbered.length !== 1) throw new Error("invalid_fudo_page");
+        const nextNumber = numbered[0].trim();
+        if (!/^[1-9]\d*$/.test(nextNumber) || Number(nextNumber) !== currentPage + 1) {
+          throw new Error("invalid_fudo_page");
+        }
         return currentPage + 1;
       }
     }
   }
-  // Backwards-compatible fallback only when next-link metadata is absent.
+  // Fudo's published OpenAPI pagination contract uses an unlinked short
+  // page as the terminal marker. Since an implementation could silently cap
+  // page[size], the importer must GET the following numbered page and confirm
+  // that it is EMPTY before opting in here. A raw short page is still rejected.
+  // Links with an explicit next hint are validated above, never overridden by
+  // this proof. One-record permission probes do not claim scan completeness.
+  if (requestedPageSize === FUDO_SYNC_PAGE_SIZE && recordCount > 0
+    && recordCount < requestedPageSize && !verifiedEmptySuccessor) {
+    throw new Error("invalid_fudo_page");
+  }
   if (recordCount !== FUDO_SYNC_PAGE_SIZE) return 0;
   if (currentPage === 100000) throw new Error("invalid_fudo_page");
   return currentPage + 1;

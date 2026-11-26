@@ -497,7 +497,7 @@ function LoginPageInner() {
             <div className="rounded-xl border border-ai-400/30 bg-ai-500/[0.06] p-3">
               <div className="text-[10px] uppercase tracking-wider text-ai-400">Invitación pendiente</div>
               <p className="mt-1 text-xs text-ink">
-                {oauthComplete ? "Tu acceso con Google está confirmado. Aceptá la invitación para entrar al negocio." : "Si ya tenés una sesión iniciada, podés aceptarla directamente."}
+                {oauthComplete ? "Aceptá la invitación para entrar al negocio. Verificaremos tu sesión y el email invitado." : "Si ya tenés una sesión iniciada, podés aceptarla directamente."}
               </p>
               <Button
                 size="sm"

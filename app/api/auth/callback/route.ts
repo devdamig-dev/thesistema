@@ -18,35 +18,32 @@ export async function GET(request: NextRequest) {
   const flow = url.searchParams.get("flow");
   const inviteToken = url.searchParams.get("invite_token");
 
-  if (url.searchParams.has("error")) {
+  function failedCallback(reason: string) {
     const destination = new URL("/login", url.origin);
-    destination.searchParams.set("error", "oauth_cancelled");
+    destination.searchParams.set("error", reason);
     destination.searchParams.set("next", next);
     if (inviteToken) destination.searchParams.set("invite_token", inviteToken);
     return authRedirect(destination);
   }
 
+  if (url.searchParams.has("error")) {
+    return failedCallback("oauth_cancelled");
+  }
+
   if (!code) {
-    const destination = new URL("/login", url.origin);
-    destination.searchParams.set("error", "auth_callback_missing_code");
-    return authRedirect(destination);
+    return failedCallback("auth_callback_missing_code");
   }
 
   const supabase = await createSupabaseServerClient();
   if (!supabase) {
-    const destination = new URL("/login", url.origin);
-    destination.searchParams.set("error", "database_config");
-    return authRedirect(destination);
+    return failedCallback("database_config");
   }
 
   const { error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
-    const destination = new URL("/login", url.origin);
-    destination.searchParams.set(
-      "error",
+    return failedCallback(
       flow === "recovery" ? "recovery_expired" : "auth_callback_failed",
     );
-    return authRedirect(destination);
   }
 
   if (flow === "recovery") {

@@ -10,7 +10,9 @@ concurrency:
   cancel-in-progress: true
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    # Pin to the same LTS image as the PostgreSQL/PostgREST jobs.
+    # ubuntu-latest moved to 26.04; its Playwright apt dependencies hit DNS errors.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       NEXT_PUBLIC_APP_MODE: demo
@@ -44,7 +46,10 @@ jobs:
       - run: npm run test:purchases:transports
       - run: npm run test:advances:sql
       - run: npm run build
-      - run: npx --no-install playwright install --with-deps chromium
+      # GitHub-hosted 24.04 already has Chromium runtime libraries. Avoid apt here:
+      # Ubuntu archive DNS failures prevented any browser test from running.
+      # Keep the browser installation and full UI test mandatory; never skip QA.
+      - run: npx --no-install playwright install chromium
       - run: npm run test:ui
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()

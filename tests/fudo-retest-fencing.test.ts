@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import Module from "node:module";
+import { createHash } from "node:crypto";
 import { encryptFudoCredentials } from "../lib/integrations/fudo/crypto";
 
 const BUSINESS = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const USER = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const OTHER_BUSINESS = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+let activeBusiness = BUSINESS;
+let isMember = true;
 const ORIGINAL_GENERATION = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const ROTATED_GENERATION = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const KEY = Buffer.alloc(32, 17).toString("base64");
@@ -17,38 +21,76 @@ let connection = {
   credentials_ciphertext: originalCiphertext,
   status: "connected",
   last_error_code: null as string | null,
+  last_tested_at: null as string | null,
 };
 const filtersSeen: string[] = [];
 let writes = 0;
+const rpcCalls: Array<Record<string, unknown>> = [];
+let syncRunning = false;
+let revokeDuringRpc = false;
+let switchDuringRpc = false;
+let afterInitialConnectionRead: (() => void) | null = null;
 
 const db = {
   from(table: string) {
     const filters: Record<string, unknown> = {};
-    let updateValues: Partial<typeof connection> | null = null;
     return {
       select(_columns: string) { return this; },
-      update(values: Partial<typeof connection>) { updateValues = values; return this; },
+      update(_values: Partial<typeof connection>) { throw Error("Retest must not update with service_role outside SQL RPC"); },
       eq(column: string, value: unknown) {
         filtersSeen.push(column);
         filters[column] = value;
         return this;
       },
       in(_column: string, _values: string[]) { return this; },
+      is(column: string, value: null) {
+        filtersSeen.push(column);
+        filters[column] = value;
+        return this;
+      },
       async maybeSingle() {
-        if (table === "business_members") return { error: null, data: { id: "active-member" } };
+        if (table === "business_members") return { error: null, data:
+          isMember && filters.business_id === activeBusiness ? { id: "active-member" } : null };
         if (table === "profiles") return { error: null, data: { active: true } };
         if (table !== "fudo_connections") throw Error("Unexpected table");
         const matching = Object.entries(filters).every(([field, value]) =>
           (connection as unknown as Record<string, unknown>)[field] === value);
         if (!matching) return { error: null, data: null };
-        if (updateValues) {
-          writes++;
-          connection = { ...connection, ...updateValues };
-          return { error: null, data: { business_id: BUSINESS } };
-        }
-        return { error: null, data: { ...connection } };
+        const observed = { ...connection };
+        afterInitialConnectionRead?.();
+        return { error: null, data: observed };
       },
     };
+  },
+  async rpc(name: string, args: Record<string, unknown>) {
+    assert.equal(name, "fudo_record_connection_test", "retest uses one authorized SQL transaction");
+    rpcCalls.push({ ...args });
+    // Simulate a SQL-transaction authorization check AFTER JS preflight.
+    if (revokeDuringRpc) { isMember = false; revokeDuringRpc = false; }
+    if (switchDuringRpc) { activeBusiness = OTHER_BUSINESS; switchDuringRpc = false; }
+    if (!isMember || activeBusiness !== BUSINESS || args.p_business_id !== BUSINESS
+      || args.p_actor_id !== USER) return { data: "forbidden", error: null };
+    if (args.p_expected_generation !== connection.connection_generation
+      || args.p_expected_last_tested_at !== connection.last_tested_at) {
+      return { data: "connection_changed", error: null };
+    }
+    // The production SQL rejects retest commits while any active sync owns
+    // the business. A successful provider GET cannot retroactively grant a
+    // stale page/finish transaction a fresh credential-test revision.
+    if (syncRunning) return { data: "sync_running", error: null };
+    assert.ok(args.p_status === "connected" || args.p_status === "error");
+    assert.equal(args.p_status === "connected", args.p_error_code === null);
+    writes++;
+    const nextTestedAt = new Date(Math.max(
+      Date.now(), connection.last_tested_at ? Date.parse(connection.last_tested_at) + 1 : 0,
+    )).toISOString();
+    connection = {
+      ...connection,
+      status: args.p_status as "connected" | "error",
+      last_error_code: args.p_error_code as string | null,
+      last_tested_at: nextTestedAt,
+    };
+    return { data: "recorded", error: null };
   },
 };
 
@@ -57,7 +99,7 @@ const originalLoad = loader._load;
 loader._load = function(name: string, ...args: any[]) {
   if (name === "@/lib/data/auth") return {
     getCurrentUserContext: async () => ({
-      isAuthenticated: true, userId: USER, businessId: BUSINESS, role: "owner",
+      isAuthenticated: true, userId: USER, businessId: activeBusiness, role: "owner",
     }),
   };
   if (name === "@/lib/supabase/admin") return { createSupabaseAdminClient: () => db };
@@ -66,6 +108,58 @@ loader._load = function(name: string, ...args: any[]) {
 };
 const { testStoredFudoConnection } = require("../lib/integrations/fudo/service") as typeof import("../lib/integrations/fudo/service");
 loader._load = originalLoad;
+
+test("Fudo retest reports an active sync without updating the credential revision", async () => {
+  const oldKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const oldFetch = globalThis.fetch;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  activeBusiness = BUSINESS;
+  isMember = true;
+  syncRunning = true;
+  writes = 0;
+  rpcCalls.length = 0;
+  connection = {
+    business_id: BUSINESS, connection_generation: ORIGINAL_GENERATION,
+    credentials_ciphertext: originalCiphertext, status: "connected",
+    last_error_code: null, last_tested_at: "2026-11-15T20:00:00.000Z",
+  };
+  let getCalls = 0;
+  globalThis.fetch = async (input, init) => {
+    if (String(input).includes("auth.fu.do")) {
+      assert.equal(init?.method, "POST");
+      return new Response(JSON.stringify({
+        token: "synthetic-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    assert.equal(init?.method, "GET");
+    getCalls++;
+    return new Response(JSON.stringify({ data: [] }), { status: 200 });
+  };
+  try {
+    const result = await testStoredFudoConnection();
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.code, "sync_running");
+      assert.match(result.message, /sincronización Fudo en curso/);
+      assert.doesNotMatch(result.message, /synthetic-bearer|fixture-fudo-api|fixture-fudo-secret/);
+    }
+    assert.equal(getCalls, 1, "the in-flight read may finish, but its retest cannot update health");
+    assert.equal(rpcCalls.length, 1, "SQL lock is the final transactional fence");
+    assert.equal(writes, 0);
+    assert.equal(connection.status, "connected");
+    assert.equal(connection.last_tested_at, "2026-11-15T20:00:00.000Z");
+
+    syncRunning = false;
+    const after = await testStoredFudoConnection();
+    assert.equal(after.ok, true, "normal retest continues after the run closes");
+    assert.equal(writes, 1);
+  } finally {
+    syncRunning = false;
+    globalThis.fetch = oldFetch;
+    if (oldKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = oldKey;
+  }
+});
 
 test("Fudo retest fences stale results after credential rotation, without ciphertext URL filters", async () => {
   const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
@@ -76,9 +170,10 @@ test("Fudo retest fences stale results after credential rotation, without cipher
       connection = {
         business_id: BUSINESS, connection_generation: ORIGINAL_GENERATION,
         credentials_ciphertext: originalCiphertext,
-        status: "connected", last_error_code: null,
+        status: "connected", last_error_code: null, last_tested_at: null,
       };
       filtersSeen.length = 0;
+      rpcCalls.length = 0;
       writes = 0;
       globalThis.fetch = async (input) => {
         if (String(input).includes("auth.fu.do")) {
@@ -102,7 +197,8 @@ test("Fudo retest fences stale results after credential rotation, without cipher
       assert.equal(connection.status, "connected");
       assert.equal(connection.last_error_code, null);
       assert.equal(connection.connection_generation, ROTATED_GENERATION);
-      assert.ok(filtersSeen.includes("connection_generation"));
+      assert.ok(rpcCalls.some((args) => args.p_expected_generation === ORIGINAL_GENERATION),
+        "SQL CAS receives the exact generation used for the GET");
       assert.ok(!filtersSeen.includes("credentials_ciphertext"), "ciphertext must not be used as a URL filter");
     }
 
@@ -118,9 +214,298 @@ test("Fudo retest fences stale results after credential rotation, without cipher
     assert.equal(success.ok, true);
     assert.equal(writes, 1);
     assert.equal(connection.status, "connected");
+
+    // A timestamp-based CAS loses its protection if the new timestamp equals
+    // the previous revision. Clock skew reproduces the same regression as two
+    // probes completing within one millisecond, without relying on timing.
+    const futureRevision = new Date(Date.now() + 60_000).toISOString();
+    connection = { ...connection, last_tested_at: futureRevision };
+    writes = 0;
+    const skewedClockRetest = await testStoredFudoConnection();
+    assert.equal(skewedClockRetest.ok, true);
+    assert.equal(writes, 1);
+    assert.ok(connection.last_tested_at);
+    assert.ok(Date.parse(connection.last_tested_at!) > Date.parse(futureRevision),
+      "the persisted revision must advance beyond the previously stored timestamp");
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
     else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
+
+
+test("Fudo concurrent same-generation retests reject a stale failure after a newer success", async () => {
+  const previousKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  connection = {
+    business_id: BUSINESS, connection_generation: ORIGINAL_GENERATION,
+    credentials_ciphertext: originalCiphertext, status: "connected",
+    last_error_code: null, last_tested_at: "2026-11-04T20:00:00.000Z",
+  };
+  filtersSeen.length = 0;
+  writes = 0;
+  let releaseOldRead: () => void = () => {};
+  const oldReadGate = new Promise<void>((resolve) => { releaseOldRead = resolve; });
+  let signalOldRead: () => void = () => {};
+  const oldReadStarted = new Promise<void>((resolve) => { signalOldRead = resolve; });
+  let readCount = 0;
+  globalThis.fetch = async (input) => {
+    if (String(input).includes("auth.fu.do")) {
+      return new Response(JSON.stringify({
+        token: "fixture-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+      }), { status: 200 });
+    }
+    readCount++;
+    if (readCount === 1) {
+      signalOldRead();
+      await oldReadGate;
+      return new Response(JSON.stringify({ error: "PRIVATE_PROVIDER_ERROR" }), { status: 403 });
+    }
+    return new Response(JSON.stringify({ data: [] }), { status: 200 });
+  };
+  try {
+    const older = testStoredFudoConnection();
+    await oldReadStarted;
+    const newer = await testStoredFudoConnection();
+    assert.equal(newer.ok, true, "latest completed test should persist success");
+    assert.equal(writes, 1);
+    const currentRevision = connection.last_tested_at;
+    releaseOldRead();
+    const stale = await older;
+    assert.equal(stale.ok, false);
+    if (!stale.ok) {
+      assert.equal(stale.code, "connection_changed");
+      assert.doesNotMatch(stale.message, /PRIVATE_PROVIDER_ERROR|fixture-bearer|api-secret/);
+    }
+    assert.equal(writes, 1, "stale 403 cannot downgrade newer successful state");
+    assert.equal(connection.status, "connected");
+    assert.equal(connection.last_error_code, null);
+    assert.equal(connection.last_tested_at, currentRevision);
+    assert.ok(rpcCalls.some((args) => args.p_expected_last_tested_at === "2026-11-04T20:00:00.000Z"),
+      "SQL CAS must fence the previous test revision");
+    assert.ok(!filtersSeen.includes("credentials_ciphertext"), "never send ciphertext in filters");
+  } finally {
+    releaseOldRead();
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = previousKey;
+  }
+});
+
+test("Fudo retest never writes health or reports success after membership revocation or tenant switch", async () => {
+  const oldKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const oldFetch = globalThis.fetch;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  try {
+    for (const transition of ["revoked", "switched"] as const) {
+      for (const providerStatus of [200, 403]) {
+        isMember = true;
+        activeBusiness = BUSINESS;
+        writes = 0;
+        connection = {
+          business_id: BUSINESS, connection_generation: ORIGINAL_GENERATION,
+          credentials_ciphertext: originalCiphertext, status: "connected",
+          last_error_code: null, last_tested_at: null,
+        };
+        const methods: string[] = [];
+        globalThis.fetch = async (input, init) => {
+          if (String(input) === "https://auth.fu.do/api") {
+            assert.equal(init?.method, "POST", "authentication only");
+            return new Response(JSON.stringify({
+              token: "synthetic-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+            }), { status: 200 });
+          }
+          methods.push(String(init?.method));
+          if (transition === "revoked") isMember = false;
+          else activeBusiness = OTHER_BUSINESS;
+          return providerStatus === 200
+            ? new Response(JSON.stringify({ data: [] }), { status: 200 })
+            : new Response(JSON.stringify({ detail: "PRIVATE_PROVIDER_RESPONSE" }), { status: 403 });
+        };
+        const result = await testStoredFudoConnection();
+        assert.equal(result.ok, false, transition + providerStatus);
+        if (!result.ok) {
+          assert.equal(result.code, "forbidden", transition + providerStatus);
+          assert.doesNotMatch(result.message, /synthetic-bearer|PRIVATE_PROVIDER_RESPONSE|fixture-fudo/i);
+        }
+        assert.deepEqual(methods, ["GET"]);
+        assert.equal(writes, 0, "revoked actor cannot update connection metadata");
+        assert.equal(connection.status, "connected");
+        assert.equal(connection.last_error_code, null);
+        assert.equal(connection.last_tested_at, null);
+      }
+    }
+  } finally {
+    isMember = true;
+    activeBusiness = BUSINESS;
+    globalThis.fetch = oldFetch;
+    if (oldKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = oldKey;
+  }
+});
+
+
+test("Fudo SQL retest guard denies transaction-time revocation after the app preflight", async () => {
+  const oldKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const oldFetch = globalThis.fetch;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  try {
+    for (const transition of ["revoked", "switched"] as const) {
+      for (const status of [200, 403]) {
+        isMember = true;
+        activeBusiness = BUSINESS;
+        revokeDuringRpc = transition === "revoked";
+        switchDuringRpc = transition === "switched";
+        writes = 0;
+        rpcCalls.length = 0;
+        connection = {
+          business_id: BUSINESS, connection_generation: ORIGINAL_GENERATION,
+          credentials_ciphertext: originalCiphertext,
+          status: "connected", last_error_code: null, last_tested_at: null,
+        };
+        const methods: string[] = [];
+        globalThis.fetch = async (input, init) => {
+          if (String(input).includes("auth.fu.do")) {
+            return new Response(JSON.stringify({
+              token: "synthetic-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+            }), { status: 200 });
+          }
+          methods.push(String(init?.method));
+          return status === 200
+            ? new Response(JSON.stringify({ data: [] }), { status: 200 })
+            : new Response(JSON.stringify({ private: "DO_NOT_EXPOSE" }), { status: 403 });
+        };
+        const result = await testStoredFudoConnection();
+        assert.equal(result.ok, false);
+        if (!result.ok) {
+          assert.equal(result.code, "forbidden");
+          assert.doesNotMatch(result.message, /DO_NOT_EXPOSE|synthetic-bearer/);
+        }
+        assert.deepEqual(methods, ["GET"]);
+        assert.equal(rpcCalls.length, 1, "SQL sees post-preflight revocation");
+        assert.equal(writes, 0, "SQL must never change health after revocation");
+        assert.equal(connection.last_tested_at, null);
+        assert.equal(connection.last_error_code, null);
+      }
+    }
+  } finally {
+    isMember = true;
+    activeBusiness = BUSINESS;
+    revokeDuringRpc = false;
+    switchDuringRpc = false;
+    globalThis.fetch = oldFetch;
+    if (oldKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = oldKey;
+  }
+});
+
+
+test("stale rendered retest revision refuses rotation/retest before any provider request or SQL write", async () => {
+  const oldKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const oldFetch = globalThis.fetch;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  activeBusiness = BUSINESS;
+  isMember = true;
+  const observedAt = "2026-11-13T12:00:00.000Z";
+  const revision = createHash("sha256").update(JSON.stringify([
+    BUSINESS, ORIGINAL_GENERATION, "connected", observedAt,
+  ])).digest("hex");
+  let outbound = 0;
+  try {
+    for (const variant of ["rotation", "retest", "invalid"] as const) {
+      connection = {
+        business_id: BUSINESS,
+        connection_generation: variant === "rotation" ? ROTATED_GENERATION : ORIGINAL_GENERATION,
+        credentials_ciphertext: originalCiphertext,
+        status: "connected", last_error_code: null,
+        last_tested_at: variant === "retest" ? "2026-11-13T12:00:01.000Z" : observedAt,
+      };
+      outbound = 0;
+      writes = 0;
+      rpcCalls.length = 0;
+      globalThis.fetch = async () => {
+        outbound++;
+        throw new Error("Stale tab unexpectedly contacted the provider");
+      };
+      const result = await testStoredFudoConnection(
+        undefined, variant === "invalid" ? "invalid-revision" : revision,
+      );
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.equal(result.code, "connection_changed");
+      }
+      assert.equal(outbound, 0, "no auth POST or read-only GET");
+      assert.equal(rpcCalls.length, 0, "no metadata mutation");
+      assert.equal(writes, 0);
+    }
+
+    connection = {
+      business_id: BUSINESS, connection_generation: ORIGINAL_GENERATION,
+      credentials_ciphertext: originalCiphertext, status: "connected",
+      last_error_code: null, last_tested_at: observedAt,
+    };
+    outbound = 0;
+    writes = 0;
+    globalThis.fetch = async (input, init) => {
+      outbound++;
+      if (String(input).includes("auth.fu.do")) {
+        assert.equal(init?.method, "POST");
+        return new Response(JSON.stringify({
+          token: "fixture-bearer", exp: Math.floor(Date.now() / 1000) + 86400,
+        }), { status: 200 });
+      }
+      assert.equal(init?.method, "GET");
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    };
+    const success = await testStoredFudoConnection(undefined, revision);
+    assert.equal(success.ok, true, "a fresh browser revision must still retest");
+    assert.equal(outbound, 2, "one auth POST + one resource GET");
+    assert.equal(writes, 1);
+  } finally {
+    activeBusiness = BUSINESS;
+    isMember = true;
+    globalThis.fetch = oldFetch;
+    if (oldKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = oldKey;
+  }
+});
+
+test("Fudo stored retest denies revoked or switched actors before decrypt/auth GET", async () => {
+  const oldKey = process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+  const oldFetch = globalThis.fetch;
+  process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = KEY;
+  let outbound = 0;
+  globalThis.fetch = async () => {
+    outbound++;
+    throw new Error("No upstream request allowed after context change");
+  };
+  try {
+    for (const scenario of ["revoked", "switched"] as const) {
+      isMember = true; activeBusiness = BUSINESS; outbound = 0;
+      writes = 0; rpcCalls.length = 0;
+      connection = {
+        business_id: BUSINESS, connection_generation: ORIGINAL_GENERATION,
+        credentials_ciphertext: originalCiphertext, status: "connected",
+        last_error_code: null, last_tested_at: null,
+      };
+      afterInitialConnectionRead = () => {
+        afterInitialConnectionRead = null;
+        if (scenario === "revoked") isMember = false;
+        else activeBusiness = OTHER_BUSINESS;
+      };
+      const outcome = await testStoredFudoConnection();
+      assert.equal(outcome.ok, false, scenario);
+      if (!outcome.ok) assert.equal(outcome.code, "forbidden", scenario);
+      assert.equal(outbound, 0, "no Fudo auth POST or GET");
+      assert.equal(writes, 0, "no mutation of connection health");
+      assert.equal(rpcCalls.length, 0, "no audit write RPC for revoked actor");
+    }
+  } finally {
+    isMember = true; activeBusiness = BUSINESS; afterInitialConnectionRead = null;
+    globalThis.fetch = oldFetch;
+    if (oldKey === undefined) delete process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.FUDO_CREDENTIALS_ENCRYPTION_KEY = oldKey;
   }
 });

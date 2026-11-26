@@ -16,7 +16,8 @@ function sourceFiles(directory: string): string[] {
 test("runtime dependencies stay on the patched Next and React lines", () => {
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 
-  assert.equal(pkg.dependencies.next, "16.4.3");
+  assert.equal(pkg.dependencies.next, "16.4.5");
+  assert.equal(pkg.devDependencies["eslint-config-next"], "16.4.5");
   assert.equal(pkg.dependencies.react, "19.3.0");
   assert.equal(pkg.dependencies["react-dom"], "19.3.0");
 });
