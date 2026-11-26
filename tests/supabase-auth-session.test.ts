@@ -40,5 +40,10 @@ test("auth callback responses cannot cache session cookies", () => {
   assert.match(callback, /Cache-Control", "private, no-store"/);
   assert.match(callback, /Pragma", "no-cache"/);
   assert.match(callback, /Expires", "0"/);
-  assert.equal((callback.match(/return authRedirect\(/g) ?? []).length, 5);
+  // Direct and failed redirects share the no-store helper. The callback route
+  // tests also execute each outcome and assert the response headers.
+  const handler = callback.slice(callback.indexOf("export async function GET"));
+  const returns = handler.match(/return\s+[^\n]+/g) ?? [];
+  assert(returns.length > 0);
+  assert(returns.every((statement) => /return (authRedirect|failedCallback)\(/.test(statement)));
 });
